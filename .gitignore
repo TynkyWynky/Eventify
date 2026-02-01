@@ -1,15 +1,97 @@
-*.iml
-.gradle
-/local.properties
-/.idea/caches
-/.idea/libraries
-/.idea/modules.xml
-/.idea/workspace.xml
-/.idea/navEditor.xml
-/.idea/assetWizardSettings.xml
+# =========================
+# OS / Editor
+# =========================
 .DS_Store
-/build
-/captures
-.externalNativeBuild
-.cxx
+Thumbs.db
+
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+!.vscode/launch.json
+!.vscode/tasks.json
+
+.idea/
+*.iml
+
+# =========================
+# Logs
+# =========================
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# =========================
+# Node / Vite / React
+# =========================
+node_modules/
+**/node_modules/
+
+dist/
+**/dist/
+build/
+**/build/
+
+.vite/
+**/.vite/
+
+coverage/
+**/coverage/
+
+.env
+.env.*
+!.env.example
+
+# Optional: lockfiles (choose what you want)
+# If you want to keep package-lock.json (recommended), comment these out.
+# package-lock.json
+# yarn.lock
+# pnpm-lock.yaml
+
+# =========================
+# Android / Gradle
+# =========================
+.gradle/
+**/.gradle/
+
 local.properties
+**/local.properties
+
+# Android Studio build outputs
+**/build/
+**/captures/
+**/.externalNativeBuild/
+**/.cxx/
+
+# APK / AAB
+*.apk
+*.ap_
+*.aab
+
+# Keystores / signing (IMPORTANT)
+*.jks
+*.keystore
+*.p12
+*.pem
+
+# =========================
+# Java / Kotlin
+# =========================
+*.class
+
+# =========================
+# IntelliJ / Android Studio
+# =========================
+*.ipr
+*.iws
+out/
+**/out/
+
+# =========================
+# Misc
+# =========================
+tmp/
+.temp/
+.cache/
