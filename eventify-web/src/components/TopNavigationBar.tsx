@@ -6,9 +6,7 @@ export default function TopNavigationBar() {
   return (
     <header className="navBar">
       <div className="navInner">
-        <Link to="/" className="brand brandTitle">
-          Eventify
-        </Link>
+        <Link to="/" className="brandTitle">Eventify</Link>
 
         <div className="navSearchWrap">
           <input className="searchBar" placeholder="Artist, place, genre…" />

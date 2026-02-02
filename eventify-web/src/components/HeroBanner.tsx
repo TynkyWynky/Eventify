@@ -9,7 +9,6 @@ export default function HeroBanner() {
         }}
       />
       <div className="heroShade" />
-      <div className="heroCurves" />
 
       <div className="heroContent">
         <h1 className="heroTitle">Your local scene awaits.</h1>

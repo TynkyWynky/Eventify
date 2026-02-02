@@ -1,7 +1,6 @@
 export default function RegisterPage() {
   return (
     <div className="authPage">
-      <div className="authBackdrop" />
       <div className="authCard">
         <h2 className="authTitle">Register</h2>
 

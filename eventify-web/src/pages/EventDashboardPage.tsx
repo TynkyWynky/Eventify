@@ -70,35 +70,32 @@ export default function EventDashboardPage() {
 
       <section className="dashboardPanel">
         <div className="dashboardHeaderRow">
-          <div className="filtersBlock">
-            <div className="dashboardTitle">Dashboard</div>
+          <div>
+            <div className="muted">Filters</div>
 
-            <div className="chipRow">
-              {GENRES.map((g) => {
-                const active = activeGenres.includes(g);
-                return (
-                  <button
-                    key={g}
-                    className={`chip ${active ? "chipActive" : ""}`}
-                    onClick={() => toggleGenre(g)}
-                  >
-                    {g}
-                  </button>
-                );
-              })}
+            <div className="chipRow" style={{ marginTop: "12px" }}>
+              {GENRES.map((g) => (
+                <button
+                  key={g}
+                  className={`chip ${activeGenres.includes(g) ? "chipActive" : ""}`}
+                  onClick={() => toggleGenre(g)}
+                >
+                  {g}
+                </button>
+              ))}
             </div>
 
             <div className="distanceRow">
-              <div className="mutedLabel">Distance</div>
+              <div className="muted">Distance</div>
               <input
+                className="distanceSlider"
                 type="range"
                 min={1}
                 max={100}
                 value={maxDistanceKm}
                 onChange={(e) => setMaxDistanceKm(Number(e.target.value))}
-                className="distanceSlider"
               />
-              <div className="distanceValue">{maxDistanceKm} km</div>
+              <div>{maxDistanceKm} km</div>
             </div>
           </div>
 
@@ -120,8 +117,8 @@ export default function EventDashboardPage() {
 
         <div className="organizerCTA">
           <div>
-            <div className="organizerTitle">Organisator? Make some noise!</div>
-            <div className="organizerSubtitle">
+            <div style={{ fontWeight: 700 }}>Organisator? Make some noise!</div>
+            <div style={{ marginTop: "6px", opacity: 0.9, fontSize: "14px" }}>
               Post your event — it appears after admin approval.
             </div>
           </div>
@@ -129,32 +126,27 @@ export default function EventDashboardPage() {
         </div>
 
         {viewMode === "map" ? (
-          <div className="mapPlaceholder">
-            Map view 
+          <div className="panel" style={{ marginTop: "24px", padding: "16px", background: "var(--panel2)" }}>
+            <div className="muted">Map view (next) — Leaflet arrive ici.</div>
           </div>
         ) : (
           <div className="eventsGrid">
             {filteredEvents.map((e) => (
-              <article key={e.id} className="eventCard">
+              <article key={e.id} className="card">
                 <div className="eventImageWrap">
-                  <img src={e.imageUrl} alt={e.title} className="eventImage" />
+                  <img className="eventImage" src={e.imageUrl} alt={e.title} />
                 </div>
 
                 <div className="eventBody">
-                  <div className="eventHeaderRow">
-                    <h3 className="eventTitle">{e.title}</h3>
-                  </div>
-
+                  <div className="eventTitle">{e.title}</div>
                   <div className="eventMeta">
                     {e.venue} • {e.city}
                   </div>
-                  <div className="eventMetaSmall">{e.dateLabel}</div>
+                  <div className="eventMeta">{e.dateLabel}</div>
 
                   <div className="eventTagsRow">
                     {e.tags.map((t) => (
-                      <span key={t} className="eventTag">
-                        {t}
-                      </span>
+                      <span key={t} className="eventTag">{t}</span>
                     ))}
                   </div>
 
