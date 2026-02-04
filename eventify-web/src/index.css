@@ -1,0 +1,24 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html, body, #root { height: 100%; }
+
+body {
+  font-family: var(--fontUI);
+  color: var(--text);
+  background: var(--bg);
+}
+
+/* Glow background */
+body::before {
+  content: "";
+  position: fixed;
+  inset: -200px;
+  pointer-events: none;
+  background:
+    radial-gradient(700px 400px at 0% 40%, rgba(178,106,168,.18), transparent 60%),
+    radial-gradient(700px 400px at 100% 60%, rgba(139,63,127,.16), transparent 60%),
+    radial-gradient(520px 320px at 50% 0%, rgba(255,255,255,.06), transparent 55%);
+  z-index: -1;
+}

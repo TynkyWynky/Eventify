@@ -1,0 +1,46 @@
+:root {
+  /* ========== COLORS ========== */
+  --bg: #0b0b10;
+  --text: #e9e9f2;
+  --muted: #a7a7b6;
+
+  --panel: #12121a;
+  --panel2: #181827;
+
+  --accent: #8b3f7f;
+  --accent2: #b26aa8;
+
+  /* ========== BORDERS ========== */
+  --border: rgba(255, 255, 255, 0.10);
+  --borderSoft: rgba(255, 255, 255, 0.06);
+  --borderHover: rgba(255, 255, 255, 0.20);
+
+  /* ========== RADIUS ========== */
+  --radius: 16px;
+  --radius2: 20px;
+
+  /* ========== SPACING ========== */
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+
+  /* ========== SHADOWS ========== */
+  --glow: 0 0 0 1px rgba(178,106,168,.35), 0 0 30px rgba(178,106,168,.12);
+
+  /* ========== FONTS ========== */
+  --fontBrand: "Jaini Purva", cursive;
+  --fontUI: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+
+
+    --chipBg: rgba(255,255,255,.06);
+  --chipBgHover: rgba(255,255,255,.10);
+
+  --inputBg: rgba(0,0,0,.25);
+  --inputBorder: rgba(255,255,255,.10);
+
+  --ctaBg: #7e3c74;
+  --ctaBg2: #93508a;
+
+}
