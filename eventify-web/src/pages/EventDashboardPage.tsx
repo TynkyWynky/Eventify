@@ -1,7 +1,6 @@
 import { useMemo, useState } from "react";
-import HeroBanner from "../components/HeroBanner";
+import SelectField from "../components/SelectField";
 
-type ViewMode = "list" | "map";
 
 type EventItem = {
   id: string;
@@ -9,11 +8,26 @@ type EventItem = {
   venue: string;
   city: string;
   dateLabel: string;
+  distanceKm: number;
   imageUrl: string;
   tags: string[];
+  trending?: boolean;
 };
 
-const GENRES = ["Techno", "Electronic", "Rock", "Indie", "Pop", "Hip-Hop", "Jazz"];
+const MUSIC_STYLES = [
+  "All",
+  "Techno",
+  "Electronic",
+  "Rock",
+  "Indie",
+  "Pop",
+  "Hip-Hop",
+  "Jazz",
+  "House",
+  "Drum & Bass",
+  "R&B",
+  "Metal",
+];
 
 const MOCK_EVENTS: EventItem[] = [
   {
@@ -21,142 +35,193 @@ const MOCK_EVENTS: EventItem[] = [
     title: "Andresz @ La Botanique",
     venue: "La Botanique",
     city: "Brussels",
-    dateLabel: "12 Mar 2026, 22:30",
+    dateLabel: "25 Mar 22:30",
+    distanceKm: 2.5,
     imageUrl:
       "https://images.unsplash.com/photo-1511379938547-c1f69419868d?w=1200&q=80",
     tags: ["Techno", "Electronic"],
+    trending: true,
   },
   {
     id: "2",
-    title: "Local Jam Night",
-    venue: "Small Venue",
+    title: "Live Session",
+    venue: "La Botanique",
     city: "Brussels",
-    dateLabel: "18 Mar 2026, 19:30",
+    dateLabel: "25 Mar 22:30",
+    distanceKm: 2.5,
     imageUrl:
       "https://images.unsplash.com/photo-1501386761578-eac5c94b800a?w=1200&q=80",
-    tags: ["Indie", "Rock"],
+    tags: ["Rock"],
+    trending: true,
   },
   {
     id: "3",
-    title: "City Pop Session",
-    venue: "Club X",
+    title: "Crowd Night",
+    venue: "La Botanique",
     city: "Brussels",
-    dateLabel: "23 Mar 2026, 20:00",
+    dateLabel: "25 Mar 22:30",
+    distanceKm: 2.5,
     imageUrl:
-      "https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?w=1200&q=80",
-    tags: ["Pop"],
+      "https://images.unsplash.com/photo-1492684223066-81342ee5ff30?w=1200&q=80",
+    tags: ["Jazz"],
+    trending: true,
+  },
+  {
+    id: "4",
+    title: "Night Club Set",
+    venue: "La Botanique",
+    city: "Brussels",
+    dateLabel: "25 Mar 22:30",
+    distanceKm: 3.2,
+    imageUrl:
+      "https://images.unsplash.com/photo-1540039155733-5bb30b53aa14?w=1200&q=80",
+    tags: ["Electronic"],
+  },
+  {
+    id: "5",
+    title: "Bass Drop",
+    venue: "La Botanique",
+    city: "Brussels",
+    dateLabel: "25 Mar 22:30",
+    distanceKm: 8.1,
+    imageUrl:
+      "https://images.unsplash.com/photo-1459749411175-04bf5292ceea?w=1200&q=80",
+    tags: ["Techno"],
+  },
+  {
+    id: "6",
+    title: "Laser Show",
+    venue: "La Botanique",
+    city: "Brussels",
+    dateLabel: "25 Mar 22:30",
+    distanceKm: 15.4,
+    imageUrl:
+      "https://images.unsplash.com/photo-1470225620780-dba8ba36b745?w=1200&q=80",
+    tags: ["Rock"],
   },
 ];
 
+function EventCard({ event }: { event: EventItem }) {
+  return (
+    <article className="eventCard">
+      <div className="eventImageWrap">
+        <img className="eventImage" src={event.imageUrl} alt={event.title} />
+      </div>
+      <div className="eventFooter">
+        <div className="eventFooterLeft">
+          {event.venue} - {event.distanceKm.toFixed(1)}Km
+        </div>
+        <div className="eventFooterRight">{event.dateLabel}</div>
+      </div>
+    </article>
+  );
+}
+
 export default function EventDashboardPage() {
-  const [viewMode, setViewMode] = useState<ViewMode>("list");
-  const [activeGenres, setActiveGenres] = useState<string[]>([]);
+  const [selectedStyle, setSelectedStyle] = useState<string>("All");
   const [maxDistanceKm, setMaxDistanceKm] = useState<number>(20);
 
-  const toggleGenre = (genre: string) => {
-    setActiveGenres((current) =>
-      current.includes(genre) ? current.filter((g) => g !== genre) : [...current, genre]
-    );
-  };
-
   const filteredEvents = useMemo(() => {
-    if (activeGenres.length === 0) return MOCK_EVENTS;
-    return MOCK_EVENTS.filter((e) => e.tags.some((t) => activeGenres.includes(t)));
-  }, [activeGenres]);
+    return MOCK_EVENTS.filter((e) => {
+      const matchesDistance = e.distanceKm <= maxDistanceKm;
+      const matchesStyle =
+        selectedStyle === "All" || e.tags.includes(selectedStyle);
+      return matchesDistance && matchesStyle;
+    });
+  }, [selectedStyle, maxDistanceKm]);
+
+  const trendingEvents = filteredEvents.filter((e) => e.trending);
+  const allEvents = filteredEvents;
 
   return (
     <div>
-      <HeroBanner />
 
-      <section className="dashboardPanel">
-        <div className="dashboardHeaderRow">
+      <section className="heroBanner">
+        <div
+          className="heroImage"
+          style={{
+            backgroundImage:
+              "url(https://images.unsplash.com/photo-1501386761578-eac5c94b800a?w=1800&q=80)",
+          }}
+        />
+        <div className="heroShade" />
+
+        <div className="heroCenter">
           <div>
-            <div className="muted">Filters</div>
+            <h1 className="heroTitle">Your local scene awaits.</h1>
+            <p className="heroSubtitle">
+              Discover all the concerts around you.
+            </p>
 
-            <div className="chipRow" style={{ marginTop: "12px" }}>
-              {GENRES.map((g) => (
-                <button
-                  key={g}
-                  className={`chip ${activeGenres.includes(g) ? "chipActive" : ""}`}
-                  onClick={() => toggleGenre(g)}
-                >
-                  {g}
-                </button>
-              ))}
-            </div>
-
-            <div className="distanceRow">
-              <div className="muted">Distance</div>
-              <input
-                className="distanceSlider"
-                type="range"
-                min={1}
-                max={100}
-                value={maxDistanceKm}
-                onChange={(e) => setMaxDistanceKm(Number(e.target.value))}
+            <div className="heroFilterBar">
+              {/* Dropdown */}
+              <SelectField
+              value={selectedStyle}
+              options={MUSIC_STYLES}
+              onChange={setSelectedStyle}
+              placeholder="All"
+              searchPlaceholder="Search a style…"
               />
-              <div>{maxDistanceKm} km</div>
+
+
+
+              {/* Slider */}
+              <div className="sliderGroup">
+                <div className="sliderHeader">
+                  <span className="sliderLabel">Distance (Km)</span>
+                  <span className="sliderValue">{maxDistanceKm} Km</span>
+                </div>
+                <input
+                  className="rangeSlider"
+                  type="range"
+                  min={1}
+                  max={100}
+                  value={maxDistanceKm}
+                  onChange={(e) => setMaxDistanceKm(Number(e.target.value))}
+                />
+              </div>
             </div>
           </div>
-
-          <div className="toggleGroup">
-            <button
-              className={`toggleBtn ${viewMode === "list" ? "toggleBtnActive" : ""}`}
-              onClick={() => setViewMode("list")}
-            >
-              View List
-            </button>
-            <button
-              className={`toggleBtn ${viewMode === "map" ? "toggleBtnActive" : ""}`}
-              onClick={() => setViewMode("map")}
-            >
-              View Map
-            </button>
-          </div>
         </div>
-
-        <div className="organizerCTA">
-          <div>
-            <div style={{ fontWeight: 700 }}>Organisator? Make some noise!</div>
-            <div style={{ marginTop: "6px", opacity: 0.9, fontSize: "14px" }}>
-              Post your event — it appears after admin approval.
-            </div>
-          </div>
-          <button className="ctaButton">Post an event</button>
-        </div>
-
-        {viewMode === "map" ? (
-          <div className="panel" style={{ marginTop: "24px", padding: "16px", background: "var(--panel2)" }}>
-            <div className="muted">Map view (next) — Leaflet arrive ici.</div>
-          </div>
-        ) : (
-          <div className="eventsGrid">
-            {filteredEvents.map((e) => (
-              <article key={e.id} className="card">
-                <div className="eventImageWrap">
-                  <img className="eventImage" src={e.imageUrl} alt={e.title} />
-                </div>
-
-                <div className="eventBody">
-                  <div className="eventTitle">{e.title}</div>
-                  <div className="eventMeta">
-                    {e.venue} • {e.city}
-                  </div>
-                  <div className="eventMeta">{e.dateLabel}</div>
-
-                  <div className="eventTagsRow">
-                    {e.tags.map((t) => (
-                      <span key={t} className="eventTag">{t}</span>
-                    ))}
-                  </div>
-
-                  <button className="eventAction">I’m going!</button>
-                </div>
-              </article>
-            ))}
-          </div>
-        )}
       </section>
+
+      {/* TRENDING */}
+      <div className="sectionTitleRow">
+        <div>
+          <div className="sectionTitle">Trending</div>
+          <div className="sectionHint">Hot events around you</div>
+        </div>
+        <div className="sectionHint">
+          Filter: {selectedStyle} • ≤ {maxDistanceKm} km
+        </div>
+      </div>
+
+      <div className="trendingRow">
+        {trendingEvents.map((e) => (
+          <EventCard key={e.id} event={e} />
+        ))}
+      </div>
+
+      {/* DASHBOARD / ALL EVENTS */}
+      <div className="sectionTitleRow">
+        <div>
+          <div className="sectionTitle">Dashboard</div>
+          <div className="sectionHint">All events (filtered)</div>
+        </div>
+      </div>
+
+      {/* Grid all events */}
+      <div className="eventsGrid">
+        {allEvents.map((e) => (
+          <EventCard key={e.id} event={e} />
+        ))}
+      </div>
+
+      {/* CTA */}
+      <div className="organizerCTA">
+        <div className="ctaTitle">Organisator? Make some noise!</div>
+        <button className="ctaButton">Promote my event!</button>
+      </div>
     </div>
   );
 }

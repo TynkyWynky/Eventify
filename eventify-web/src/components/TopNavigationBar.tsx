@@ -9,7 +9,7 @@ export default function TopNavigationBar() {
         <Link to="/" className="brandTitle">Eventify</Link>
 
         <div className="navSearchWrap">
-          <input className="searchBar" placeholder="Artist, place, genre…" />
+          <input className="searchBar" placeholder="Artist, Place, Genre, ..." />
         </div>
 
         <div className="navActions">
@@ -19,6 +19,7 @@ export default function TopNavigationBar() {
           <button className="btnPrimary" onClick={() => navigate("/register")}>
             Sign up
           </button>
+
         </div>
       </div>
     </header>
