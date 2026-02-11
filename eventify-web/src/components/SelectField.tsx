@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 
 type SelectFieldProps = {
   value: string;
-  options: string[];
+  options: readonly string[];
   onChange: (value: string) => void;
   placeholder?: string;
   searchPlaceholder?: string;

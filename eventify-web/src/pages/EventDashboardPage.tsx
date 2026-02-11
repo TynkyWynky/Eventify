@@ -1,141 +1,234 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { Link, useLocation, useSearchParams } from "react-router-dom";
 import SelectField from "../components/SelectField";
+import { MUSIC_STYLES, type EventItem } from "../events/eventsStore";
+import { eventsRepo } from "../data/events";
+import { subscribeOrganizerEventsChanged } from "../data/events/organizerEventsStore";
+import { useAuth } from "../auth/AuthContext";
+import {
+  getUserGoingEventIds,
+  subscribeMetricsChanged,
+} from "../data/events/eventMetricsStore";
+import {
+  getUserFavoriteEventIds,
+  subscribeFavoritesChanged,
+} from "../data/events/eventFavoritesStore";
 
+function clamp(n: number, min: number, max: number) {
+  return Math.min(max, Math.max(min, n));
+}
 
-type EventItem = {
-  id: string;
-  title: string;
-  venue: string;
-  city: string;
-  dateLabel: string;
-  distanceKm: number;
-  imageUrl: string;
-  tags: string[];
-  trending?: boolean;
-};
+function parseKm(raw: string | null, fallback: number) {
+  if (!raw) return fallback;
+  const n = Number.parseInt(raw, 10);
+  if (!Number.isFinite(n)) return fallback;
+  return clamp(n, 1, 100);
+}
 
-const MUSIC_STYLES = [
-  "All",
-  "Techno",
-  "Electronic",
-  "Rock",
-  "Indie",
-  "Pop",
-  "Hip-Hop",
-  "Jazz",
-  "House",
-  "Drum & Bass",
-  "R&B",
-  "Metal",
-];
-
-const MOCK_EVENTS: EventItem[] = [
-  {
-    id: "1",
-    title: "Andresz @ La Botanique",
-    venue: "La Botanique",
-    city: "Brussels",
-    dateLabel: "25 Mar 22:30",
-    distanceKm: 2.5,
-    imageUrl:
-      "https://images.unsplash.com/photo-1511379938547-c1f69419868d?w=1200&q=80",
-    tags: ["Techno", "Electronic"],
-    trending: true,
-  },
-  {
-    id: "2",
-    title: "Live Session",
-    venue: "La Botanique",
-    city: "Brussels",
-    dateLabel: "25 Mar 22:30",
-    distanceKm: 2.5,
-    imageUrl:
-      "https://images.unsplash.com/photo-1501386761578-eac5c94b800a?w=1200&q=80",
-    tags: ["Rock"],
-    trending: true,
-  },
-  {
-    id: "3",
-    title: "Crowd Night",
-    venue: "La Botanique",
-    city: "Brussels",
-    dateLabel: "25 Mar 22:30",
-    distanceKm: 2.5,
-    imageUrl:
-      "https://images.unsplash.com/photo-1492684223066-81342ee5ff30?w=1200&q=80",
-    tags: ["Jazz"],
-    trending: true,
-  },
-  {
-    id: "4",
-    title: "Night Club Set",
-    venue: "La Botanique",
-    city: "Brussels",
-    dateLabel: "25 Mar 22:30",
-    distanceKm: 3.2,
-    imageUrl:
-      "https://images.unsplash.com/photo-1540039155733-5bb30b53aa14?w=1200&q=80",
-    tags: ["Electronic"],
-  },
-  {
-    id: "5",
-    title: "Bass Drop",
-    venue: "La Botanique",
-    city: "Brussels",
-    dateLabel: "25 Mar 22:30",
-    distanceKm: 8.1,
-    imageUrl:
-      "https://images.unsplash.com/photo-1459749411175-04bf5292ceea?w=1200&q=80",
-    tags: ["Techno"],
-  },
-  {
-    id: "6",
-    title: "Laser Show",
-    venue: "La Botanique",
-    city: "Brussels",
-    dateLabel: "25 Mar 22:30",
-    distanceKm: 15.4,
-    imageUrl:
-      "https://images.unsplash.com/photo-1470225620780-dba8ba36b745?w=1200&q=80",
-    tags: ["Rock"],
-  },
-];
-
-function EventCard({ event }: { event: EventItem }) {
+function EventCard({ event, search }: { event: EventItem; search: string }) {
   return (
-    <article className="eventCard">
-      <div className="eventImageWrap">
-        <img className="eventImage" src={event.imageUrl} alt={event.title} />
-      </div>
-      <div className="eventFooter">
-        <div className="eventFooterLeft">
-          {event.venue} - {event.distanceKm.toFixed(1)}Km
+    <Link to={`/events/${event.id}${search}`} className="eventCardLink">
+      <article className="eventCard">
+        <div className="eventImageWrap">
+          <img className="eventImage" src={event.imageUrl} alt={event.title} />
         </div>
-        <div className="eventFooterRight">{event.dateLabel}</div>
-      </div>
-    </article>
+
+        <div className="eventFooter">
+          <div className="eventFooterLeft">
+            {event.venue} - {event.distanceKm.toFixed(1)}Km
+          </div>
+          <div className="eventFooterRight">{event.dateLabel}</div>
+        </div>
+      </article>
+    </Link>
   );
 }
 
 export default function EventDashboardPage() {
-  const [selectedStyle, setSelectedStyle] = useState<string>("All");
-  const [maxDistanceKm, setMaxDistanceKm] = useState<number>(20);
+  const { user } = useAuth();
+  const userId = user?.id ?? null;
 
-  const filteredEvents = useMemo(() => {
-    return MOCK_EVENTS.filter((e) => {
-      const matchesDistance = e.distanceKm <= maxDistanceKm;
-      const matchesStyle =
-        selectedStyle === "All" || e.tags.includes(selectedStyle);
-      return matchesDistance && matchesStyle;
+  const location = useLocation();
+  const [searchParams, setSearchParams] = useSearchParams();
+
+  const q = (searchParams.get("q") ?? "").trim();
+
+  const styleRaw = (searchParams.get("style") ?? "All").trim();
+  const selectedStyle = MUSIC_STYLES.includes(styleRaw) ? styleRaw : "All";
+
+  const maxDistanceKm = parseKm(searchParams.get("km"), 20);
+
+  const styleOptions = useMemo(() => [...MUSIC_STYLES], []);
+
+  function updateParams(next: { style?: string; km?: number }) {
+    const sp = new URLSearchParams(searchParams);
+
+    if (next.style !== undefined) {
+      const clean = next.style.trim();
+      if (clean === "All") sp.delete("style");
+      else sp.set("style", clean);
+    }
+
+    if (next.km !== undefined) {
+      if (next.km === 20) sp.delete("km");
+      else sp.set("km", String(next.km));
+    }
+
+    setSearchParams(sp, { replace: true });
+  }
+
+  const [events, setEvents] = useState<EventItem[]>([]);
+  const [isLoading, setIsLoading] = useState<boolean>(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const [reloadTick, setReloadTick] = useState(0);
+  useEffect(() => {
+    return subscribeOrganizerEventsChanged(() => setReloadTick((t) => t + 1));
+  }, []);
+
+  useEffect(() => {
+    const controller = new AbortController();
+
+    queueMicrotask(() => {
+      if (controller.signal.aborted) return;
+      setIsLoading(true);
+      setError(null);
     });
-  }, [selectedStyle, maxDistanceKm]);
 
-  const trendingEvents = filteredEvents.filter((e) => e.trending);
-  const allEvents = filteredEvents;
+    eventsRepo
+      .list(
+        {
+          style: selectedStyle,
+          maxDistanceKm,
+          query: q,
+        },
+        { signal: controller.signal }
+      )
+      .then(setEvents)
+      .catch((err: unknown) => {
+        if (err instanceof DOMException && err.name === "AbortError") return;
+        setError(err instanceof Error ? err.message : String(err));
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setIsLoading(false);
+      });
+
+    return () => controller.abort();
+  }, [maxDistanceKm, q, selectedStyle, reloadTick]);
+
+  const trendingEvents = useMemo(
+    () => events.filter((e) => Boolean(e.trending)),
+    [events]
+  );
+
+  const [signalsTick, setSignalsTick] = useState(0);
+
+  useEffect(() => {
+    if (!userId) return;
+
+    const bump = () => setSignalsTick((t) => t + 1);
+
+    const unsubFav = subscribeFavoritesChanged(bump);
+    const unsubGoing = subscribeMetricsChanged(bump);
+
+    return () => {
+      unsubFav();
+      unsubGoing();
+    };
+  }, [userId]);
+
+  const favIds = useMemo(() => {
+    if (!userId) return [];
+    return getUserFavoriteEventIds(userId);
+  }, [userId]);
+
+  const goingIds = useMemo(() => {
+    if (!userId) return [];
+    return getUserGoingEventIds(userId);
+  }, [userId]);
+
+  const [prefTags, setPrefTags] = useState<string[]>([]);
+
+  useEffect(() => {
+    if (!userId) return;
+
+    const controller = new AbortController();
+
+    const refreshTags = async () => {
+      try {
+        const f = getUserFavoriteEventIds(userId);
+        const g = getUserGoingEventIds(userId);
+
+        const ids = Array.from(new Set([...f, ...g])).slice(0, 30);
+        if (ids.length === 0) {
+          setPrefTags([]);
+          return;
+        }
+
+        const results = await Promise.all(
+          ids.map((id) => eventsRepo.getById(id, { signal: controller.signal }))
+        );
+
+        const counts = new Map<string, number>();
+        for (const e of results) {
+          if (!e) continue;
+          const weight = g.includes(e.id) ? 2 : 1; 
+          for (const t of e.tags) {
+            if (!t || t === "All") continue;
+            counts.set(t, (counts.get(t) ?? 0) + weight);
+          }
+        }
+
+        const top = [...counts.entries()]
+          .sort((a, b) => b[1] - a[1])
+          .slice(0, 5)
+          .map(([t]) => t);
+
+        setPrefTags(top);
+      } catch (err: unknown) {
+        if (err instanceof DOMException && err.name === "AbortError") return;
+      }
+    };
+
+    refreshTags();
+
+    return () => controller.abort();
+  }, [userId, signalsTick]);
+
+  const recommendedEvents = useMemo(() => {
+    const exclude = new Set([...favIds, ...goingIds]);
+    const base = events.filter((e) => !exclude.has(e.id));
+
+    const score = (e: EventItem) => {
+      let s = 0;
+      for (const t of e.tags) {
+        const idx = prefTags.indexOf(t);
+        if (idx >= 0) s += 10 - idx * 2;
+      }
+      if (e.trending) s += 2;
+      s += Math.max(0, 3 - e.distanceKm / 10);
+      return s;
+    };
+
+    if (!userId || prefTags.length === 0) {
+      return base.filter((e) => !e.trending).slice(0, 8);
+    }
+
+    const sorted = [...base].sort((a, b) => score(b) - score(a));
+    return sorted.filter((e) => score(e) > 0).slice(0, 8);
+  }, [events, favIds, goingIds, prefTags, userId]);
+
+  const filterLabel = [
+    selectedStyle !== "All" ? selectedStyle : null,
+    `≤ ${maxDistanceKm} km`,
+    q ? `“${q}”` : null,
+  ]
+    .filter(Boolean)
+    .join(" • ");
 
   return (
     <div>
-
+      {/* HERO */}
       <section className="heroBanner">
         <div
           className="heroImage"
@@ -149,41 +242,66 @@ export default function EventDashboardPage() {
         <div className="heroCenter">
           <div>
             <h1 className="heroTitle">Your local scene awaits.</h1>
-            <p className="heroSubtitle">
-              Discover all the concerts around you.
-            </p>
+            <p className="heroSubtitle">Discover all the concerts around you.</p>
 
             <div className="heroFilterBar">
-              {/* Dropdown */}
               <SelectField
-              value={selectedStyle}
-              options={MUSIC_STYLES}
-              onChange={setSelectedStyle}
-              placeholder="All"
-              searchPlaceholder="Search a style…"
+                value={selectedStyle}
+                options={styleOptions}
+                onChange={(v) => updateParams({ style: v })}
+                placeholder="All"
+                searchPlaceholder="Search a style…"
               />
 
-
-
-              {/* Slider */}
               <div className="sliderGroup">
                 <div className="sliderHeader">
                   <span className="sliderLabel">Distance (Km)</span>
                   <span className="sliderValue">{maxDistanceKm} Km</span>
                 </div>
+
                 <input
                   className="rangeSlider"
                   type="range"
                   min={1}
                   max={100}
                   value={maxDistanceKm}
-                  onChange={(e) => setMaxDistanceKm(Number(e.target.value))}
+                  onChange={(e) => updateParams({ km: Number(e.target.value) })}
                 />
               </div>
             </div>
+
+            {isLoading ? <div className="sectionHint">Loading…</div> : null}
+            {error ? <div className="sectionHint">Error: {error}</div> : null}
           </div>
         </div>
       </section>
+
+      {/* RECOMMENDED */}
+      <div className="sectionTitleRow">
+        <div>
+          <div className="sectionTitle">Recommended for you</div>
+          <div className="sectionHint">
+            {userId && prefTags.length > 0
+              ? `Based on: ${prefTags.slice(0, 3).join(", ")}`
+              : "Login + Save/Going to personalize"}
+          </div>
+        </div>
+        <div className="sectionHint">{filterLabel || "No filters"}</div>
+      </div>
+
+      <div className="trendingRow">
+        {isLoading && events.length === 0 ? (
+          <div className="sectionHint">Loading recommendations…</div>
+        ) : recommendedEvents.length === 0 ? (
+          <div className="sectionHint">
+            No recommendations yet. Save or join a few events.
+          </div>
+        ) : (
+          recommendedEvents.map((e) => (
+            <EventCard key={e.id} event={e} search={location.search} />
+          ))
+        )}
+      </div>
 
       {/* TRENDING */}
       <div className="sectionTitleRow">
@@ -191,36 +309,47 @@ export default function EventDashboardPage() {
           <div className="sectionTitle">Trending</div>
           <div className="sectionHint">Hot events around you</div>
         </div>
-        <div className="sectionHint">
-          Filter: {selectedStyle} • ≤ {maxDistanceKm} km
-        </div>
+        <div className="sectionHint">{filterLabel || "No filters"}</div>
       </div>
 
       <div className="trendingRow">
-        {trendingEvents.map((e) => (
-          <EventCard key={e.id} event={e} />
-        ))}
+        {isLoading && events.length === 0 ? (
+          <div className="sectionHint">Loading trending…</div>
+        ) : trendingEvents.length === 0 ? (
+          <div className="sectionHint">No trending events for this filter.</div>
+        ) : (
+          trendingEvents.map((e) => (
+            <EventCard key={e.id} event={e} search={location.search} />
+          ))
+        )}
       </div>
 
-      {/* DASHBOARD / ALL EVENTS */}
+      {/* ALL EVENTS */}
       <div className="sectionTitleRow">
         <div>
           <div className="sectionTitle">Dashboard</div>
-          <div className="sectionHint">All events (filtered)</div>
+          <div className="sectionHint">All events</div>
         </div>
       </div>
 
-      {/* Grid all events */}
       <div className="eventsGrid">
-        {allEvents.map((e) => (
-          <EventCard key={e.id} event={e} />
-        ))}
+        {isLoading && events.length === 0 ? (
+          <div className="sectionHint">Loading events list…</div>
+        ) : events.length === 0 ? (
+          <div className="sectionHint">No events match your filters.</div>
+        ) : (
+          events.map((e) => (
+            <EventCard key={e.id} event={e} search={location.search} />
+          ))
+        )}
       </div>
 
       {/* CTA */}
       <div className="organizerCTA">
         <div className="ctaTitle">Organisator? Make some noise!</div>
-        <button className="ctaButton">Promote my event!</button>
+        <Link className="ctaButton" to="/my-events">
+          Promote my event!
+        </Link>
       </div>
     </div>
   );
