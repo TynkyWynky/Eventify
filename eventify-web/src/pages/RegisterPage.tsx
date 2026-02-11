@@ -1,4 +1,6 @@
 import { useMemo, useState } from "react";
+import { Link, useLocation, useNavigate } from "react-router-dom";
+import { useAuth } from "../auth/AuthContext";
 
 function isValidEmail(value: string) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim());
@@ -26,13 +28,7 @@ function CrossIcon() {
   );
 }
 
-function ValidationIcon({
-  show,
-  valid,
-}: {
-  show: boolean;
-  valid: boolean;
-}) {
+function ValidationIcon({ show, valid }: { show: boolean; valid: boolean }) {
   if (!show) return null;
   return (
     <span
@@ -45,6 +41,12 @@ function ValidationIcon({
 }
 
 export default function RegisterPage() {
+  const { register } = useAuth();
+  const navigate = useNavigate();
+  const location = useLocation();
+
+  const from = (location.state as { from?: string } | null)?.from ?? "/";
+
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
 
@@ -83,7 +85,12 @@ export default function RegisterPage() {
       return;
     }
 
-    console.log("REGISTER OK", { name, email, password });
+    try {
+      register({ name, email, password, role: "user" });
+      navigate(from, { replace: true });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Register failed.");
+    }
   }
 
   return (
@@ -91,11 +98,7 @@ export default function RegisterPage() {
       <div className="authCard">
         <h2 className="authTitle">Register</h2>
 
-        {error && (
-          <div className="authError">
-            {error}
-          </div>
-        )}
+        {error && <div className="authError">{error}</div>}
 
         <form className="authForm" onSubmit={handleSubmit}>
           <label className="authLabel" htmlFor="register-name">
@@ -145,9 +148,7 @@ export default function RegisterPage() {
             <ValidationIcon show={showPasswordStatus} valid={passwordOk} />
           </div>
 
-          <div className="authHint">
-            Password must be at least 8 characters.
-          </div>
+          <div className="authHint">Password must be at least 8 characters.</div>
 
           <label className="authLabel" htmlFor="register-confirm-password">
             Confirm password
@@ -169,6 +170,10 @@ export default function RegisterPage() {
           <button className="authPrimaryButton" type="submit">
             Create account
           </button>
+
+          <div className="authHint">
+            Already have an account? <Link to="/login">Login</Link>
+          </div>
         </form>
       </div>
     </div>
