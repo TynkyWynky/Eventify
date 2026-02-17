@@ -3,7 +3,10 @@ import { Link, useLocation, useSearchParams } from "react-router-dom";
 import SelectField from "../components/SelectField";
 import { MUSIC_STYLES, type EventItem } from "../events/eventsStore";
 import { eventsRepo } from "../data/events";
-import { subscribeOrganizerEventsChanged } from "../data/events/organizerEventsStore";
+import {
+  listOrganizerEventsByOwner,
+  subscribeOrganizerEventsChanged,
+} from "../data/events/organizerEventsStore";
 import { useAuth } from "../auth/AuthContext";
 import {
   getUserGoingEventIds,
@@ -47,15 +50,14 @@ function EventCard({ event, search }: { event: EventItem; search: string }) {
 export default function EventDashboardPage() {
   const { user } = useAuth();
   const userId = user?.id ?? null;
+  const isOrganizer = user?.role === "organizer" || user?.role === "admin";
 
   const location = useLocation();
   const [searchParams, setSearchParams] = useSearchParams();
 
   const q = (searchParams.get("q") ?? "").trim();
-
   const styleRaw = (searchParams.get("style") ?? "All").trim();
   const selectedStyle = MUSIC_STYLES.includes(styleRaw) ? styleRaw : "All";
-
   const maxDistanceKm = parseKm(searchParams.get("km"), 20);
 
   const styleOptions = useMemo(() => [...MUSIC_STYLES], []);
@@ -78,7 +80,7 @@ export default function EventDashboardPage() {
   }
 
   const [events, setEvents] = useState<EventItem[]>([]);
-  const [isLoading, setIsLoading] = useState<boolean>(false);
+  const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const [reloadTick, setReloadTick] = useState(0);
@@ -97,11 +99,7 @@ export default function EventDashboardPage() {
 
     eventsRepo
       .list(
-        {
-          style: selectedStyle,
-          maxDistanceKm,
-          query: q,
-        },
+        { style: selectedStyle, maxDistanceKm, query: q },
         { signal: controller.signal }
       )
       .then(setEvents)
@@ -122,7 +120,6 @@ export default function EventDashboardPage() {
   );
 
   const [signalsTick, setSignalsTick] = useState(0);
-
   useEffect(() => {
     if (!userId) return;
 
@@ -137,18 +134,7 @@ export default function EventDashboardPage() {
     };
   }, [userId]);
 
-  const favIds = useMemo(() => {
-    if (!userId) return [];
-    return getUserFavoriteEventIds(userId);
-  }, [userId]);
-
-  const goingIds = useMemo(() => {
-    if (!userId) return [];
-    return getUserGoingEventIds(userId);
-  }, [userId]);
-
   const [prefTags, setPrefTags] = useState<string[]>([]);
-
   useEffect(() => {
     if (!userId) return;
 
@@ -172,7 +158,7 @@ export default function EventDashboardPage() {
         const counts = new Map<string, number>();
         for (const e of results) {
           if (!e) continue;
-          const weight = g.includes(e.id) ? 2 : 1; 
+          const weight = g.includes(e.id) ? 2 : 1;
           for (const t of e.tags) {
             if (!t || t === "All") continue;
             counts.set(t, (counts.get(t) ?? 0) + weight);
@@ -191,11 +177,16 @@ export default function EventDashboardPage() {
     };
 
     refreshTags();
-
     return () => controller.abort();
   }, [userId, signalsTick]);
 
   const recommendedEvents = useMemo(() => {
+    const _tick = signalsTick; 
+    void _tick;
+
+    const favIds = userId ? getUserFavoriteEventIds(userId) : [];
+    const goingIds = userId ? getUserGoingEventIds(userId) : [];
+
     const exclude = new Set([...favIds, ...goingIds]);
     const base = events.filter((e) => !exclude.has(e.id));
 
@@ -216,7 +207,7 @@ export default function EventDashboardPage() {
 
     const sorted = [...base].sort((a, b) => score(b) - score(a));
     return sorted.filter((e) => score(e) > 0).slice(0, 8);
-  }, [events, favIds, goingIds, prefTags, userId]);
+  }, [events, prefTags, userId, signalsTick]);
 
   const filterLabel = [
     selectedStyle !== "All" ? selectedStyle : null,
@@ -225,6 +216,45 @@ export default function EventDashboardPage() {
   ]
     .filter(Boolean)
     .join(" • ");
+
+  const myPendingSubmissions = useMemo(() => {
+    const _tick = reloadTick; 
+    void _tick;
+
+    if (!userId) return 0;
+    return listOrganizerEventsByOwner(userId).filter((e) => e.status === "pending")
+      .length;
+  }, [userId, reloadTick]);
+
+  const cta = useMemo(() => {
+    if (!user) {
+      return {
+        title: "Organisator? Make some noise!",
+        hint: "Login om je eerste aanvraag te doen en events in te dienen.",
+        to: "/login",
+        label: "Login",
+      };
+    }
+
+    if (isOrganizer) {
+      return {
+        title: "Organisator? Make some noise!",
+        hint: "Create, edit en boost je events.",
+        to: "/my-events",
+        label: "Promote my event!",
+      };
+    }
+
+    return {
+      title: "Organisator? Make some noise!",
+      hint:
+        myPendingSubmissions > 0
+          ? `Je aanvraag is in review (${myPendingSubmissions}). Admin moet goedkeuren.`
+          : "Dien je eerste event in voor review. Na approval word je organizer.",
+      to: "/my-events",
+      label: myPendingSubmissions > 0 ? "Request pending…" : "Request approval",
+    };
+  }, [user, isOrganizer, myPendingSubmissions]);
 
   return (
     <div>
@@ -346,9 +376,13 @@ export default function EventDashboardPage() {
 
       {/* CTA */}
       <div className="organizerCTA">
-        <div className="ctaTitle">Organisator? Make some noise!</div>
-        <Link className="ctaButton" to="/my-events">
-          Promote my event!
+        <div>
+          <div className="ctaTitle">{cta.title}</div>
+          <div className="ctaHint">{cta.hint}</div>
+        </div>
+
+        <Link className="ctaButton" to={cta.to}>
+          {cta.label}
         </Link>
       </div>
     </div>
