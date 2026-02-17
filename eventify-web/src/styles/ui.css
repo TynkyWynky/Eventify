@@ -613,6 +613,13 @@ body::before {
 
 .ctaButton:hover { background: rgba(255,255,255,.24); }
 
+.ctaHint {
+  margin-top: 6px;
+  color: rgba(255,255,255,.78);
+  font-size: 13px;
+}
+
+
 /* =========================
    AUTH PAGES
    ========================= */

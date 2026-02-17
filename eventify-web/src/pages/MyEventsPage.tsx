@@ -38,9 +38,13 @@ function safeNum(n: number, fallback: number) {
   return Number.isFinite(n) ? n : fallback;
 }
 
+function StatusPill({ status }: { status: OrganizerEvent["status"] }) {
+  return <span className={`adminStatusPill adminStatus_${status}`}>{status}</span>;
+}
+
 export default function MyEventsPage() {
   const { user } = useAuth();
-  const canManage = user?.role === "organizer" || user?.role === "admin";
+  const isOrganizer = user?.role === "organizer" || user?.role === "admin";
   const userId = user?.id ?? null;
 
   const styleOptions = useMemo(
@@ -102,6 +106,8 @@ export default function MyEventsPage() {
   }
 
   function startEdit(e: OrganizerEvent) {
+    if (!isOrganizer) return;
+
     setEditingId(e.id);
     setTitle(e.title);
     setVenue(e.venue);
@@ -181,8 +187,13 @@ export default function MyEventsPage() {
     setError(null);
     setGeoError(null);
 
-    if (!userId || !canManage) {
-      setError("Only organizers can manage events.");
+    if (!userId) {
+      setError("You must be logged in.");
+      return;
+    }
+
+    if (editingId && !isOrganizer) {
+      setError("Only organizers can edit events. Submit a new request instead.");
       return;
     }
 
@@ -217,7 +228,9 @@ export default function MyEventsPage() {
         setGeoStatus(`Found: ${r.displayName}`);
       } catch (e: unknown) {
         setGeoError(e instanceof Error ? e.message : String(e));
-        setError("Could not locate this address. Please check it and click Auto-locate.");
+        setError(
+          "Could not locate this address. Please check it and click Auto-locate."
+        );
         setIsGeocoding(false);
         return;
       } finally {
@@ -286,7 +299,8 @@ export default function MyEventsPage() {
           <h2 className="authTitle">My Events</h2>
 
           <p className="authHint myEventsAuthHintTop">
-            You need to be logged in as an <b>organizer</b> to manage events.
+            Login to submit your first <b>organizer event request</b>.
+            Once approved, you’ll automatically get organizer access.
           </p>
 
           <div className="myEventsAuthButtons">
@@ -299,33 +313,277 @@ export default function MyEventsPage() {
           </div>
 
           <p className="authHint myEventsAuthHintBottom">
-            Demo organizer: <b>orga@eventify.local</b> / <b>password123</b>
+            Demo admin: <b>admin@eventify.local</b> / <b>password123</b>
           </p>
         </div>
       </div>
     );
   }
 
-  if (!canManage) {
+
+  if (!isOrganizer) {
+    const pendingCount = events.filter((e) => e.status === "pending").length;
+
     return (
-      <div className="authPage">
-        <div className="authCard">
-          <h2 className="authTitle">My Events</h2>
+      <div className="myEventsPage">
+        <div className="myEventsHeader">
+          <div>
+            <div className="sectionTitle">Become an Organizer</div>
+            <div className="sectionHint">
+              Submit an event request. When an admin approves it, your account becomes{" "}
+              <b>organizer</b> automatically.
+            </div>
+          </div>
 
-          <p className="authHint myEventsAuthHintTop">
-            Your role is <b>{user.role}</b>. Only <b>organizers</b> (and admins)
-            can access this page.
-          </p>
-
-          <div className="myEventsAuthBackWrap">
+          <div className="myEventsHeaderActions">
             <Link className="btn btnSecondary" to="/">
-              ← Back to dashboard
+              ← Dashboard
             </Link>
+            <button className="btn btnSecondary" onClick={resetForm} type="button">
+              New request
+            </button>
+          </div>
+        </div>
+
+        {pendingCount > 0 ? (
+          <div className="myEventsPanel">
+            <div className="sectionHint">
+              You currently have <b>{pendingCount}</b> pending request(s).
+            </div>
+          </div>
+        ) : null}
+
+        {/* Request form (same form, but it will create pending event) */}
+        <div className="myEventsPanel">
+          <div className="myEventsPanelHeader">
+            <div className="myEventsStrongTitle">Submit your first event request</div>
+          </div>
+
+          {error ? <div className="authError myEventsError">{error}</div> : null}
+          {geoError ? <div className="authError myEventsError">{geoError}</div> : null}
+
+          <div className="myEventsFormGrid">
+            <div className="myEventsGrid2_1">
+              <div>
+                <div className="authLabel">Title</div>
+                <input
+                  className="authInput"
+                  value={title}
+                  onChange={(e) => setTitle(e.target.value)}
+                  placeholder="e.g. Techno Night @ Mons"
+                />
+              </div>
+
+              <div>
+                <div className="authLabel">Style</div>
+                <select
+                  className="authInput"
+                  value={style}
+                  onChange={(e) => setStyle(e.target.value)}
+                >
+                  {styleOptions.map((s) => (
+                    <option key={s} value={s}>
+                      {s}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            <div className="myEventsGrid3">
+              <div>
+                <div className="authLabel">Venue</div>
+                <input
+                  className="authInput"
+                  value={venue}
+                  onChange={(e) => setVenue(e.target.value)}
+                  placeholder="e.g. WayRoad"
+                />
+              </div>
+
+              <div>
+                <div className="authLabel">City</div>
+                <input
+                  className="authInput"
+                  value={city}
+                  onChange={(e) => setCity(e.target.value)}
+                  placeholder="e.g. Mons"
+                />
+              </div>
+
+              <div>
+                <div className="authLabel">Date label</div>
+                <input
+                  className="authInput"
+                  value={dateLabel}
+                  onChange={(e) => setDateLabel(e.target.value)}
+                  placeholder="e.g. 2026-03-12 • 21:00"
+                />
+              </div>
+            </div>
+
+            <div>
+              <div className="authLabel">Image URL</div>
+              <input
+                className="authInput"
+                value={imageUrl}
+                onChange={(e) => setImageUrl(e.target.value)}
+                placeholder="https://images.unsplash.com/..."
+              />
+            </div>
+
+            <div className="myEventsGrid2_1_1">
+              <div>
+                <div className="authLabel">Address line</div>
+                <input
+                  className="authInput"
+                  value={addressLine}
+                  onChange={(e) => {
+                    setAddressLine(e.target.value);
+                    setGeoStatus(null);
+                  }}
+                  placeholder="e.g. WayRoad 7"
+                />
+              </div>
+
+              <div>
+                <div className="authLabel">Postal code</div>
+                <input
+                  className="authInput"
+                  value={postalCode}
+                  onChange={(e) => {
+                    setPostalCode(e.target.value);
+                    setGeoStatus(null);
+                  }}
+                  placeholder="e.g. 7860"
+                />
+              </div>
+
+              <div>
+                <div className="authLabel">Country</div>
+                <input
+                  className="authInput"
+                  value={country}
+                  onChange={(e) => {
+                    setCountry(e.target.value);
+                    setGeoStatus(null);
+                  }}
+                  placeholder="e.g. Belgium"
+                />
+              </div>
+            </div>
+
+            <div className="myEventsActionsRow">
+              <button
+                className="btn btnSecondary"
+                type="button"
+                onClick={handleAutoLocate}
+                disabled={isGeocoding}
+              >
+                {isGeocoding ? "Locating…" : "Auto-locate from address"}
+              </button>
+
+              {geoStatus ? (
+                <div className="sectionHint myEventsPromoHint">
+                  {geoStatus} (lat: {Number(latitude).toFixed(5)}, lng:{" "}
+                  {Number(longitude).toFixed(5)})
+                </div>
+              ) : (
+                <div className="sectionHint myEventsPromoHint">
+                  Tip: use “Street + number” (e.g. “WayRoad 7”), then click Auto-locate.
+                </div>
+              )}
+            </div>
+
+            <div>
+              <div className="authLabel">Description</div>
+              <textarea
+                className="authInput"
+                rows={4}
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                placeholder="What should people expect? Line-up, vibe, tickets…"
+              />
+            </div>
+
+            <div className="myEventsActionsRow">
+              <button
+                className="btn btnPrimary"
+                type="button"
+                onClick={handleSave}
+                disabled={isGeocoding}
+              >
+                Submit request
+              </button>
+
+              <button
+                className="btn btnSecondary"
+                type="button"
+                onClick={resetForm}
+                disabled={isGeocoding}
+              >
+                Reset
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {/* Requests list */}
+        <div className="myEventsListWrap">
+          <div className="sectionTitle">Your requests</div>
+          <div className="sectionHint">
+            Only <b>approved</b> events become visible to everyone. If approved, you’ll
+            automatically become organizer.
+          </div>
+
+          <div className="myEventsListGrid">
+            {events.length === 0 ? (
+              <div className="sectionHint">No requests yet.</div>
+            ) : (
+              events.map((e) => (
+                <div key={e.id} className="myEventsEventCard">
+                  <div className="myEventsEventHeader">
+                    <div>
+                      <div className="myEventsEventTitle">
+                        {e.title} <span style={{ marginLeft: 8 }}><StatusPill status={e.status} /></span>
+                      </div>
+                      <div className="sectionHint">
+                        {e.venue} • {e.city} • {e.dateLabel}
+                      </div>
+                      <div className="sectionHint myEventsEventStats">
+                        {e.status === "approved"
+                          ? "Approved: visible to everyone."
+                          : e.status === "pending"
+                          ? "Pending: waiting for admin review."
+                          : "Rejected: you can submit a new request."}
+                      </div>
+                    </div>
+
+                    <div className="myEventsEventButtons">
+                      <Link
+                        className="btn btnSecondary"
+                        to={e.status === "approved" ? `/events/${e.id}` : "#"}
+                        onClick={(ev) => {
+                          if (e.status !== "approved") ev.preventDefault();
+                        }}
+                      >
+                        Open
+                      </Link>
+                    </div>
+                  </div>
+
+                  <div className="sectionHint" style={{ marginTop: 10 }}>
+                    {e.description}
+                  </div>
+                </div>
+              ))
+            )}
           </div>
         </div>
       </div>
     );
   }
+
 
   return (
     <div className="myEventsPage">
@@ -588,7 +846,7 @@ export default function MyEventsPage() {
       <div className="myEventsListWrap">
         <div className="sectionTitle">Your events</div>
         <div className="sectionHint">
-          These are visible to all users (like normal events).
+          Only <b>approved</b> events are visible for everyone.
         </div>
 
         <div className="myEventsListGrid">
@@ -604,7 +862,9 @@ export default function MyEventsPage() {
                 <div key={e.id} className="myEventsEventCard">
                   <div className="myEventsEventHeader">
                     <div>
-                      <div className="myEventsEventTitle">{e.title}</div>
+                      <div className="myEventsEventTitle">
+                        {e.title} <span style={{ marginLeft: 8 }}><StatusPill status={e.status} /></span>
+                      </div>
                       <div className="sectionHint">
                         {e.venue} • {e.city} • {e.dateLabel}
                       </div>
@@ -615,7 +875,13 @@ export default function MyEventsPage() {
                     </div>
 
                     <div className="myEventsEventButtons">
-                      <Link className="btn btnSecondary" to={`/events/${e.id}`}>
+                      <Link
+                        className="btn btnSecondary"
+                        to={e.status === "approved" ? `/events/${e.id}` : "#"}
+                        onClick={(ev) => {
+                          if (e.status !== "approved") ev.preventDefault();
+                        }}
+                      >
                         Open
                       </Link>
 
@@ -649,24 +915,22 @@ export default function MyEventsPage() {
                   <div className="myEventsPromotionRow">
                     <button
                       className={`btn ${
-                        active && e.promotionPlan === "24h"
-                          ? "btnPrimary"
-                          : "btnSecondary"
+                        active && e.promotionPlan === "24h" ? "btnPrimary" : "btnSecondary"
                       }`}
                       type="button"
                       onClick={() => userId && setPromotion(userId, e.id, "24h")}
+                      disabled={e.status !== "approved"}
                     >
                       Boost 24h (€9.99)
                     </button>
 
                     <button
                       className={`btn ${
-                        active && e.promotionPlan === "7d"
-                          ? "btnPrimary"
-                          : "btnSecondary"
+                        active && e.promotionPlan === "7d" ? "btnPrimary" : "btnSecondary"
                       }`}
                       type="button"
                       onClick={() => userId && setPromotion(userId, e.id, "7d")}
+                      disabled={e.status !== "approved"}
                     >
                       Boost 7d (€24.99)
                     </button>
@@ -675,6 +939,7 @@ export default function MyEventsPage() {
                       className="btn btnSecondary"
                       type="button"
                       onClick={() => userId && setPromotion(userId, e.id, null)}
+                      disabled={e.status !== "approved"}
                     >
                       Remove boost
                     </button>

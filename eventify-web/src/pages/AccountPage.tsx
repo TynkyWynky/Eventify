@@ -12,13 +12,9 @@ import {
   subscribeFavoritesChanged,
 } from "../data/events/eventFavoritesStore";
 
-type Friend = { id: string; name: string; status: string };
+//type Friend = { id: string; name: string; status: string };
 
-const MOCK_FRIENDS: Friend[] = [
-  { id: "f1", name: "Noah", status: "Going to a concert" },
-  { id: "f2", name: "Sarah", status: "Saved 3 events today" },
-  { id: "f3", name: "Yanis", status: "Likes: Techno / DnB" },
-];
+
 
 function EventRow({ e }: { e: EventItem }) {
   return (
@@ -35,7 +31,7 @@ function EventRow({ e }: { e: EventItem }) {
   );
 }
 
-function FriendRow({ f }: { f: Friend }) {
+/*function FriendRow({ f }: { f: Friend }) {
   return (
     <div className="accountFriendRow">
       <div className="accountAvatar">{f.name.slice(0, 1).toUpperCase()}</div>
@@ -46,7 +42,7 @@ function FriendRow({ f }: { f: Friend }) {
       <div className="accountFriendAction">View</div>
     </div>
   );
-}
+}*/
 
 async function fetchEventsByIds(ids: string[], signal: AbortSignal) {
   if (ids.length === 0) return [];
@@ -258,9 +254,7 @@ export default function AccountPage() {
             <div className="accountSectionHint">See activity and updates</div>
           </div>
           <div className="accountList">
-            {MOCK_FRIENDS.map((f) => (
-              <FriendRow key={f.id} f={f} />
-            ))}
+
           </div>
         </section>
       </div>

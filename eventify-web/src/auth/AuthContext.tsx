@@ -15,20 +15,18 @@ import type {
   Role,
   User,
 } from "./authTypes";
+import { getUserById, subscribeUsersChanged } from "./usersStore";
 
-/* =========================
-   Storage
-   ========================= */
 const AUTH_STORAGE_KEY = "eventify_auth_v1";
 const USERS_STORAGE_KEY = "eventify_users_v1";
 
 type StoredUser = {
   id: string;
   name: string;
-  email: string; // normalized (lowercase)
-  password: string; // ⚠ demo-only: plain text in localStorage
+  email: string; 
+  password: string;
   role: Role;
-  createdAt: string; // ISO
+  createdAt: string; 
 };
 
 type JsonRecord = Record<string, unknown>;
@@ -52,7 +50,6 @@ function normalizeRole(role: unknown): Role {
 
 function uid(prefix: string) {
   const c: Crypto | undefined = globalThis.crypto;
-  // si randomUUID est dispo, on l’utilise (sinon fallback)
   if (c && typeof c.randomUUID === "function") return `${prefix}_${c.randomUUID()}`;
   return `${prefix}_${Math.random().toString(16).slice(2)}`;
 }
@@ -77,7 +74,7 @@ function loadUsers(): StoredUser[] {
       const role = normalizeRole(item.role);
       const createdAt = str(item.createdAt, new Date().toISOString());
 
-      if (!email) continue; // skip invalid entries
+      if (!email) continue;
 
       users.push({ id, name, email, password, role, createdAt });
     }
@@ -93,7 +90,6 @@ function saveUsers(users: StoredUser[]) {
 }
 
 function ensureSeedUsers() {
-  // Important: always ensure these 3 demo accounts exist (for testing/presentations)
   const users = loadUsers();
   const emails = new Set(users.map((u) => u.email));
   const now = new Date().toISOString();
@@ -130,7 +126,6 @@ function ensureSeedUsers() {
 
   saveUsers([...toAdd, ...users]);
 }
-
 
 function buildMockNotifications(): NotificationItem[] {
   const now = new Date();
@@ -208,12 +203,37 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     initial.notifications
   );
 
-  // Seed demo users once
   useEffect(() => {
     ensureSeedUsers();
   }, []);
 
-  // Persist auth state
+  useEffect(() => {
+    const id = user?.id;
+    if (!id) return;
+
+    return subscribeUsersChanged(() => {
+      const fresh = getUserById(id);
+      if (!fresh) return;
+
+      setUser((prev) => {
+        if (!prev || prev.id !== id) return prev;
+        if (
+          prev.role === fresh.role &&
+          prev.name === fresh.name &&
+          prev.email === fresh.email
+        )
+          return prev;
+
+        return {
+          ...prev,
+          role: fresh.role,
+          name: fresh.name,
+          email: fresh.email,
+        };
+      });
+    });
+  }, [user?.id]);
+
   useEffect(() => {
     localStorage.setItem(
       AUTH_STORAGE_KEY,
@@ -226,11 +246,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     [notifications]
   );
 
-  /** Dev helper: quick login (no password check) */
   function login(email: string, name?: string) {
     const emailNorm = normalizeEmail(email);
 
-    // if user exists, keep role
     const users = loadUsers();
     const found = users.find((u) => u.email === emailNorm);
 
@@ -247,7 +265,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setNotifications(buildMockNotifications());
   }
 
-  /** Local login: checks localStorage users */
   function loginWithPassword(email: string, password: string) {
     const emailNorm = normalizeEmail(email);
     const users = loadUsers();
@@ -266,39 +283,38 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setNotifications(buildMockNotifications());
   }
 
- function register(payload: RegisterPayload) {
-  const name = payload.name.trim() || "Me";
-  const emailNorm = normalizeEmail(payload.email);
+  function register(payload: RegisterPayload) {
+    const name = payload.name.trim() || "Me";
+    const emailNorm = normalizeEmail(payload.email);
 
-  if (!emailNorm) throw new Error("Email is required.");
-  if (payload.password.length < 8) {
-    throw new Error("Password must be at least 8 characters.");
+    if (!emailNorm) throw new Error("Email is required.");
+    if (payload.password.length < 8) {
+      throw new Error("Password must be at least 8 characters.");
+    }
+
+    const users = loadUsers();
+    const exists = users.some((u) => u.email === emailNorm);
+    if (exists) throw new Error("An account with this email already exists.");
+
+    const created: StoredUser = {
+      id: uid("u"),
+      name,
+      email: emailNorm,
+      password: payload.password,
+      role: "user",
+      createdAt: new Date().toISOString(),
+    };
+
+    saveUsers([created, ...users]);
+
+    setUser({
+      id: created.id,
+      name: created.name,
+      email: created.email,
+      role: created.role,
+    });
+    setNotifications(buildMockNotifications());
   }
-
-  const users = loadUsers();
-  const exists = users.some((u) => u.email === emailNorm);
-  if (exists) throw new Error("An account with this email already exists.");
-
-  const created: StoredUser = {
-    id: uid("u"),
-    name,
-    email: emailNorm,
-    password: payload.password,
-    role: "user", // ✅ forced
-    createdAt: new Date().toISOString(),
-  };
-
-  saveUsers([created, ...users]);
-
-  setUser({
-    id: created.id,
-    name: created.name,
-    email: created.email,
-    role: created.role,
-  });
-  setNotifications(buildMockNotifications());
-}
-
 
   function logout() {
     setUser(null);

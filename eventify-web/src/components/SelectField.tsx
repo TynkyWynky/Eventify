@@ -26,6 +26,7 @@ export default function SelectField({
   const rootRef = useRef<HTMLDivElement | null>(null);
   const buttonRef = useRef<HTMLButtonElement | null>(null);
   const searchRef = useRef<HTMLInputElement | null>(null);
+  const menuRef = useRef<HTMLDivElement | null>(null); 
 
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -51,17 +52,15 @@ export default function SelectField({
 
     const openDown = spaceBelow >= 240 || spaceBelow >= spaceAbove;
 
-    const maxHeight = Math.max(160, (openDown ? spaceBelow : spaceAbove) - gap - 12);
+    const maxHeight = Math.max(
+      160,
+      (openDown ? spaceBelow : spaceAbove) - gap - 12
+    );
 
     const top = openDown ? r.bottom + gap : Math.max(12, r.top - gap - maxHeight);
     const left = Math.max(12, Math.min(r.left, window.innerWidth - r.width - 12));
 
-    setMenuPos({
-      top,
-      left,
-      width: r.width,
-      maxHeight,
-    });
+    setMenuPos({ top, left, width: r.width, maxHeight });
   }
 
   function openMenu() {
@@ -95,10 +94,15 @@ export default function SelectField({
     if (!open) return;
 
     function onMouseDown(e: MouseEvent) {
-      const root = rootRef.current;
-      if (!root) return;
+      const target = e.target as Node;
 
-      if (root.contains(e.target as Node)) return;
+      const root = rootRef.current;
+      const menu = menuRef.current;
+
+      const insideRoot = !!root && root.contains(target);
+      const insideMenu = !!menu && menu.contains(target);
+
+      if (insideRoot || insideMenu) return;
 
       closeMenu();
     }
@@ -149,7 +153,6 @@ export default function SelectField({
       e.preventDefault();
       const opt = filteredOptions[activeIndex];
       if (opt) pick(opt);
-      return;
     }
   }
 
@@ -175,6 +178,7 @@ export default function SelectField({
       {open && menuPos
         ? createPortal(
             <div
+              ref={menuRef} 
               className="selectMenu"
               style={{ top: menuPos.top, left: menuPos.left, width: menuPos.width }}
               role="listbox"
@@ -213,8 +217,8 @@ export default function SelectField({
                           isSelected ? "isSelected" : "",
                         ].join(" ")}
                         onMouseEnter={() => setActiveIndex(idx)}
-                        onMouseDown={(e) => e.preventDefault()} // keep focus stable
-                        onClick={() => pick(opt)}
+                        onMouseDown={(e) => e.preventDefault()} 
+                        onClick={() => pick(opt)} 
                       >
                         <span className="selectOptionLabel">{opt}</span>
                         {isSelected ? <span className="selectTick">✓</span> : null}

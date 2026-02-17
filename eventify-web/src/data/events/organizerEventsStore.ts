@@ -1,4 +1,5 @@
 import type { EventItem } from "../../events/eventsStore";
+import { getUserById, setUserRole } from "../../auth/usersStore";
 
 /**
  * Organizer-created events live in localStorage.
@@ -10,17 +11,15 @@ export type ReviewStatus = "pending" | "approved" | "rejected";
 
 export type OrganizerEvent = EventItem & {
   ownerId: string;
-  createdAt: string; // ISO
-  updatedAt: string; // ISO
-
+  createdAt: string;
+  updatedAt: string;
   status: ReviewStatus;
-  reviewedAt?: string; // ISO
-  reviewedBy?: string; // userId (admin)
+  reviewedAt?: string; 
+  reviewedBy?: string; 
 
-  /** Optional "payment" simulation: promoted events appear in Trending. */
-  promotedUntil?: string; // ISO
+  promotedUntil?: string; 
   promotionPlan?: "24h" | "7d";
-  promotionAmount?: number; // EUR
+  promotionAmount?: number; 
 };
 
 const STORAGE_KEY = "eventify_organizer_events_v1";
@@ -44,7 +43,7 @@ function arrStr(v: unknown): string[] {
 
 function asStatus(v: unknown): ReviewStatus {
   if (v === "pending" || v === "approved" || v === "rejected") return v;
-  return "approved"; // backward compat: old events (no status) are considered approved
+  return "approved"; 
 }
 
 function uid(prefix: string) {
@@ -54,7 +53,6 @@ function uid(prefix: string) {
 }
 
 function notifyChanged() {
-  // Same-tab refresh signal (storage event doesn't fire in same tab)
   window.dispatchEvent(new Event(EVENTS_CHANGED_EVENT));
 }
 
@@ -254,7 +252,6 @@ export function updateOrganizerEvent(
 
   const prev = all[idx];
 
-  // Any edit triggers re-review if it was approved/rejected before
   const needsReReview = prev.status !== "pending";
 
   const next: OrganizerEvent = {
@@ -270,7 +267,6 @@ export function updateOrganizerEvent(
     reviewedBy: needsReReview ? undefined : prev.reviewedBy,
   };
 
-  // Keep distance consistent if lat/lng changed
   const lat = patch.latitude ?? prev.latitude;
   const lng = patch.longitude ?? prev.longitude;
   next.distanceKm = distanceFromBrusselsKm(lat, lng);
@@ -291,12 +287,16 @@ export function deleteOrganizerEvent(ownerId: string, eventId: string) {
   notifyChanged();
 }
 
-/** Admin action: approve/reject */
 export function reviewOrganizerEvent(
   adminId: string,
   eventId: string,
   nextStatus: Exclude<ReviewStatus, "pending">
 ) {
+  const admin = getUserById(adminId);
+  if (!admin || admin.role !== "admin") {
+    throw new Error("Not allowed.");
+  }
+
   const all = loadAll();
   const idx = all.findIndex((e) => e.id === eventId);
   if (idx === -1) throw new Error("Event not found.");
@@ -316,6 +316,15 @@ export function reviewOrganizerEvent(
   updated[idx] = next;
   saveAll(updated);
   notifyChanged();
+
+  if (nextStatus === "approved") {
+    const owner = getUserById(prev.ownerId);
+    if (owner && owner.role === "user") {
+      setUserRole(prev.ownerId, "organizer");
+    }
+  }
+
+
   return next;
 }
 
