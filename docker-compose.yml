@@ -1,0 +1,44 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15-alpine
+    container_name: events_postgres
+    environment:
+      POSTGRES_USER: events_user
+      POSTGRES_PASSWORD: events_password
+      POSTGRES_DB: events_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ../events_database_updated.sql:/docker-entrypoint-initdb.d/01-schema.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U events_user -d events_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # Sync Service
+  sync:
+    build: .
+    container_name: events_sync
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://events_user:events_password@postgres:5432/events_db
+      API_BASE_URL: ${API_BASE_URL:-http://host.docker.internal:3000}
+      SYNC_INTERVAL: ${SYNC_INTERVAL:-0 * * * *}
+      DEFAULT_LAT: ${DEFAULT_LAT:-50.8503}
+      DEFAULT_LNG: ${DEFAULT_LNG:-4.3517}
+      DEFAULT_RADIUS_KM: ${DEFAULT_RADIUS_KM:-50}
+      FETCH_SIZE: ${FETCH_SIZE:-50}
+      SYNC_USER_ID: ${SYNC_USER_ID:-1}
+      NODE_ENV: production
+    # For one-time sync, uncomment:
+    # command: ["node", "sync.js", "--once"]
+
+volumes:
+  postgres_data:
