@@ -3,6 +3,7 @@ import { Link, useLocation, useSearchParams } from "react-router-dom";
 import SelectField from "../components/SelectField";
 import { MUSIC_STYLES, type EventItem } from "../events/eventsStore";
 import { eventsRepo } from "../data/events";
+import { getGenreFallbackImage } from "../data/events/genreImages";
 import {
   listOrganizerEventsByOwner,
   subscribeOrganizerEventsChanged,
@@ -29,16 +30,34 @@ function parseKm(raw: string | null, fallback: number) {
 }
 
 function EventCard({ event, search }: { event: EventItem; search: string }) {
+  const metaParts = [
+    event.artistName || null,
+    event.venue,
+    `${event.distanceKm.toFixed(1)} km`,
+  ].filter(Boolean);
+
   return (
     <Link to={`/events/${event.id}${search}`} className="eventCardLink">
       <article className="eventCard">
         <div className="eventImageWrap">
-          <img className="eventImage" src={event.imageUrl} alt={event.title} />
+          <img
+            className="eventImage"
+            src={event.imageUrl}
+            alt={event.title}
+            onError={(e) => {
+              const next = getGenreFallbackImage(event.tags[0]);
+              if (e.currentTarget.src === next) return;
+              e.currentTarget.src = next;
+            }}
+          />
         </div>
 
         <div className="eventFooter">
-          <div className="eventFooterLeft">
-            {event.venue} - {event.distanceKm.toFixed(1)}Km
+          <div className="eventCardTextWrap">
+            <div className="eventCardTitle" title={event.title}>
+              {event.title}
+            </div>
+            <div className="eventCardMeta">{metaParts.join(" • ")}</div>
           </div>
           <div className="eventFooterRight">{event.dateLabel}</div>
         </div>

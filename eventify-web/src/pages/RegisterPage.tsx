@@ -86,7 +86,7 @@ export default function RegisterPage() {
     }
 
     try {
-      register({ name, email, password, role: "user" });
+      register({ name, email, password });
       navigate(from, { replace: true });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Register failed.");
