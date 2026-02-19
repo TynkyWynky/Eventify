@@ -17,6 +17,13 @@ import {
   getUserFavoriteEventIds,
   subscribeFavoritesChanged,
 } from "../data/events/eventFavoritesStore";
+import {
+  BELGIUM_CITIES,
+  getOrigin,
+  requestGeolocationOrigin,
+  setCityOrigin,
+  subscribeOriginChanged,
+} from "../data/location/locationStore";
 
 function clamp(n: number, min: number, max: number) {
   return Math.min(max, Math.max(min, n));
@@ -79,9 +86,46 @@ export default function EventDashboardPage() {
   const selectedStyle = MUSIC_STYLES.includes(styleRaw) ? styleRaw : "All";
   const maxDistanceKm = parseKm(searchParams.get("km"), 20);
 
-  const styleOptions = useMemo(() => [...MUSIC_STYLES], []);
+  // ✅ NEW: location query param (shareable links)
+  const locRaw = (searchParams.get("loc") ?? "").trim();
 
-  function updateParams(next: { style?: string; km?: number }) {
+  const styleOptions = useMemo(() => [...MUSIC_STYLES], []);
+  const locationOptions = useMemo(
+    () => ["My location", ...BELGIUM_CITIES.map((c) => c.name)],
+    []
+  );
+
+  // ✅ NEW: origin state (lat/lng)
+  const [origin, setOriginState] = useState(() => getOrigin());
+
+  useEffect(() => {
+    // keep local state in sync when origin changes elsewhere
+    return subscribeOriginChanged(() => setOriginState(getOrigin()));
+  }, []);
+
+  useEffect(() => {
+    // URL param drives origin selection (shareable links)
+    if (!locRaw) return;
+
+    const lower = locRaw.toLowerCase();
+
+    // "me" / "My location"
+    if (lower === "me" || lower === "my" || locRaw === "My location") {
+      // AppShellLayout doet al 1x per sessie prompt, hier enkel best-effort syncen
+      requestGeolocationOrigin({ timeoutMs: 6000 }).catch(() => {});
+      return;
+    }
+
+    // city mode
+    const city = BELGIUM_CITIES.find((c) => c.name === locRaw);
+    if (!city) return;
+
+    // ✅ enkel store updaten, subscription zet origin state
+    setCityOrigin(city.name);
+  }, [locRaw]);
+
+
+  function updateParams(next: { style?: string; km?: number; loc?: string }) {
     const sp = new URLSearchParams(searchParams);
 
     if (next.style !== undefined) {
@@ -93,6 +137,15 @@ export default function EventDashboardPage() {
     if (next.km !== undefined) {
       if (next.km === 20) sp.delete("km");
       else sp.set("km", String(next.km));
+    }
+
+    if (next.loc !== undefined) {
+      const clean = next.loc.trim();
+
+      // default Brussels => keep URL clean
+      if (!clean || clean === "Brussels") sp.delete("loc");
+      else if (clean === "My location") sp.set("loc", "me");
+      else sp.set("loc", clean);
     }
 
     setSearchParams(sp, { replace: true });
@@ -107,6 +160,7 @@ export default function EventDashboardPage() {
     return subscribeOrganizerEventsChanged(() => setReloadTick((t) => t + 1));
   }, []);
 
+  // ✅ NEW: pass originLat/originLng to repo.list
   useEffect(() => {
     const controller = new AbortController();
 
@@ -118,7 +172,13 @@ export default function EventDashboardPage() {
 
     eventsRepo
       .list(
-        { style: selectedStyle, maxDistanceKm, query: q },
+        {
+          style: selectedStyle,
+          maxDistanceKm,
+          query: q,
+          originLat: origin.lat,
+          originLng: origin.lng,
+        },
         { signal: controller.signal }
       )
       .then(setEvents)
@@ -131,7 +191,7 @@ export default function EventDashboardPage() {
       });
 
     return () => controller.abort();
-  }, [maxDistanceKm, q, selectedStyle, reloadTick]);
+  }, [maxDistanceKm, q, selectedStyle, reloadTick, origin.lat, origin.lng]);
 
   const trendingEvents = useMemo(
     () => events.filter((e) => Boolean(e.trending)),
@@ -200,7 +260,7 @@ export default function EventDashboardPage() {
   }, [userId, signalsTick]);
 
   const recommendedEvents = useMemo(() => {
-    const _tick = signalsTick; 
+    const _tick = signalsTick;
     void _tick;
 
     const favIds = userId ? getUserFavoriteEventIds(userId) : [];
@@ -231,13 +291,14 @@ export default function EventDashboardPage() {
   const filterLabel = [
     selectedStyle !== "All" ? selectedStyle : null,
     `≤ ${maxDistanceKm} km`,
+    origin.label ? `${origin.label}` : null,
     q ? `“${q}”` : null,
   ]
     .filter(Boolean)
     .join(" • ");
 
   const myPendingSubmissions = useMemo(() => {
-    const _tick = reloadTick; 
+    const _tick = reloadTick;
     void _tick;
 
     if (!userId) return 0;
@@ -300,6 +361,36 @@ export default function EventDashboardPage() {
                 onChange={(v) => updateParams({ style: v })}
                 placeholder="All"
                 searchPlaceholder="Search a style…"
+              />
+
+              {/* ✅ NEW Location dropdown */}
+              <SelectField
+                value={
+                  origin.source === "geolocation"
+                    ? "My location"
+                    : origin.cityName || origin.label
+                }
+                options={locationOptions}
+                onChange={async (v) => {
+                  if (v === "My location") {
+                    try {
+                      const next = await requestGeolocationOrigin({
+                        timeoutMs: 10_000,
+                      });
+                      setOriginState(next);
+                      updateParams({ loc: "My location" });
+                    } catch {
+                      // blocked/denied => keep current
+                      updateParams({ loc: origin.cityName || origin.label });
+                    }
+                    return;
+                  }
+
+                  setOriginState(setCityOrigin(v));
+                  updateParams({ loc: v });
+                }}
+                placeholder="Location"
+                searchPlaceholder="Search a city…"
               />
 
               <div className="sliderGroup">

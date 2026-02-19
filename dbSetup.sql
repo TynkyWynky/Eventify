@@ -11,7 +11,7 @@ CREATE TABLE users (
     first_name      VARCHAR(100),
     last_name       VARCHAR(100),
     phone           VARCHAR(20),
-    is_active       BOOLEAN DEFAULT TRUE,
+    is_organisator  BOOLEAN DEFAULT FALSE,
     is_admin        BOOLEAN DEFAULT FALSE,
     created_at      TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     updated_at      TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,

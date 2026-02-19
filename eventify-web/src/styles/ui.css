@@ -642,7 +642,6 @@ body::before {
   font-size: 13px;
 }
 
-
 /* =========================
    AUTH PAGES
    ========================= */
@@ -875,6 +874,13 @@ body::before {
   background: linear-gradient(180deg, rgba(11,11,16,.25), rgba(11,11,16,.88));
 }
 
+/* ✅ Inner container for premium alignment */
+.eventDetailHeroInner {
+  max-width: 980px;
+  margin: 0 auto;
+  width: 100%;
+}
+
 .eventDetailHeroContent {
   position: relative;
   height: 100%;
@@ -882,34 +888,60 @@ body::before {
   display: flex;
   flex-direction: column;
   justify-content: flex-end;
-  gap: var(--space-3);
+  gap: 12px;
   text-align: left;
 }
 
 .eventDetailTitle {
-  font-size: 44px;
+  font-size: 42px;
   font-weight: 900;
+  letter-spacing: -0.02em;
   line-height: 1.05;
   text-shadow: 0 10px 35px rgba(0,0,0,.45);
+  margin-bottom: 2px;
 }
 
 .eventDetailMeta {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: 10px;
   color: rgba(255,255,255,.86);
   font-weight: 600;
+  opacity: 0.95;
 }
 
 .eventDetailMetaLine { color: rgba(255,255,255,.86); font-weight: 600; }
+.dotSep { opacity: 0.55; }
 
 .eventDetailTags { display: flex; flex-wrap: wrap; gap: 8px; }
+
+/* tags used on event detail */
+.tagPill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border-radius: 999px;
+  background: rgba(255,255,255,.10);
+  border: 1px solid rgba(255,255,255,.10);
+  padding: 6px 10px;
+  font-size: 12px;
+  font-weight: 700;
+  color: rgba(255,255,255,.92);
+}
 
 .eventDetailActions {
   display: flex;
   flex-wrap: wrap;
   gap: 10px;
-  margin-top: 6px;
+  margin-top: 10px;
+}
+
+.eventDetailActions .btnSecondary {
+  background: rgba(0, 0, 0, 0.22);
+}
+
+.eventDetailActions .btnPrimary {
+  box-shadow: 0 14px 40px rgba(178, 106, 168, 0.18);
 }
 
 .goingActive { background: var(--accent2); }
@@ -918,13 +950,26 @@ body::before {
   margin-top: var(--space-5);
   display: grid;
   gap: var(--space-4);
+  grid-template-columns: 1fr;
 }
 
+/* Desktop: echte layout met areas */
 @media (min-width: 960px) {
   .eventDetailGrid {
-    grid-template-columns: 1.1fr 0.9fr;
+    grid-template-columns: 1fr 420px; /* link content, rechter sidebar */
+    grid-template-areas:
+      "about location"
+      "setlists location";
     align-items: start;
   }
+
+  .eventDetailCardAbout { grid-area: about; }
+  .eventDetailCardLocation {
+    grid-area: location;
+    position: sticky;
+    top: 92px; /* net onder je sticky navbar */
+  }
+  .eventDetailCardSetlists { grid-area: setlists; }
 }
 
 .eventDetailCard {
@@ -932,13 +977,13 @@ body::before {
   border: 1px solid var(--border);
   background: rgba(0,0,0,.18);
   box-shadow: var(--glow);
-  padding: var(--space-5);
+  padding: 18px;
 }
 
 .eventDetailCardTitle {
   font-size: 18px;
   font-weight: 900;
-  margin-bottom: var(--space-3);
+  margin-bottom: 12px;
 }
 
 .eventDetailText {
@@ -962,7 +1007,6 @@ body::before {
 }
 
 .detailLabel { color: var(--muted); font-size: 13px; }
-
 .detailValue { color: rgba(255,255,255,.90); font-weight: 600; }
 
 .detailParagraph {
@@ -1284,7 +1328,6 @@ body::before {
 .adminRow:hover { border-color: var(--borderHover); }
 
 .adminRowTitle { font-weight: 900; }
-
 .adminRowMeta { margin-top: 3px; color: var(--muted); font-size: 12px; }
 
 /* =========================
@@ -1463,7 +1506,6 @@ body::before {
 /* =========================
    RESPONSIVE — GLOBAL
    ========================= */
-
 @media (max-width: 720px) {
   .appPage {
     padding: 0 var(--space-3) var(--space-5);
@@ -1535,27 +1577,14 @@ body::before {
 /* =========================
    RESPONSIVE — HERO + FILTERBAR
    ========================= */
-
 @media (max-width: 720px) {
-  .heroBanner {
-    height: 200px;
-  }
+  .heroBanner { height: 200px; }
 
-  .heroContent {
-    padding: var(--space-5);
-  }
+  .heroContent { padding: var(--space-5); }
+  .heroCenter { padding: var(--space-5); }
 
-  .heroCenter {
-    padding: var(--space-5);
-  }
-
-  .heroTitle {
-    font-size: 28px;
-  }
-
-  .heroCenter .heroTitle {
-    font-size: 32px;
-  }
+  .heroTitle { font-size: 28px; }
+  .heroCenter .heroTitle { font-size: 32px; }
 
   .heroFilterBar {
     width: 100%;
@@ -1576,31 +1605,17 @@ body::before {
 }
 
 @media (max-width: 520px) {
-  .heroBanner {
-    height: 180px;
-  }
-
-  .heroTitle {
-    font-size: 24px;
-  }
-
-  .heroCenter .heroTitle {
-    font-size: 28px;
-  }
+  .heroBanner { height: 180px; }
+  .heroTitle { font-size: 24px; }
+  .heroCenter .heroTitle { font-size: 28px; }
 }
 
 /* =========================
    RESPONSIVE — EVENT DETAIL
    ========================= */
-
 @media (max-width: 900px) {
-  .eventDetailHero {
-    height: 280px;
-  }
-
-  .eventDetailTitle {
-    font-size: 34px;
-  }
+  .eventDetailHero { height: 280px; }
+  .eventDetailTitle { font-size: 34px; }
 }
 
 @media (max-width: 720px) {
@@ -1610,54 +1625,39 @@ body::before {
     gap: 10px;
   }
 
-  .eventDetailHero {
-    height: 240px;
+  .eventDetailHero { height: 240px; }
+
+  .eventDetailHeroContent { padding: var(--space-5); }
+
+  .eventDetailTitle { font-size: 28px; }
+
+  .eventDetailActions { width: 100%; }
+
+  .eventDetailActions .btn,
+  .eventDetailActions .btnPrimary,
+  .eventDetailActions .btnSecondary {
+    flex: 1 1 auto;
   }
 
-  .eventDetailHeroContent {
-    padding: var(--space-5);
-  }
-
-  .eventDetailTitle {
-    font-size: 28px;
-  }
-
-  .eventDetailActions {
-    width: 100%;
-  }
-
-  .eventDetailCard {
-    padding: var(--space-4);
-  }
+  .eventDetailCard { padding: var(--space-4); }
 
   .detailRow {
     grid-template-columns: 1fr;
     gap: 6px;
   }
 
-  .eventDetailMap {
-    height: 260px;
-  }
+  .eventDetailMap { height: 260px; }
 }
 
 @media (max-width: 520px) {
-  .eventDetailHero {
-    height: 210px;
-  }
-
-  .eventDetailTitle {
-    font-size: 24px;
-  }
-
-  .eventDetailMap {
-    height: 220px;
-  }
+  .eventDetailHero { height: 210px; }
+  .eventDetailTitle { font-size: 24px; }
+  .eventDetailMap { height: 220px; }
 }
 
 /* =========================
    RESPONSIVE — ACCOUNT / SETTINGS HEADERS
    ========================= */
-
 @media (max-width: 720px) {
   .accountHeader,
   .settingsHeader {
@@ -1665,9 +1665,7 @@ body::before {
     align-items: flex-start;
   }
 
-  .accountHeaderActions {
-    width: 100%;
-  }
+  .accountHeaderActions { width: 100%; }
 
   .accountSettingsBtn {
     width: 100%;
@@ -1678,30 +1676,22 @@ body::before {
 /* =========================
    RESPONSIVE — ADMIN
    ========================= */
-
 @media (max-width: 720px) {
-  .adminPage {
-    padding: 14px;
-  }
+  .adminPage { padding: 14px; }
 
   .adminHeaderRow {
     flex-direction: column;
     align-items: flex-start;
   }
 
-  .adminHeaderActions {
-    width: 100%;
-  }
+  .adminHeaderActions { width: 100%; }
 }
 
 /* =========================
    RESPONSIVE — SELECT (custom dropdown)
    ========================= */
-
 @media (max-width: 720px) {
-  .selectButton {
-    min-width: 0;
-  }
+  .selectButton { min-width: 0; }
 }
 
 /* =========================

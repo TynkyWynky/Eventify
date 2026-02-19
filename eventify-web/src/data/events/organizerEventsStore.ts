@@ -1,5 +1,4 @@
 import type { EventItem } from "../../events/eventsStore";
-import { getUserById, setUserRole } from "../../auth/usersStore";
 
 /**
  * Organizer-created events live in localStorage.
@@ -14,12 +13,12 @@ export type OrganizerEvent = EventItem & {
   createdAt: string;
   updatedAt: string;
   status: ReviewStatus;
-  reviewedAt?: string; 
-  reviewedBy?: string; 
+  reviewedAt?: string;
+  reviewedBy?: string;
 
-  promotedUntil?: string; 
+  promotedUntil?: string;
   promotionPlan?: "24h" | "7d";
-  promotionAmount?: number; 
+  promotionAmount?: number;
 };
 
 const STORAGE_KEY = "eventify_organizer_events_v1";
@@ -43,7 +42,7 @@ function arrStr(v: unknown): string[] {
 
 function asStatus(v: unknown): ReviewStatus {
   if (v === "pending" || v === "approved" || v === "rejected") return v;
-  return "approved"; 
+  return "approved";
 }
 
 function uid(prefix: string) {
@@ -82,6 +81,14 @@ function distanceFromBrusselsKm(lat: number, lng: number) {
   return haversineKm(BRUSSELS.lat, BRUSSELS.lng, lat, lng);
 }
 
+function distanceFromOriginKm(
+  origin: { lat: number; lng: number },
+  lat: number,
+  lng: number
+) {
+  return haversineKm(origin.lat, origin.lng, lat, lng);
+}
+
 function loadAll(): OrganizerEvent[] {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
@@ -99,7 +106,10 @@ function loadAll(): OrganizerEvent[] {
 
       const latitude = num(item.latitude, BRUSSELS.lat);
       const longitude = num(item.longitude, BRUSSELS.lng);
-      const distanceKm = num(item.distanceKm, distanceFromBrusselsKm(latitude, longitude));
+      const distanceKm = num(
+        item.distanceKm,
+        distanceFromBrusselsKm(latitude, longitude)
+      );
 
       const status = asStatus(item.status);
 
@@ -158,21 +168,42 @@ function promotionIsActive(e: OrganizerEvent) {
   return t > Date.now();
 }
 
-/** Public list: what everyone can see on the dashboard (ONLY approved) */
-export function listPublicOrganizerEvents(): EventItem[] {
+/** ✅ Public list: ONLY approved (distance computed from origin) */
+export function listPublicOrganizerEvents(opts?: {
+  originLat?: number;
+  originLng?: number;
+}): EventItem[] {
+  const origin = {
+    lat: typeof opts?.originLat === "number" ? opts.originLat : BRUSSELS.lat,
+    lng: typeof opts?.originLng === "number" ? opts.originLng : BRUSSELS.lng,
+  };
+
   const items = loadAll().filter((e) => e.status === "approved");
 
   return items.map((e) => {
     const active = promotionIsActive(e);
+    const distanceKm =
+      Math.round(
+        distanceFromOriginKm(
+          origin,
+          e.latitude ?? BRUSSELS.lat,
+          e.longitude ?? BRUSSELS.lng
+        ) * 10
+      ) / 10;
+
     return {
       ...e,
+      distanceKm,
       trending: active ? true : e.trending,
     } satisfies EventItem;
   });
 }
 
-export function getPublicOrganizerEventById(eventId: string): EventItem | undefined {
-  return listPublicOrganizerEvents().find((e) => e.id === eventId);
+export function getPublicOrganizerEventById(
+  eventId: string,
+  opts?: { originLat?: number; originLng?: number }
+): EventItem | undefined {
+  return listPublicOrganizerEvents(opts).find((e) => e.id === eventId);
 }
 
 /** Admin list: everything */
@@ -205,6 +236,7 @@ export function createOrganizerEvent(ownerId: string, input: OrganizerEventInput
   const now = new Date().toISOString();
   const id = uid("org_evt");
 
+  // opgeslagen distance is ok (Brussels), public view wordt later overschreven met origin
   const distanceKm = distanceFromBrusselsKm(input.latitude, input.longitude);
 
   const created: OrganizerEvent = {
@@ -243,96 +275,102 @@ export function createOrganizerEvent(ownerId: string, input: OrganizerEventInput
 export function updateOrganizerEvent(
   ownerId: string,
   eventId: string,
-  patch: Partial<OrganizerEventInput>
+  input: OrganizerEventInput
 ) {
   const all = loadAll();
   const idx = all.findIndex((e) => e.id === eventId);
-  if (idx === -1) throw new Error("Event not found.");
-  if (all[idx].ownerId !== ownerId) throw new Error("Not allowed.");
+  if (idx < 0) throw new Error("Event not found");
+  if (all[idx].ownerId !== ownerId) throw new Error("Not allowed");
 
-  const prev = all[idx];
-
-  const needsReReview = prev.status !== "pending";
-
-  const next: OrganizerEvent = {
-    ...prev,
-    ...patch,
-    imageUrl:
-      (patch.imageUrl ?? prev.imageUrl).trim() ||
-      "https://images.unsplash.com/photo-1501386761578-eac5c94b800a?w=1400&q=80",
-    updatedAt: new Date().toISOString(),
-
-    status: needsReReview ? "pending" : prev.status,
-    reviewedAt: needsReReview ? undefined : prev.reviewedAt,
-    reviewedBy: needsReReview ? undefined : prev.reviewedBy,
+  const now = new Date().toISOString();
+  const updated: OrganizerEvent = {
+    ...all[idx],
+    ...input,
+    updatedAt: now,
   };
 
-  const lat = patch.latitude ?? prev.latitude;
-  const lng = patch.longitude ?? prev.longitude;
-  next.distanceKm = distanceFromBrusselsKm(lat, lng);
-
-  const updated = [...all];
-  updated[idx] = next;
-  saveAll(updated);
+  all[idx] = updated;
+  saveAll(all);
   notifyChanged();
-  return next;
+  return updated;
 }
 
 export function deleteOrganizerEvent(ownerId: string, eventId: string) {
   const all = loadAll();
   const found = all.find((e) => e.id === eventId);
-  if (!found) return;
-  if (found.ownerId !== ownerId) throw new Error("Not allowed.");
+  if (!found) return false;
+  if (found.ownerId !== ownerId) throw new Error("Not allowed");
+
   saveAll(all.filter((e) => e.id !== eventId));
   notifyChanged();
+  return true;
 }
 
 export function reviewOrganizerEvent(
-  adminId: string,
+  reviewerId: string,
   eventId: string,
-  nextStatus: Exclude<ReviewStatus, "pending">
+  nextStatus: ReviewStatus
 ) {
-  const admin = getUserById(adminId);
-  if (!admin || admin.role !== "admin") {
-    throw new Error("Not allowed.");
-  }
-
   const all = loadAll();
   const idx = all.findIndex((e) => e.id === eventId);
-  if (idx === -1) throw new Error("Event not found.");
+  if (idx < 0) throw new Error("Event not found");
 
   const now = new Date().toISOString();
-  const prev = all[idx];
-
-  const next: OrganizerEvent = {
-    ...prev,
+  all[idx] = {
+    ...all[idx],
     status: nextStatus,
     reviewedAt: now,
-    reviewedBy: adminId,
+    reviewedBy: reviewerId,
     updatedAt: now,
   };
 
-  const updated = [...all];
-  updated[idx] = next;
-  saveAll(updated);
+  saveAll(all);
   notifyChanged();
-
-  if (nextStatus === "approved") {
-    const owner = getUserById(prev.ownerId);
-    if (owner && owner.role === "user") {
-      setUserRole(prev.ownerId, "organizer");
-    }
-  }
-
-
-  return next;
+  return all[idx];
 }
 
-export function setPromotion(ownerId: string, eventId: string, plan: "24h" | "7d" | null) {
+export function promoteOrganizerEvent(
+  ownerId: string,
+  eventId: string,
+  plan: "24h" | "7d",
+  amount: number
+) {
   const all = loadAll();
   const idx = all.findIndex((e) => e.id === eventId);
-  if (idx === -1) throw new Error("Event not found.");
-  if (all[idx].ownerId !== ownerId) throw new Error("Not allowed.");
+  if (idx < 0) throw new Error("Event not found");
+  if (all[idx].ownerId !== ownerId) throw new Error("Not allowed");
+
+  const now = Date.now();
+  const hours = plan === "24h" ? 24 : 24 * 7;
+  const promotedUntil = new Date(now + hours * 60 * 60 * 1000).toISOString();
+
+  all[idx] = {
+    ...all[idx],
+    promotedUntil,
+    promotionPlan: plan,
+    promotionAmount: amount,
+    updatedAt: new Date().toISOString(),
+  };
+
+  saveAll(all);
+  notifyChanged();
+  return all[idx];
+}
+
+/**
+ * ✅ Backwards compatible export for MyEventsPage:
+ * MyEventsPage imports `setPromotion`, but our newer API uses promoteOrganizerEvent().
+ * This wrapper keeps the UI working without changing MyEventsPage yet.
+ */
+export function setPromotion(
+  ownerId: string,
+  eventId: string,
+  plan: "24h" | "7d" | null
+) {
+  const all = loadAll();
+  const idx = all.findIndex((e) => e.id === eventId);
+  if (idx === -1) throw new Error("Event not found");
+  if (all[idx].ownerId !== ownerId) throw new Error("Not allowed");
 
   const prev = all[idx];
   if (prev.status !== "approved") {

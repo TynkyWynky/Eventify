@@ -24,6 +24,8 @@ import markerIcon2x from "leaflet/dist/images/marker-icon-2x.png";
 import markerIcon from "leaflet/dist/images/marker-icon.png";
 import markerShadow from "leaflet/dist/images/marker-shadow.png";
 
+import { getOrigin, subscribeOriginChanged } from "../data/location/locationStore";
+
 delete (L.Icon.Default.prototype as unknown as { _getIconUrl?: unknown })._getIconUrl;
 L.Icon.Default.mergeOptions({
   iconRetinaUrl: markerIcon2x,
@@ -34,6 +36,22 @@ L.Icon.Default.mergeOptions({
 function safeNum(n: unknown, fallback: number) {
   const v = typeof n === "number" ? n : Number(n);
   return Number.isFinite(v) ? v : fallback;
+}
+
+/** Haversine (straight-line) distance in km */
+function haversineKm(lat1: number, lng1: number, lat2: number, lng2: number) {
+  const toRad = (d: number) => (d * Math.PI) / 180;
+  const R = 6371;
+  const dLat = toRad(lat2 - lat1);
+  const dLng = toRad(lng2 - lng1);
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(toRad(lat1)) *
+      Math.cos(toRad(lat2)) *
+      Math.sin(dLng / 2) *
+      Math.sin(dLng / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return R * c;
 }
 
 type SetlistItem = {
@@ -78,6 +96,9 @@ export default function EventDetailPage() {
   const navigate = useNavigate();
   const location = useLocation();
 
+  // Terug naar dashboard met dezelfde filters (querystring)
+  const backTo = "/" + (location.search || "");
+
   const [event, setEvent] = useState<EventItem | undefined>(undefined);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -92,12 +113,17 @@ export default function EventDetailPage() {
   const [setlistsError, setSetlistsError] = useState<string | null>(null);
   const [heroImageUrl, setHeroImageUrl] = useState<string>("");
 
+  // ✅ origin (My location / city)
+  const [origin, setOriginState] = useState(() => getOrigin());
+  useEffect(() => subscribeOriginChanged(() => setOriginState(getOrigin())), []);
+
+  // Load event details
   useEffect(() => {
     if (!eventId) return;
 
     const controller = new AbortController();
 
-    queueMicrotask(() => {
+    Promise.resolve().then(() => {
       if (controller.signal.aborted) return;
       setIsLoading(true);
       setError(null);
@@ -105,7 +131,7 @@ export default function EventDetailPage() {
 
     eventsRepo
       .getById(eventId, { signal: controller.signal })
-      .then(setEvent)
+      .then((e) => setEvent(e))
       .catch((err: unknown) => {
         if (err instanceof DOMException && err.name === "AbortError") return;
         setError(err instanceof Error ? err.message : String(err));
@@ -117,6 +143,7 @@ export default function EventDetailPage() {
     return () => controller.abort();
   }, [eventId]);
 
+  // Views + Going metrics
   useEffect(() => {
     if (!eventId) return;
 
@@ -129,10 +156,10 @@ export default function EventDetailPage() {
     };
 
     refresh();
-    const unsub = subscribeMetricsChanged(() => refresh());
-    return unsub;
+    return subscribeMetricsChanged(refresh);
   }, [eventId, user]);
 
+  // Favorites
   useEffect(() => {
     if (!eventId) return;
 
@@ -141,16 +168,19 @@ export default function EventDetailPage() {
     };
 
     refreshFav();
-    const unsub = subscribeFavoritesChanged(() => refreshFav());
-    return unsub;
+    return subscribeFavoritesChanged(refreshFav);
   }, [eventId, user]);
 
+  // Setlists
   useEffect(() => {
     const artist = event?.artistName?.trim();
+
     if (!artist) {
-      setSetlists([]);
-      setSetlistsError(null);
-      setSetlistsLoading(false);
+      Promise.resolve().then(() => {
+        setSetlists([]);
+        setSetlistsError(null);
+        setSetlistsLoading(false);
+      });
       return;
     }
 
@@ -159,14 +189,15 @@ export default function EventDetailPage() {
     const url = new URL("setlists", base.endsWith("/") ? base : `${base}/`);
     url.searchParams.set("artistName", artist);
 
-    setSetlistsLoading(true);
-    setSetlistsError(null);
+    Promise.resolve().then(() => {
+      if (controller.signal.aborted) return;
+      setSetlistsLoading(true);
+      setSetlistsError(null);
+    });
 
     fetch(url.toString(), { signal: controller.signal })
       .then(async (res) => {
-        if (!res.ok) {
-          throw new Error(`Setlists request failed (${res.status})`);
-        }
+        if (!res.ok) throw new Error(`Setlists request failed (${res.status})`);
         const data = (await res.json()) as SetlistsResponse;
         if (!data.ok) throw new Error(data.error || "Could not fetch setlists");
         setSetlists((data.items || []).slice(0, 5));
@@ -183,27 +214,31 @@ export default function EventDetailPage() {
     return () => controller.abort();
   }, [event?.artistName]);
 
+  // Hero image (preload + fallback)
   useEffect(() => {
     if (!event) {
-      setHeroImageUrl("");
+      Promise.resolve().then(() => setHeroImageUrl(""));
       return;
     }
 
     const fallback = getGenreFallbackImage(event.tags[0]);
     const primary = (event.imageUrl || "").trim();
+
     if (!primary || primary === fallback) {
-      setHeroImageUrl(fallback);
+      Promise.resolve().then(() => setHeroImageUrl(fallback));
       return;
     }
 
     let active = true;
     const img = new Image();
+
     img.onload = () => {
       if (active) setHeroImageUrl(primary);
     };
     img.onerror = () => {
       if (active) setHeroImageUrl(fallback);
     };
+
     img.src = primary;
 
     return () => {
@@ -218,11 +253,20 @@ export default function EventDetailPage() {
     return [lat, lng] as [number, number];
   }, [event]);
 
+  // ✅ distance computed from origin (NOT from stored event.distanceKm)
+  const distanceFromOrigin = useMemo(() => {
+    if (!event) return 0;
+    const lat = safeNum(event.latitude, 50.8466);
+    const lng = safeNum(event.longitude, 4.3528);
+    const d = haversineKm(origin.lat, origin.lng, lat, lng);
+    return Math.round(d * 10) / 10;
+  }, [event, origin.lat, origin.lng]);
+
   if (isLoading) {
     return (
       <div className="eventDetailPage">
         <div className="eventDetailTopRow">
-          <Link to="/" className="btn btnSecondary">
+          <Link to={backTo} className="btn btnSecondary">
             ← Back
           </Link>
         </div>
@@ -239,7 +283,7 @@ export default function EventDetailPage() {
     return (
       <div className="eventDetailPage">
         <div className="eventDetailTopRow">
-          <Link to="/" className="btn btnSecondary">
+          <Link to={backTo} className="btn btnSecondary">
             ← Back
           </Link>
         </div>
@@ -256,7 +300,7 @@ export default function EventDetailPage() {
     return (
       <div className="eventDetailPage">
         <div className="eventDetailTopRow">
-          <Link to="/" className="btn btnSecondary">
+          <Link to={backTo} className="btn btnSecondary">
             ← Back
           </Link>
         </div>
@@ -278,14 +322,14 @@ export default function EventDetailPage() {
   return (
     <div className="eventDetailPage">
       <div className="eventDetailTopRow">
-        <Link to="/" className="btn btnSecondary">
+        <Link to={backTo} className="btn btnSecondary">
           ← Back
         </Link>
 
         <div className="eventDetailTopRight">
           <span className="eventDetailMiniMeta">
-            {event.venue} • {event.distanceKm.toFixed(1)} km • {views} views •{" "}
-            {goings} going
+            {event.venue} • {distanceFromOrigin.toFixed(1)} km from {origin.label} •{" "}
+            {views} views • {goings} going
           </span>
         </div>
       </div>
@@ -299,10 +343,13 @@ export default function EventDetailPage() {
 
         <div className="eventDetailHeroContent">
           <div className="eventDetailTitle">{event.title}</div>
+
           <div className="eventDetailMeta">
             <span>{startLabel}</span>
             <span className="dotSep">•</span>
             <span>{event.city}</span>
+            <span className="dotSep">•</span>
+            <span>{distanceFromOrigin.toFixed(1)} km</span>
             {event.source ? (
               <>
                 <span className="dotSep">•</span>
@@ -325,7 +372,9 @@ export default function EventDetailPage() {
               onClick={() => {
                 if (!eventId) return;
                 if (!user) {
-                  navigate("/login", { state: { from: location.pathname } });
+                  navigate("/login", {
+                    state: { from: location.pathname + location.search },
+                  });
                   return;
                 }
                 const next = toggleGoing(user.id, eventId);
@@ -341,7 +390,9 @@ export default function EventDetailPage() {
               onClick={() => {
                 if (!eventId) return;
                 if (!user) {
-                  navigate("/login", { state: { from: location.pathname } });
+                  navigate("/login", {
+                    state: { from: location.pathname + location.search },
+                  });
                   return;
                 }
                 const next = toggleUserFavorite(user.id, eventId);
@@ -376,22 +427,27 @@ export default function EventDetailPage() {
       </section>
 
       <section className="eventDetailGrid">
-        <div className="eventDetailCard">
+        <div className="eventDetailCard eventDetailCardAbout">
           <div className="eventDetailCardTitle">About</div>
+
           {event.artistName ? (
             <div className="eventDetailText">
               <b>Artist:</b> {event.artistName}
             </div>
           ) : null}
+
           <div className="eventDetailText">
             <b>Starts:</b> {startLabel}
           </div>
+
           {event.source ? (
             <div className="eventDetailText">
               <b>Source:</b> {event.source}
             </div>
           ) : null}
+
           <div className="eventDetailText">{event.description}</div>
+
           {event.sourceUrl ? (
             <div className="eventDetailText">
               <a href={event.sourceUrl} target="_blank" rel="noreferrer">
@@ -401,19 +457,19 @@ export default function EventDetailPage() {
           ) : null}
         </div>
 
-        <div className="eventDetailCard">
+        <div className="eventDetailCard eventDetailCardLocation">
           <div className="eventDetailCardTitle">Location</div>
           <div className="eventDetailText">{fullAddress}</div>
 
-          <div className="eventDetailMapWrap">
+          <div className="leafletMapWrap">
             <MapContainer
               center={mapPos}
               zoom={14}
               scrollWheelZoom={false}
-              className="eventDetailMap"
+              className="leafletMap"
             >
               <TileLayer
-                attribution='&copy; OpenStreetMap contributors'
+                attribution="&copy; OpenStreetMap contributors"
                 url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
               />
               <Marker position={mapPos}>
@@ -428,24 +484,32 @@ export default function EventDetailPage() {
         </div>
 
         {event.artistName ? (
-          <div className="eventDetailCard">
+          <div className="eventDetailCard eventDetailCardSetlists">
             <div className="eventDetailCardTitle">Recent Setlists</div>
             <div className="eventDetailText">
               Last known shows for <b>{event.artistName}</b>.
             </div>
+
             {setlistsLoading ? (
               <div className="sectionHint">Loading setlists…</div>
             ) : null}
+
             {setlistsError ? (
-              <div className="sectionHint">Setlists unavailable: {setlistsError}</div>
+              <div className="sectionHint">
+                Setlists unavailable: {setlistsError}
+              </div>
             ) : null}
+
             {!setlistsLoading && !setlistsError && setlists.length === 0 ? (
               <div className="sectionHint">No recent setlists found.</div>
             ) : (
               setlists.map((s) => (
-                <div key={s.id || `${s.eventDate}-${s.venue}`} className="eventDetailText">
-                  <b>{s.eventDate || "Date unknown"}</b> • {s.venue || "Unknown venue"} •{" "}
-                  {s.city || "Unknown city"}
+                <div
+                  key={s.id || `${s.eventDate}-${s.venue}`}
+                  className="eventDetailText"
+                >
+                  <b>{s.eventDate || "Date unknown"}</b> •{" "}
+                  {s.venue || "Unknown venue"} • {s.city || "Unknown city"}
                   {s.country ? `, ${s.country}` : ""}
                   {s.url ? (
                     <>
