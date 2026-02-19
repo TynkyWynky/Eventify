@@ -19,11 +19,19 @@ const CONFIG = {
   
   // Sync user (for organizer_id field)
   SYNC_USER_ID: process.env.SYNC_USER_ID || 1,
+
+  // DB SSL mode: true/1/require to enable, otherwise disabled
+  DATABASE_SSL: process.env.DATABASE_SSL || "",
 };
+
+function parseDbSsl(value) {
+  const normalized = String(value || "").trim().toLowerCase();
+  return normalized === "1" || normalized === "true" || normalized === "require";
+}
 
 const pool = new Pool({
   connectionString: CONFIG.DATABASE_URL,
-  ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false,
+  ssl: parseDbSsl(CONFIG.DATABASE_SSL) ? { rejectUnauthorized: false } : false,
 });
 
 async function testConnection() {
@@ -129,7 +137,7 @@ function mapApiEventToDb(apiEvent) {
     status: "published",
     capacity: null,
     
-    cover_image_url: null,
+    cover_image_url: apiEvent.imageUrl || null,
     
     source: apiEvent.source || "unknown",
     source_id: apiEvent.sourceId || null,

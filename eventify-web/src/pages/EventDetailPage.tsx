@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import type { EventItem } from "../events/eventsStore";
 import { eventsRepo } from "../data/events";
+import { getGenreFallbackImage } from "../data/events/genreImages";
 import { useAuth } from "../auth/AuthContext";
 import {
   countGoings,
@@ -35,6 +36,42 @@ function safeNum(n: unknown, fallback: number) {
   return Number.isFinite(v) ? v : fallback;
 }
 
+type SetlistItem = {
+  id?: string | null;
+  eventDate?: string | null;
+  tour?: string | null;
+  venue?: string | null;
+  city?: string | null;
+  country?: string | null;
+  url?: string | null;
+};
+
+type SetlistsResponse = {
+  ok: boolean;
+  error?: string;
+  items?: SetlistItem[];
+};
+
+function getApiBaseUrl() {
+  const raw = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.trim();
+  return raw || "http://localhost:3000";
+}
+
+function formatStartIso(startIso?: string | null) {
+  if (!startIso) return null;
+  const d = new Date(startIso);
+  if (Number.isNaN(d.getTime())) return startIso;
+  return d.toLocaleString(undefined, {
+    weekday: "short",
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
+}
+
 export default function EventDetailPage() {
   const { eventId } = useParams();
   const { user } = useAuth();
@@ -50,6 +87,10 @@ export default function EventDetailPage() {
   const [isGoing, setIsGoing] = useState(false);
 
   const [isFav, setIsFav] = useState(false);
+  const [setlists, setSetlists] = useState<SetlistItem[]>([]);
+  const [setlistsLoading, setSetlistsLoading] = useState(false);
+  const [setlistsError, setSetlistsError] = useState<string | null>(null);
+  const [heroImageUrl, setHeroImageUrl] = useState<string>("");
 
   useEffect(() => {
     if (!eventId) return;
@@ -103,6 +144,72 @@ export default function EventDetailPage() {
     const unsub = subscribeFavoritesChanged(() => refreshFav());
     return unsub;
   }, [eventId, user]);
+
+  useEffect(() => {
+    const artist = event?.artistName?.trim();
+    if (!artist) {
+      setSetlists([]);
+      setSetlistsError(null);
+      setSetlistsLoading(false);
+      return;
+    }
+
+    const controller = new AbortController();
+    const base = getApiBaseUrl();
+    const url = new URL("setlists", base.endsWith("/") ? base : `${base}/`);
+    url.searchParams.set("artistName", artist);
+
+    setSetlistsLoading(true);
+    setSetlistsError(null);
+
+    fetch(url.toString(), { signal: controller.signal })
+      .then(async (res) => {
+        if (!res.ok) {
+          throw new Error(`Setlists request failed (${res.status})`);
+        }
+        const data = (await res.json()) as SetlistsResponse;
+        if (!data.ok) throw new Error(data.error || "Could not fetch setlists");
+        setSetlists((data.items || []).slice(0, 5));
+      })
+      .catch((err: unknown) => {
+        if (err instanceof DOMException && err.name === "AbortError") return;
+        setSetlists([]);
+        setSetlistsError(err instanceof Error ? err.message : String(err));
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setSetlistsLoading(false);
+      });
+
+    return () => controller.abort();
+  }, [event?.artistName]);
+
+  useEffect(() => {
+    if (!event) {
+      setHeroImageUrl("");
+      return;
+    }
+
+    const fallback = getGenreFallbackImage(event.tags[0]);
+    const primary = (event.imageUrl || "").trim();
+    if (!primary || primary === fallback) {
+      setHeroImageUrl(fallback);
+      return;
+    }
+
+    let active = true;
+    const img = new Image();
+    img.onload = () => {
+      if (active) setHeroImageUrl(primary);
+    };
+    img.onerror = () => {
+      if (active) setHeroImageUrl(fallback);
+    };
+    img.src = primary;
+
+    return () => {
+      active = false;
+    };
+  }, [event]);
 
   const mapPos = useMemo(() => {
     if (!event) return [50.8466, 4.3528] as [number, number];
@@ -166,6 +273,7 @@ export default function EventDetailPage() {
 
   const fullAddress = `${event.addressLine}, ${event.postalCode} ${event.city}, ${event.country}`;
   const googleMapsUrl = `https://www.google.com/maps?q=${event.latitude},${event.longitude}`;
+  const startLabel = formatStartIso(event.startIso) || event.dateLabel;
 
   return (
     <div className="eventDetailPage">
@@ -185,16 +293,22 @@ export default function EventDetailPage() {
       <section className="eventDetailHero">
         <div
           className="eventDetailHeroImage"
-          style={{ backgroundImage: `url(${event.imageUrl})` }}
+          style={{ backgroundImage: `url(${heroImageUrl || event.imageUrl})` }}
         />
         <div className="eventDetailHeroShade" />
 
         <div className="eventDetailHeroContent">
           <div className="eventDetailTitle">{event.title}</div>
           <div className="eventDetailMeta">
-            <span>{event.dateLabel}</span>
+            <span>{startLabel}</span>
             <span className="dotSep">•</span>
             <span>{event.city}</span>
+            {event.source ? (
+              <>
+                <span className="dotSep">•</span>
+                <span>{event.source}</span>
+              </>
+            ) : null}
           </div>
 
           <div className="eventDetailTags">
@@ -238,6 +352,17 @@ export default function EventDetailPage() {
               {isFav ? "Saved ★" : "Save"}
             </button>
 
+            {event.sourceUrl ? (
+              <a
+                className="btn btnPrimary"
+                href={event.sourceUrl}
+                target="_blank"
+                rel="noreferrer"
+              >
+                Tickets
+              </a>
+            ) : null}
+
             <a
               className="btn btnSecondary"
               href={googleMapsUrl}
@@ -253,7 +378,27 @@ export default function EventDetailPage() {
       <section className="eventDetailGrid">
         <div className="eventDetailCard">
           <div className="eventDetailCardTitle">About</div>
+          {event.artistName ? (
+            <div className="eventDetailText">
+              <b>Artist:</b> {event.artistName}
+            </div>
+          ) : null}
+          <div className="eventDetailText">
+            <b>Starts:</b> {startLabel}
+          </div>
+          {event.source ? (
+            <div className="eventDetailText">
+              <b>Source:</b> {event.source}
+            </div>
+          ) : null}
           <div className="eventDetailText">{event.description}</div>
+          {event.sourceUrl ? (
+            <div className="eventDetailText">
+              <a href={event.sourceUrl} target="_blank" rel="noreferrer">
+                Open official event page
+              </a>
+            </div>
+          ) : null}
         </div>
 
         <div className="eventDetailCard">
@@ -281,6 +426,41 @@ export default function EventDetailPage() {
             </MapContainer>
           </div>
         </div>
+
+        {event.artistName ? (
+          <div className="eventDetailCard">
+            <div className="eventDetailCardTitle">Recent Setlists</div>
+            <div className="eventDetailText">
+              Last known shows for <b>{event.artistName}</b>.
+            </div>
+            {setlistsLoading ? (
+              <div className="sectionHint">Loading setlists…</div>
+            ) : null}
+            {setlistsError ? (
+              <div className="sectionHint">Setlists unavailable: {setlistsError}</div>
+            ) : null}
+            {!setlistsLoading && !setlistsError && setlists.length === 0 ? (
+              <div className="sectionHint">No recent setlists found.</div>
+            ) : (
+              setlists.map((s) => (
+                <div key={s.id || `${s.eventDate}-${s.venue}`} className="eventDetailText">
+                  <b>{s.eventDate || "Date unknown"}</b> • {s.venue || "Unknown venue"} •{" "}
+                  {s.city || "Unknown city"}
+                  {s.country ? `, ${s.country}` : ""}
+                  {s.url ? (
+                    <>
+                      {" "}
+                      •{" "}
+                      <a href={s.url} target="_blank" rel="noreferrer">
+                        Setlist
+                      </a>
+                    </>
+                  ) : null}
+                </div>
+              ))
+            )}
+          </div>
+        ) : null}
       </section>
     </div>
   );

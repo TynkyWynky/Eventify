@@ -1,8 +1,10 @@
 const express = require("express");
 const axios = require("axios");
+const cors = require("cors");
 require("dotenv").config();
 
 const app = express();
+app.use(cors());
 app.use(express.json());
 
 // -----------------------------
@@ -61,9 +63,31 @@ async function fetchTicketmaster({
   });
 
   const events = data?._embedded?.events ?? [];
+
+  function pickTicketmasterImage(images) {
+    if (!Array.isArray(images) || images.length === 0) return null;
+
+    const exact169 = images
+      .filter((img) => img && img.url && img.ratio === "16_9")
+      .sort((a, b) => (Number(b.width) || 0) - (Number(a.width) || 0));
+    if (exact169.length > 0) return exact169[0].url;
+
+    const any = images
+      .filter((img) => img && img.url)
+      .sort((a, b) => (Number(b.width) || 0) - (Number(a.width) || 0));
+    return any.length > 0 ? any[0].url : null;
+  }
+
   return events.map((e) => {
     const venue = e?._embedded?.venues?.[0];
     const attraction = e?._embedded?.attractions?.[0];
+    const classification = e?.classifications?.[0];
+    const genre =
+      classification?.genre?.name ||
+      classification?.subGenre?.name ||
+      classification?.segment?.name ||
+      classificationName ||
+      null;
 
     return {
       source: "ticketmaster",
@@ -75,6 +99,8 @@ async function fetchTicketmaster({
       lat: venue?.location?.latitude ? Number(venue.location.latitude) : null,
       lng: venue?.location?.longitude ? Number(venue.location.longitude) : null,
       url: e.url || null,
+      imageUrl: pickTicketmasterImage(e?.images),
+      genre,
 
       // Useful for setlist enrichment:
       artistName: attraction?.name || null,

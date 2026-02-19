@@ -570,6 +570,29 @@ body::before {
   white-space: nowrap;
 }
 
+.eventCardTextWrap {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.eventCardTitle {
+  font-size: 13px;
+  font-weight: 800;
+  color: rgba(255,255,255,.94);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.eventCardMeta {
+  font-size: 11px;
+  color: rgba(255,255,255,.72);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .eventFooterRight {
   font-size: 12px;
   color: rgba(255,255,255,.75);
@@ -870,6 +893,14 @@ body::before {
   text-shadow: 0 10px 35px rgba(0,0,0,.45);
 }
 
+.eventDetailMeta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  color: rgba(255,255,255,.86);
+  font-weight: 600;
+}
+
 .eventDetailMetaLine { color: rgba(255,255,255,.86); font-weight: 600; }
 
 .eventDetailTags { display: flex; flex-wrap: wrap; gap: 8px; }
@@ -902,6 +933,18 @@ body::before {
   background: rgba(0,0,0,.18);
   box-shadow: var(--glow);
   padding: var(--space-5);
+}
+
+.eventDetailCardTitle {
+  font-size: 18px;
+  font-weight: 900;
+  margin-bottom: var(--space-3);
+}
+
+.eventDetailText {
+  margin-top: 8px;
+  color: rgba(255,255,255,.88);
+  line-height: 1.55;
 }
 
 .detailCardTitle {

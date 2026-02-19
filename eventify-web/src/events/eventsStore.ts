@@ -16,6 +16,13 @@ export type EventItem = {
   latitude: number;
   longitude: number;
   description: string;
+
+  // Backend-integrated optional metadata
+  source?: string;
+  sourceId?: string;
+  sourceUrl?: string;
+  artistName?: string;
+  startIso?: string | null;
 };
 
 export const MUSIC_STYLES: string[] = [
