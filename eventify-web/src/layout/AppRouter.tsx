@@ -26,23 +26,21 @@ export const appRouter = createBrowserRouter([
       { path: "login", element: <LoginPage /> },
       { path: "register", element: <RegisterPage /> },
 
+      // ✅ allow everyone (page handles auth + organizer/user UI)
+      { path: "my-events", element: <MyEventsPage /> },
+
       {
         element: <RequireAuth />,
         children: [
           { path: "account", element: <AccountPage /> },
           { path: "account/settings", element: <AccountSettingsPage /> },
-
-          {
-            element: <RequireRole allowed={["organizer", "admin"]} />,
-            children: [{ path: "my-events", element: <MyEventsPage /> }],
-          },
         ],
       },
+
       {
         element: <RequireRole allowed={["admin"]} />,
         children: [{ path: "admin", element: <AdminDashboard /> }],
       },
-
     ],
   },
 ]);

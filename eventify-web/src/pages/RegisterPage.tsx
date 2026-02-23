@@ -54,6 +54,7 @@ export default function RegisterPage() {
   const [confirmPassword, setConfirmPassword] = useState("");
 
   const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
 
   const emailOk = useMemo(() => isValidEmail(email), [email]);
   const passwordOk = useMemo(() => password.length >= 8, [password]);
@@ -66,7 +67,7 @@ export default function RegisterPage() {
   const showPasswordStatus = password.length > 0;
   const showConfirmStatus = confirmPassword.length > 0;
 
-  function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
+  async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     setError(null);
 
@@ -86,10 +87,13 @@ export default function RegisterPage() {
     }
 
     try {
-      register({ name, email, password });
+      setLoading(true);
+      await register({ name, email, password });
       navigate(from, { replace: true });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Register failed.");
+    } finally {
+      setLoading(false);
     }
   }
 
@@ -167,8 +171,8 @@ export default function RegisterPage() {
             <ValidationIcon show={showConfirmStatus} valid={confirmOk} />
           </div>
 
-          <button className="authPrimaryButton" type="submit">
-            Create account
+          <button className="authPrimaryButton" type="submit" disabled={loading}>
+            {loading ? "Creating…" : "Create account"}
           </button>
 
           <div className="authHint">

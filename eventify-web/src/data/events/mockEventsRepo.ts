@@ -80,14 +80,14 @@ function withDistanceFromOrigin(items: EventItem[], params?: EventsListParams) {
   });
 }
 
-function getAllPublicEvents(params?: EventsListParams): EventItem[] {
-  // ✅ organizer events are public events too (with origin-based distance)
-  const organizerEvents = listPublicOrganizerEvents({
-    originLat: params?.originLat,
-    originLng: params?.originLng,
+async function getAllPublicEvents(params?: EventsListParams): Promise<EventItem[]> {
+  const origin = getOrigin(params);
+
+  const organizerEvents = await listPublicOrganizerEvents({
+    originLat: origin.lat,
+    originLng: origin.lng,
   });
 
-  // ✅ mock events: recompute distance from origin
   const mockWithDistance = withDistanceFromOrigin(MOCK_EVENTS, params);
 
   return [...organizerEvents, ...mockWithDistance];
@@ -114,16 +114,20 @@ async function sleep(ms: number, signal?: AbortSignal) {
 export const mockEventsRepo: EventsRepo = {
   async list(params, opts) {
     await sleep(200, opts?.signal);
-    const filtered = applyFilters(getAllPublicEvents(params), params);
+
+    const all = await getAllPublicEvents(params);
+    const filtered = applyFilters(all, params);
+
     return filtered.map((e) => ({ ...e }));
   },
 
   async getById(eventId, opts) {
     await sleep(120, opts?.signal);
 
-    const organizerFound = getPublicOrganizerEventById(eventId, {
-      originLat: 50.8466,
-      originLng: 4.3528,
+    const origin = getOrigin();
+    const organizerFound = await getPublicOrganizerEventById(eventId, {
+      originLat: origin.lat,
+      originLng: origin.lng,
     });
     if (organizerFound) return { ...organizerFound };
 

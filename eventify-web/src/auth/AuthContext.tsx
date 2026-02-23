@@ -8,185 +8,89 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import type {
-  AuthState,
-  NotificationItem,
-  RegisterPayload,
-  Role,
-  User,
-} from "./authTypes";
-import { getUserById, subscribeUsersChanged } from "./usersStore";
+import type { AuthState, NotificationItem, RegisterPayload, User } from "./authTypes";
+import {
+  apiFetch,
+  buildSseUrl,
+  type ApiAuthResponse,
+  type ApiMeResponse,
+} from "./apiClient";
 
-const AUTH_STORAGE_KEY = "eventify_auth_v1";
-const USERS_STORAGE_KEY = "eventify_users_v1";
-
-type StoredUser = {
-  id: string;
-  name: string;
-  email: string; 
-  password: string;
-  role: Role;
-  createdAt: string; 
-};
+const AUTH_STORAGE_KEY = "eventify_auth_v2";
 
 type JsonRecord = Record<string, unknown>;
-
 function isRecord(v: unknown): v is JsonRecord {
   return typeof v === "object" && v !== null;
 }
 
-function str(v: unknown, fallback = ""): string {
-  return typeof v === "string" ? v : fallback;
+function readString(obj: JsonRecord, key: string): string | null {
+  const v = obj[key];
+  return typeof v === "string" ? v : null;
 }
 
-function normalizeEmail(email: string) {
-  return email.trim().toLowerCase();
+function readBool(obj: JsonRecord, key: string): boolean | null {
+  const v = obj[key];
+  return typeof v === "boolean" ? v : null;
 }
 
-function normalizeRole(role: unknown): Role {
-  if (role === "admin" || role === "organizer" || role === "user") return role;
-  return "user";
-}
-
-function uid(prefix: string) {
-  const c: Crypto | undefined = globalThis.crypto;
-  if (c && typeof c.randomUUID === "function") return `${prefix}_${c.randomUUID()}`;
-  return `${prefix}_${Math.random().toString(16).slice(2)}`;
-}
-
-function loadUsers(): StoredUser[] {
-  try {
-    const raw = localStorage.getItem(USERS_STORAGE_KEY);
-    if (!raw) return [];
-
-    const parsed: unknown = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return [];
-
-    const users: StoredUser[] = [];
-
-    for (const item of parsed) {
-      if (!isRecord(item)) continue;
-
-      const id = str(item.id, uid("u"));
-      const name = str(item.name, "User");
-      const email = normalizeEmail(str(item.email, ""));
-      const password = str(item.password, "");
-      const role = normalizeRole(item.role);
-      const createdAt = str(item.createdAt, new Date().toISOString());
-
-      if (!email) continue;
-
-      users.push({ id, name, email, password, role, createdAt });
-    }
-
-    return users;
-  } catch {
-    return [];
+function mapNotification(raw: unknown): NotificationItem {
+  if (!isRecord(raw)) {
+    return {
+      id: `n_${Math.random().toString(16).slice(2)}`,
+      title: "Notification",
+      message: "",
+      createdAt: new Date().toISOString(),
+      isRead: false,
+    };
   }
+
+  const id = readString(raw, "id") ?? `n_${Math.random().toString(16).slice(2)}`;
+  const title = readString(raw, "title") ?? "Notification";
+  const message = readString(raw, "message") ?? "";
+  const createdAt =
+    readString(raw, "createdAt") ??
+    readString(raw, "created_at") ??
+    new Date().toISOString();
+
+  const isRead =
+    readBool(raw, "isRead") ??
+    readBool(raw, "is_read") ??
+    false;
+
+  return { id, title, message, createdAt, isRead };
 }
 
-function saveUsers(users: StoredUser[]) {
-  localStorage.setItem(USERS_STORAGE_KEY, JSON.stringify(users));
-}
-
-function ensureSeedUsers() {
-  const users = loadUsers();
-  const emails = new Set(users.map((u) => u.email));
-  const now = new Date().toISOString();
-
-  const seedWanted: StoredUser[] = [
-    {
-      id: uid("u"),
-      name: "Demo User",
-      email: "demo@eventify.local",
-      password: "password123",
-      role: "user",
-      createdAt: now,
-    },
-    {
-      id: uid("u"),
-      name: "Demo Organizer",
-      email: "orga@eventify.local",
-      password: "password123",
-      role: "organizer",
-      createdAt: now,
-    },
-    {
-      id: uid("u"),
-      name: "Demo Admin",
-      email: "admin@eventify.local",
-      password: "password123",
-      role: "admin",
-      createdAt: now,
-    },
-  ];
-
-  const toAdd = seedWanted.filter((u) => !emails.has(u.email));
-  if (toAdd.length === 0) return;
-
-  saveUsers([...toAdd, ...users]);
-}
-
-function buildMockNotifications(): NotificationItem[] {
-  const now = new Date();
-  const iso = (d: Date) => d.toISOString();
-
-  return [
-    {
-      id: "n1",
-      title: "New friend request",
-      message: "Alex wants to add you.",
-      createdAt: iso(new Date(now.getTime() - 1000 * 60 * 12)),
-      isRead: false,
-    },
-    {
-      id: "n2",
-      title: "Your friend is going",
-      message: "Maya is going to 'Live Session'.",
-      createdAt: iso(new Date(now.getTime() - 1000 * 60 * 60 * 2)),
-      isRead: false,
-    },
-    {
-      id: "n3",
-      title: "Event reminder",
-      message: "Don't forget 'Crowd Night' tonight.",
-      createdAt: iso(new Date(now.getTime() - 1000 * 60 * 60 * 24)),
-      isRead: true,
-    },
-  ];
-}
-
-function loadInitial(): { user: User | null; notifications: NotificationItem[] } {
+function loadInitial(): {
+  user: User | null;
+  token: string | null;
+  notifications: NotificationItem[];
+} {
   try {
     const raw = localStorage.getItem(AUTH_STORAGE_KEY);
-    if (!raw) return { user: null, notifications: buildMockNotifications() };
+    if (!raw) return { user: null, token: null, notifications: [] };
 
     const parsed: unknown = JSON.parse(raw);
-    if (!isRecord(parsed)) {
-      return { user: null, notifications: buildMockNotifications() };
-    }
+    if (!isRecord(parsed)) return { user: null, token: null, notifications: [] };
 
-    const rawUser = parsed.user;
-    const rawNotifs = parsed.notifications;
+    const token = typeof parsed.token === "string" ? parsed.token : null;
 
     let user: User | null = null;
-    if (isRecord(rawUser)) {
-      user = {
-        id: str(rawUser.id, uid("u")),
-        name: str(rawUser.name, "Me"),
-        email: normalizeEmail(str(rawUser.email, "")),
-        role: normalizeRole(rawUser.role),
-      };
-      if (!user.email) user = null;
+    if (isRecord(parsed.user)) {
+      const u = parsed.user;
+      if (typeof u.id === "string" && typeof u.email === "string" && typeof u.name === "string") {
+        const role =
+          u.role === "admin" || u.role === "organizer" || u.role === "user" ? u.role : "user";
+        user = { id: u.id, name: u.name, email: u.email, role };
+      }
     }
 
-    const notifications = Array.isArray(rawNotifs)
-      ? (rawNotifs as NotificationItem[])
-      : buildMockNotifications();
+    const notifications = Array.isArray(parsed.notifications)
+      ? (parsed.notifications as NotificationItem[])
+      : [];
 
-    return { user, notifications };
+    return { user, token, notifications };
   } catch {
-    return { user: null, notifications: buildMockNotifications() };
+    return { user: null, token: null, notifications: [] };
   }
 }
 
@@ -199,141 +103,158 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const initial = useMemo(() => loadInitial(), []);
 
   const [user, setUser] = useState<User | null>(initial.user);
-  const [notifications, setNotifications] = useState<NotificationItem[]>(
-    initial.notifications
-  );
+  const [token, setToken] = useState<string | null>(initial.token);
+  const [notifications, setNotifications] = useState<NotificationItem[]>(initial.notifications);
 
   useEffect(() => {
-    ensureSeedUsers();
-  }, []);
+    localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify({ user, token, notifications }));
+  }, [user, token, notifications]);
 
   useEffect(() => {
-    const id = user?.id;
-    if (!id) return;
+    if (!token) return;
 
-    return subscribeUsersChanged(() => {
-      const fresh = getUserById(id);
-      if (!fresh) return;
+    const controller = new AbortController();
 
-      setUser((prev) => {
-        if (!prev || prev.id !== id) return prev;
-        if (
-          prev.role === fresh.role &&
-          prev.name === fresh.name &&
-          prev.email === fresh.email
-        )
-          return prev;
+    (async () => {
+      try {
+        const data = await apiFetch<ApiMeResponse>("/auth/me", {
+          token,
+          signal: controller.signal,
+        });
 
-        return {
-          ...prev,
-          role: fresh.role,
-          name: fresh.name,
-          email: fresh.email,
-        };
-      });
-    });
-  }, [user?.id]);
+        if (!data.ok || !data.user) throw new Error("Not authenticated");
+        setUser(data.user);
+      } catch {
+        if (!controller.signal.aborted) {
+          setToken(null);
+          setUser(null);
+          setNotifications([]);
+        }
+      }
+    })();
+
+    return () => controller.abort();
+  }, [token]);
 
   useEffect(() => {
-    localStorage.setItem(
-      AUTH_STORAGE_KEY,
-      JSON.stringify({ user, notifications })
-    );
-  }, [user, notifications]);
+    if (!token) return;
 
-  const unreadCount = useMemo(
-    () => notifications.filter((n) => !n.isRead).length,
-    [notifications]
-  );
+    const controller = new AbortController();
 
-  function login(email: string, name?: string) {
-    const emailNorm = normalizeEmail(email);
+    (async () => {
+      try {
+        const data = await apiFetch<{ ok: boolean; notifications?: unknown[] }>(
+          "/notifications?limit=30",
+          { token, signal: controller.signal }
+        );
 
-    const users = loadUsers();
-    const found = users.find((u) => u.email === emailNorm);
+        const list = Array.isArray(data.notifications) ? data.notifications : [];
+        setNotifications(list.map(mapNotification));
+      } catch {
+        // ignore
+      }
+    })();
 
-    const nextUser: User = found
-      ? { id: found.id, name: found.name, email: found.email, role: found.role }
-      : {
-          id: uid("u"),
-          name: name?.trim() || "Me",
-          email: emailNorm,
-          role: "user",
-        };
+    return () => controller.abort();
+  }, [token]);
 
-    setUser(nextUser);
-    setNotifications(buildMockNotifications());
-  }
+  useEffect(() => {
+    if (!token) return;
 
-  function loginWithPassword(email: string, password: string) {
-    const emailNorm = normalizeEmail(email);
-    const users = loadUsers();
-    const found = users.find((u) => u.email === emailNorm);
+    const url = buildSseUrl("/notifications/stream", { token });
+    const es = new EventSource(url);
 
-    if (!found || found.password !== password) {
-      throw new Error("Invalid email or password.");
-    }
+    const onNotification = (e: MessageEvent) => {
+      try {
+        const raw: unknown = JSON.parse(e.data);
+        const item = mapNotification(raw);
 
-    setUser({
-      id: found.id,
-      name: found.name,
-      email: found.email,
-      role: found.role,
-    });
-    setNotifications(buildMockNotifications());
-  }
-
-  function register(payload: RegisterPayload) {
-    const name = payload.name.trim() || "Me";
-    const emailNorm = normalizeEmail(payload.email);
-
-    if (!emailNorm) throw new Error("Email is required.");
-    if (payload.password.length < 8) {
-      throw new Error("Password must be at least 8 characters.");
-    }
-
-    const users = loadUsers();
-    const exists = users.some((u) => u.email === emailNorm);
-    if (exists) throw new Error("An account with this email already exists.");
-
-    const created: StoredUser = {
-      id: uid("u"),
-      name,
-      email: emailNorm,
-      password: payload.password,
-      role: "user",
-      createdAt: new Date().toISOString(),
+        setNotifications((prev) => {
+          const filtered = prev.filter((x) => x.id !== item.id);
+          return [item, ...filtered];
+        });
+      } catch {
+        // ignore
+      }
     };
 
-    saveUsers([created, ...users]);
+    es.addEventListener("notification", onNotification as EventListener);
 
-    setUser({
-      id: created.id,
-      name: created.name,
-      email: created.email,
-      role: created.role,
+    return () => {
+      es.removeEventListener("notification", onNotification as EventListener);
+      es.close();
+    };
+  }, [token]);
+
+  const unreadCount = useMemo(() => notifications.filter((n) => !n.isRead).length, [notifications]);
+
+  async function loginWithPassword(emailOrUsername: string, password: string) {
+    const data = await apiFetch<ApiAuthResponse>("/auth/login", {
+      method: "POST",
+      body: { emailOrUsername, password },
     });
-    setNotifications(buildMockNotifications());
+
+    if (!data.ok || !data.token || !data.user) throw new Error("Login failed.");
+
+    setToken(data.token);
+    setUser(data.user);
+    setNotifications([]); 
+  }
+
+  async function register(payload: RegisterPayload) {
+    const data = await apiFetch<ApiAuthResponse>("/auth/register", {
+      method: "POST",
+      body: payload,
+    });
+
+    if (!data.ok || !data.token || !data.user) throw new Error("Register failed.");
+
+    setToken(data.token);
+    setUser(data.user);
+    setNotifications([]); 
   }
 
   function logout() {
+    setToken(null);
     setUser(null);
-    setNotifications(buildMockNotifications());
+    setNotifications([]);
   }
 
   function markAllAsRead() {
+    if (token) {
+      void (async () => {
+        try {
+          await apiFetch<{ ok: boolean }>("/notifications/read-all", {
+            method: "POST",
+            token,
+          });
+        } catch {
+          // ignore
+        }
+      })();
+    }
+
     setNotifications((prev) => prev.map((n) => ({ ...n, isRead: true })));
   }
 
   function markAsRead(id: string) {
-    setNotifications((prev) =>
-      prev.map((n) => (n.id === id ? { ...n, isRead: true } : n))
-    );
+    if (token) {
+      void (async () => {
+        try {
+          await apiFetch<{ ok: boolean }>(`/notifications/${encodeURIComponent(id)}/read`, {
+            method: "POST",
+            token,
+          });
+        } catch {
+          // ignore
+        }
+      })();
+    }
+
+    setNotifications((prev) => prev.map((n) => (n.id === id ? { ...n, isRead: true } : n)));
   }
 
-  function pushNotification(
-    n: Omit<NotificationItem, "id" | "createdAt" | "isRead">
-  ) {
+  function pushNotification(n: Omit<NotificationItem, "id" | "createdAt" | "isRead">) {
     setNotifications((prev) => [
       {
         id: `n_${Math.random().toString(16).slice(2)}`,
@@ -348,9 +269,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const value: AuthState = {
     user,
+    token,
     notifications,
     unreadCount,
-    login,
     loginWithPassword,
     register,
     logout,

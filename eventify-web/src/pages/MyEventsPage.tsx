@@ -131,16 +131,24 @@ export default function MyEventsPage() {
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
-  function refresh(ownerId: string) {
-    const mine = listOrganizerEventsByOwner(ownerId);
-    setEvents(mine);
-    setGoingsMap(countGoingsForEvents(mine.map((e) => e.id)));
+  async function refresh(ownerId: string) {
+    try {
+      const mine = await listOrganizerEventsByOwner(ownerId);
+      setEvents(mine);
+      setGoingsMap(countGoingsForEvents(mine.map((e) => e.id)));
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : String(e));
+      setEvents([]);
+      setGoingsMap({});
+    }
   }
 
   useEffect(() => {
     if (!userId) return;
 
-    const doRefresh = () => refresh(userId);
+    const doRefresh = () => {
+      void refresh(userId);
+    };
 
     doRefresh();
     const unsubEvents = subscribeOrganizerEventsChanged(doRefresh);
@@ -260,11 +268,12 @@ export default function MyEventsPage() {
 
     try {
       if (editingId) {
-        updateOrganizerEvent(userId, editingId, payload);
+        await updateOrganizerEvent(userId, editingId, payload);
       } else {
-        createOrganizerEvent(userId, payload);
+        await createOrganizerEvent(userId, payload);
       }
       resetForm();
+      await refresh(userId);
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : String(e));
     }
@@ -299,8 +308,8 @@ export default function MyEventsPage() {
           <h2 className="authTitle">My Events</h2>
 
           <p className="authHint myEventsAuthHintTop">
-            Login to submit your first <b>organizer event request</b>.
-            Once approved, you’ll automatically get organizer access.
+            Login to submit your first <b>organizer event request</b>. Once approved,
+            you’ll automatically get organizer access.
           </p>
 
           <div className="myEventsAuthButtons">
@@ -320,7 +329,7 @@ export default function MyEventsPage() {
     );
   }
 
-
+  // NORMAL USER: request flow
   if (!isOrganizer) {
     const pendingCount = events.filter((e) => e.status === "pending").length;
 
@@ -353,7 +362,6 @@ export default function MyEventsPage() {
           </div>
         ) : null}
 
-        {/* Request form (same form, but it will create pending event) */}
         <div className="myEventsPanel">
           <div className="myEventsPanelHeader">
             <div className="myEventsStrongTitle">Submit your first event request</div>
@@ -528,7 +536,6 @@ export default function MyEventsPage() {
           </div>
         </div>
 
-        {/* Requests list */}
         <div className="myEventsListWrap">
           <div className="sectionTitle">Your requests</div>
           <div className="sectionHint">
@@ -545,7 +552,10 @@ export default function MyEventsPage() {
                   <div className="myEventsEventHeader">
                     <div>
                       <div className="myEventsEventTitle">
-                        {e.title} <span style={{ marginLeft: 8 }}><StatusPill status={e.status} /></span>
+                        {e.title}{" "}
+                        <span style={{ marginLeft: 8 }}>
+                          <StatusPill status={e.status} />
+                        </span>
                       </div>
                       <div className="sectionHint">
                         {e.venue} • {e.city} • {e.dateLabel}
@@ -584,7 +594,7 @@ export default function MyEventsPage() {
     );
   }
 
-
+  // ORGANIZER/ADMIN: full management view
   return (
     <div className="myEventsPage">
       <div className="myEventsHeader">
@@ -605,7 +615,6 @@ export default function MyEventsPage() {
         </div>
       </div>
 
-      {/* Quick analytics */}
       <div className="myEventsKpiGrid">
         {[
           ["Events", String(events.length)],
@@ -620,7 +629,6 @@ export default function MyEventsPage() {
         ))}
       </div>
 
-      {/* Simple graphic */}
       <div className="myEventsPanel">
         <div className="myEventsPanelHeader">
           <div>
@@ -637,7 +645,6 @@ export default function MyEventsPage() {
             topByViews.map((e) => {
               const v = getViews(e.id);
               const pct = Math.round((v / maxTopViews) * 100);
-
               const fillStyle: CSSVars = { "--pct": `${pct}%` };
 
               return (
@@ -659,7 +666,6 @@ export default function MyEventsPage() {
         </div>
       </div>
 
-      {/* Form */}
       <div className="myEventsPanel">
         <div className="myEventsPanelHeader">
           <div className="myEventsStrongTitle">
@@ -842,7 +848,6 @@ export default function MyEventsPage() {
         </div>
       </div>
 
-      {/* List */}
       <div className="myEventsListWrap">
         <div className="sectionTitle">Your events</div>
         <div className="sectionHint">
@@ -863,7 +868,10 @@ export default function MyEventsPage() {
                   <div className="myEventsEventHeader">
                     <div>
                       <div className="myEventsEventTitle">
-                        {e.title} <span style={{ marginLeft: 8 }}><StatusPill status={e.status} /></span>
+                        {e.title}{" "}
+                        <span style={{ marginLeft: 8 }}>
+                          <StatusPill status={e.status} />
+                        </span>
                       </div>
                       <div className="sectionHint">
                         {e.venue} • {e.city} • {e.dateLabel}
@@ -889,6 +897,8 @@ export default function MyEventsPage() {
                         className="btn btnSecondary"
                         type="button"
                         onClick={() => startEdit(e)}
+                        disabled={e.status !== "approved"}
+                        title={e.status !== "approved" ? "Only approved events can be edited" : ""}
                       >
                         Edit
                       </button>
@@ -896,12 +906,14 @@ export default function MyEventsPage() {
                       <button
                         className="btn btnSecondary"
                         type="button"
-                        onClick={() => {
+                        onClick={async () => {
                           if (!userId) return;
                           if (!confirm("Delete this event?")) return;
+
                           try {
-                            deleteOrganizerEvent(userId, e.id);
+                            await deleteOrganizerEvent(userId, e.id);
                             if (editingId === e.id) resetForm();
+                            await refresh(userId);
                           } catch (err: unknown) {
                             setError(err instanceof Error ? err.message : String(err));
                           }
@@ -918,7 +930,15 @@ export default function MyEventsPage() {
                         active && e.promotionPlan === "24h" ? "btnPrimary" : "btnSecondary"
                       }`}
                       type="button"
-                      onClick={() => userId && setPromotion(userId, e.id, "24h")}
+                      onClick={async () => {
+                        if (!userId) return;
+                        try {
+                          await setPromotion(userId, e.id, "24h");
+                          await refresh(userId);
+                        } catch (err: unknown) {
+                          setError(err instanceof Error ? err.message : String(err));
+                        }
+                      }}
                       disabled={e.status !== "approved"}
                     >
                       Boost 24h (€9.99)
@@ -929,7 +949,15 @@ export default function MyEventsPage() {
                         active && e.promotionPlan === "7d" ? "btnPrimary" : "btnSecondary"
                       }`}
                       type="button"
-                      onClick={() => userId && setPromotion(userId, e.id, "7d")}
+                      onClick={async () => {
+                        if (!userId) return;
+                        try {
+                          await setPromotion(userId, e.id, "7d");
+                          await refresh(userId);
+                        } catch (err: unknown) {
+                          setError(err instanceof Error ? err.message : String(err));
+                        }
+                      }}
                       disabled={e.status !== "approved"}
                     >
                       Boost 7d (€24.99)
@@ -938,7 +966,15 @@ export default function MyEventsPage() {
                     <button
                       className="btn btnSecondary"
                       type="button"
-                      onClick={() => userId && setPromotion(userId, e.id, null)}
+                      onClick={async () => {
+                        if (!userId) return;
+                        try {
+                          await setPromotion(userId, e.id, null);
+                          await refresh(userId);
+                        } catch (err: unknown) {
+                          setError(err instanceof Error ? err.message : String(err));
+                        }
+                      }}
                       disabled={e.status !== "approved"}
                     >
                       Remove boost

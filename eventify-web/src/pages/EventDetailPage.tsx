@@ -4,13 +4,12 @@ import type { EventItem } from "../events/eventsStore";
 import { eventsRepo } from "../data/events";
 import { getGenreFallbackImage } from "../data/events/genreImages";
 import { useAuth } from "../auth/AuthContext";
+import { apiFetch } from "../auth/apiClient";
+
 import {
-  countGoings,
   getViews,
   incrementView,
-  isUserGoing,
   subscribeMetricsChanged,
-  toggleGoing,
 } from "../data/events/eventMetricsStore";
 import {
   isFavorite as isUserFavorite,
@@ -70,6 +69,27 @@ type SetlistsResponse = {
   items?: SetlistItem[];
 };
 
+type PublicUser = {
+  id: string;
+  username: string;
+  name: string;
+  email: string;
+};
+
+type EventSocialResponse = {
+  ok: boolean;
+  eventKey: string;
+  goingCount: number;
+  myGoing: boolean;
+  friendsGoing: PublicUser[];
+  myInvite: unknown | null;
+};
+
+type FriendsResponse = {
+  ok: boolean;
+  friends: PublicUser[];
+};
+
 function getApiBaseUrl() {
   const raw = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.trim();
   return raw || "http://localhost:3000";
@@ -92,7 +112,7 @@ function formatStartIso(startIso?: string | null) {
 
 export default function EventDetailPage() {
   const { eventId } = useParams();
-  const { user } = useAuth();
+  const { user, token } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -104,8 +124,24 @@ export default function EventDetailPage() {
   const [error, setError] = useState<string | null>(null);
 
   const [views, setViews] = useState(0);
-  const [goings, setGoings] = useState(0);
+
+  // ✅ SERVER social state
+  const [goingCount, setGoingCount] = useState(0);
   const [isGoing, setIsGoing] = useState(false);
+  const [friendsGoing, setFriendsGoing] = useState<PublicUser[]>([]);
+  const [socialLoading, setSocialLoading] = useState(false);
+  const [socialError, setSocialError] = useState<string | null>(null);
+  const [goingSaving, setGoingSaving] = useState(false);
+
+  // ✅ Friends list (for dropdown invite)
+  const [friendsAll, setFriendsAll] = useState<PublicUser[]>([]);
+  const [friendsAllLoading, setFriendsAllLoading] = useState(false);
+  const [friendsAllError, setFriendsAllError] = useState<string | null>(null);
+
+  const [inviteeId, setInviteeId] = useState<string>("");
+  const [inviteSending, setInviteSending] = useState(false);
+  const [inviteMsg, setInviteMsg] = useState<string | null>(null);
+  const [inviteErr, setInviteErr] = useState<string | null>(null);
 
   const [isFav, setIsFav] = useState(false);
   const [setlists, setSetlists] = useState<SetlistItem[]>([]);
@@ -143,7 +179,7 @@ export default function EventDetailPage() {
     return () => controller.abort();
   }, [eventId]);
 
-  // Views + Going metrics
+  // Views metrics (local)
   useEffect(() => {
     if (!eventId) return;
 
@@ -151,13 +187,11 @@ export default function EventDetailPage() {
 
     const refresh = () => {
       setViews(getViews(eventId));
-      setGoings(countGoings(eventId));
-      setIsGoing(user ? isUserGoing(user.id, eventId) : false);
     };
 
     refresh();
     return subscribeMetricsChanged(refresh);
-  }, [eventId, user]);
+  }, [eventId]);
 
   // Favorites
   useEffect(() => {
@@ -170,6 +204,77 @@ export default function EventDetailPage() {
     refreshFav();
     return subscribeFavoritesChanged(refreshFav);
   }, [eventId, user]);
+
+  // ✅ Load SERVER social data (going count, myGoing, friendsGoing)
+  const refreshSocial = async (signal?: AbortSignal) => {
+    if (!eventId) return;
+    try {
+      const data = await apiFetch<EventSocialResponse>(`/events/${encodeURIComponent(eventId)}/social`, {
+        token: token || null,
+        signal,
+      });
+      if (!data?.ok) throw new Error("Could not load social info");
+      setGoingCount(Number(data.goingCount) || 0);
+      setIsGoing(Boolean(data.myGoing));
+      setFriendsGoing(Array.isArray(data.friendsGoing) ? data.friendsGoing : []);
+    } catch (err: unknown) {
+      if (err instanceof DOMException && err.name === "AbortError") return;
+      setSocialError(err instanceof Error ? err.message : String(err));
+    }
+  };
+
+  useEffect(() => {
+    if (!eventId) return;
+
+    const controller = new AbortController();
+
+    Promise.resolve().then(() => {
+      if (controller.signal.aborted) return;
+      setSocialLoading(true);
+      setSocialError(null);
+    });
+
+    refreshSocial(controller.signal)
+      .finally(() => {
+        if (!controller.signal.aborted) setSocialLoading(false);
+      });
+
+    return () => controller.abort();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [eventId, token]);
+
+  // ✅ Load friends for dropdown
+  useEffect(() => {
+    if (!token) {
+      setFriendsAll([]);
+      setFriendsAllError(null);
+      setFriendsAllLoading(false);
+      setInviteeId("");
+      return;
+    }
+
+    const controller = new AbortController();
+
+    Promise.resolve().then(() => {
+      if (controller.signal.aborted) return;
+      setFriendsAllLoading(true);
+      setFriendsAllError(null);
+    });
+
+    apiFetch<FriendsResponse>("/friends", { token, signal: controller.signal })
+      .then((data) => {
+        setFriendsAll(Array.isArray(data.friends) ? data.friends : []);
+      })
+      .catch((err: unknown) => {
+        if (err instanceof DOMException && err.name === "AbortError") return;
+        setFriendsAllError(err instanceof Error ? err.message : String(err));
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setFriendsAllLoading(false);
+      });
+
+    return () => controller.abort();
+  }, [token]);
 
   // Setlists
   useEffect(() => {
@@ -253,7 +358,7 @@ export default function EventDetailPage() {
     return [lat, lng] as [number, number];
   }, [event]);
 
-  // ✅ distance computed from origin (NOT from stored event.distanceKm)
+  // ✅ distance computed from origin
   const distanceFromOrigin = useMemo(() => {
     if (!event) return 0;
     const lat = safeNum(event.latitude, 50.8466);
@@ -307,9 +412,7 @@ export default function EventDetailPage() {
 
         <div className="eventDetailMissing">
           <div className="eventDetailMissingTitle">Event not found</div>
-          <div className="eventDetailMissingHint">
-            This event doesn’t exist (yet) or was removed.
-          </div>
+          <div className="eventDetailMissingHint">This event doesn’t exist (yet) or was removed.</div>
         </div>
       </div>
     );
@@ -318,6 +421,14 @@ export default function EventDetailPage() {
   const fullAddress = `${event.addressLine}, ${event.postalCode} ${event.city}, ${event.country}`;
   const googleMapsUrl = `https://www.google.com/maps?q=${event.latitude},${event.longitude}`;
   const startLabel = formatStartIso(event.startIso) || event.dateLabel;
+
+  const inviteDisabled =
+    !user ||
+    !token ||
+    inviteSending ||
+    friendsAllLoading ||
+    friendsAll.length === 0 ||
+    !inviteeId;
 
   return (
     <div className="eventDetailPage">
@@ -328,8 +439,8 @@ export default function EventDetailPage() {
 
         <div className="eventDetailTopRight">
           <span className="eventDetailMiniMeta">
-            {event.venue} • {distanceFromOrigin.toFixed(1)} km from {origin.label} •{" "}
-            {views} views • {goings} going
+            {event.venue} • {distanceFromOrigin.toFixed(1)} km from {origin.label} • {views} views •{" "}
+            {goingCount} going
           </span>
         </div>
       </div>
@@ -369,20 +480,45 @@ export default function EventDetailPage() {
           <div className="eventDetailActions">
             <button
               className={`btn ${isGoing ? "btnPrimary" : "btnSecondary"}`}
-              onClick={() => {
+              onClick={async () => {
                 if (!eventId) return;
-                if (!user) {
-                  navigate("/login", {
-                    state: { from: location.pathname + location.search },
-                  });
+                if (!user || !token) {
+                  navigate("/login", { state: { from: location.pathname + location.search } });
                   return;
                 }
-                const next = toggleGoing(user.id, eventId);
-                setIsGoing(next);
+                if (goingSaving) return;
+
+                const nextGoing = !isGoing;
+
+                try {
+                  setGoingSaving(true);
+
+                  await apiFetch<{ ok: boolean; going: boolean }>(
+                    `/events/${encodeURIComponent(eventId)}/going`,
+                    {
+                      method: "PUT",
+                      token,
+                      body: {
+                        going: nextGoing,
+                        event: {
+                          title: event.title,
+                          city: event.city,
+                          startIso: event.startIso || null,
+                        },
+                      },
+                    }
+                  );
+
+                  await refreshSocial();
+                } catch (err: unknown) {
+                  setSocialError(err instanceof Error ? err.message : String(err));
+                } finally {
+                  setGoingSaving(false);
+                }
               }}
               type="button"
             >
-              {isGoing ? "Going ✓" : "I'm going"}
+              {goingSaving ? "Saving…" : isGoing ? "Going ✓" : "I'm going"}
             </button>
 
             <button
@@ -390,9 +526,7 @@ export default function EventDetailPage() {
               onClick={() => {
                 if (!eventId) return;
                 if (!user) {
-                  navigate("/login", {
-                    state: { from: location.pathname + location.search },
-                  });
+                  navigate("/login", { state: { from: location.pathname + location.search } });
                   return;
                 }
                 const next = toggleUserFavorite(user.id, eventId);
@@ -404,22 +538,12 @@ export default function EventDetailPage() {
             </button>
 
             {event.sourceUrl ? (
-              <a
-                className="btn btnPrimary"
-                href={event.sourceUrl}
-                target="_blank"
-                rel="noreferrer"
-              >
+              <a className="btn btnPrimary" href={event.sourceUrl} target="_blank" rel="noreferrer">
                 Tickets
               </a>
             ) : null}
 
-            <a
-              className="btn btnSecondary"
-              href={googleMapsUrl}
-              target="_blank"
-              rel="noreferrer"
-            >
+            <a className="btn btnSecondary" href={googleMapsUrl} target="_blank" rel="noreferrer">
               Open in Maps
             </a>
           </div>
@@ -457,17 +581,123 @@ export default function EventDetailPage() {
           ) : null}
         </div>
 
+        {/* ✅ Social / Friends + Invite dropdown */}
+        <div className="eventDetailCard eventDetailCardSocial">
+          <div className="eventDetailCardTitle">Friends</div>
+
+          {!user ? (
+            <div className="sectionHint">Login to see friends going and invite them.</div>
+          ) : socialLoading ? (
+            <div className="sectionHint">Loading friends…</div>
+          ) : socialError ? (
+            <div className="sectionHint">Social unavailable: {socialError}</div>
+          ) : friendsGoing.length === 0 ? (
+            <div className="sectionHint">No friends going yet.</div>
+          ) : (
+            <>
+              <div className="eventDetailText">
+                <b>{friendsGoing.length}</b> friend{friendsGoing.length === 1 ? "" : "s"} going:
+              </div>
+
+              <div className="friendsGoingList">
+                {friendsGoing.map((f) => (
+                  <div key={f.id} className="friendsGoingRow">
+                    <span className="friendsGoingName">{f.name}</span>
+                    {f.username ? <span className="friendsGoingUsername">@{f.username}</span> : null}
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
+
+          <div style={{ height: 12 }} />
+
+          <div className="eventDetailText">
+            <b>Invite a friend</b>
+          </div>
+
+          {!user ? (
+            <div className="sectionHint">Login to invite friends.</div>
+          ) : friendsAllLoading ? (
+            <div className="sectionHint">Loading your friends…</div>
+          ) : friendsAllError ? (
+            <div className="sectionHint">Friends unavailable: {friendsAllError}</div>
+          ) : friendsAll.length === 0 ? (
+            <div className="sectionHint">You have no friends yet. Add someone on your Account page.</div>
+          ) : (
+            <>
+              <div className="eventDetailInviteRow">
+                <select
+                  className="input"
+                  value={inviteeId}
+                  onChange={(e) => {
+                    setInviteeId(e.target.value);
+                    setInviteMsg(null);
+                    setInviteErr(null);
+                  }}
+                >
+                  <option value="">Select a friend…</option>
+                  {friendsAll.map((f) => (
+                    <option key={f.id} value={f.id}>
+                      {f.name}{f.username ? ` (@${f.username})` : ""}
+                    </option>
+                  ))}
+                </select>
+
+                <button
+                  className="btn btnPrimary"
+                  type="button"
+                  disabled={inviteDisabled}
+                  onClick={async () => {
+                    if (!eventId || !token || !inviteeId) return;
+
+                    try {
+                      setInviteSending(true);
+                      setInviteMsg(null);
+                      setInviteErr(null);
+
+                      await apiFetch<{ ok: boolean; inviteId: string }>(
+                        `/events/${encodeURIComponent(eventId)}/invite`,
+                        {
+                          method: "POST",
+                          token,
+                          body: {
+                            inviteeId,
+                            event: {
+                              title: event.title,
+                              city: event.city,
+                              startIso: event.startIso || null,
+                            },
+                          },
+                        }
+                      );
+
+                      const friend = friendsAll.find((x) => x.id === inviteeId);
+                      setInviteMsg(`Invite sent${friend ? ` to ${friend.name}` : ""}!`);
+                      setInviteeId("");
+                    } catch (err: unknown) {
+                      setInviteErr(err instanceof Error ? err.message : String(err));
+                    } finally {
+                      setInviteSending(false);
+                    }
+                  }}
+                >
+                  {inviteSending ? "Sending…" : "Invite"}
+                </button>
+              </div>
+
+              {inviteMsg ? <div className="sectionHint">{inviteMsg}</div> : null}
+              {inviteErr ? <div className="sectionHint">Invite error: {inviteErr}</div> : null}
+            </>
+          )}
+        </div>
+
         <div className="eventDetailCard eventDetailCardLocation">
           <div className="eventDetailCardTitle">Location</div>
           <div className="eventDetailText">{fullAddress}</div>
 
           <div className="leafletMapWrap">
-            <MapContainer
-              center={mapPos}
-              zoom={14}
-              scrollWheelZoom={false}
-              className="leafletMap"
-            >
+            <MapContainer center={mapPos} zoom={14} scrollWheelZoom={false} className="leafletMap">
               <TileLayer
                 attribution="&copy; OpenStreetMap contributors"
                 url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
@@ -490,26 +720,16 @@ export default function EventDetailPage() {
               Last known shows for <b>{event.artistName}</b>.
             </div>
 
-            {setlistsLoading ? (
-              <div className="sectionHint">Loading setlists…</div>
-            ) : null}
-
-            {setlistsError ? (
-              <div className="sectionHint">
-                Setlists unavailable: {setlistsError}
-              </div>
-            ) : null}
+            {setlistsLoading ? <div className="sectionHint">Loading setlists…</div> : null}
+            {setlistsError ? <div className="sectionHint">Setlists unavailable: {setlistsError}</div> : null}
 
             {!setlistsLoading && !setlistsError && setlists.length === 0 ? (
               <div className="sectionHint">No recent setlists found.</div>
             ) : (
               setlists.map((s) => (
-                <div
-                  key={s.id || `${s.eventDate}-${s.venue}`}
-                  className="eventDetailText"
-                >
-                  <b>{s.eventDate || "Date unknown"}</b> •{" "}
-                  {s.venue || "Unknown venue"} • {s.city || "Unknown city"}
+                <div key={s.id || `${s.eventDate}-${s.venue}`} className="eventDetailText">
+                  <b>{s.eventDate || "Date unknown"}</b> • {s.venue || "Unknown venue"} •{" "}
+                  {s.city || "Unknown city"}
                   {s.country ? `, ${s.country}` : ""}
                   {s.url ? (
                     <>

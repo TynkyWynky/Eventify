@@ -16,8 +16,9 @@ export default function LoginPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
 
-  function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
+  async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     setError(null);
 
@@ -31,10 +32,13 @@ export default function LoginPage() {
     }
 
     try {
-      loginWithPassword(email, password);
+      setLoading(true);
+      await loginWithPassword(email, password);
       navigate(from, { replace: true });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Login failed.");
+    } finally {
+      setLoading(false);
     }
   }
 
@@ -71,8 +75,8 @@ export default function LoginPage() {
             autoComplete="current-password"
           />
 
-          <button className="authPrimaryButton" type="submit">
-            Login
+          <button className="authPrimaryButton" type="submit" disabled={loading}>
+            {loading ? "Logging in…" : "Login"}
           </button>
 
           <div className="authHint">

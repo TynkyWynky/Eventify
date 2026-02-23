@@ -150,8 +150,9 @@ function applyFilters(items: EventItem[], params?: EventsListParams) {
   });
 }
 
-const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.trim()
-  || "http://localhost:3000";
+const API_BASE_URL =
+  (import.meta.env.VITE_API_BASE_URL as string | undefined)?.trim() ||
+  "http://localhost:3000";
 const DEFAULT_LAT = toEnvNum(import.meta.env.VITE_DEFAULT_LAT, 50.8503);
 const DEFAULT_LNG = toEnvNum(import.meta.env.VITE_DEFAULT_LNG, 4.3517);
 const DEFAULT_RADIUS_KM = 50;
@@ -198,14 +199,15 @@ function mapApiEventToItem(
 
   const lat = safeNum(apiEvent.lat, opts.originLat);
   const lng = safeNum(apiEvent.lng, opts.originLng);
-  const distanceKm = Math.round(
-    haversineKm(opts.originLat, opts.originLng, lat, lng) * 10
-  ) / 10;
+  const distanceKm =
+    Math.round(haversineKm(opts.originLat, opts.originLng, lat, lng) * 10) / 10;
 
   const inferred = inferStyle(`${title} ${apiEvent.artistName || ""}`);
   const inferredFromGenre = inferStyle(apiEvent.genre || "");
   const style =
-    opts.forcedStyle && opts.forcedStyle !== "All" && MUSIC_STYLES.includes(opts.forcedStyle)
+    opts.forcedStyle &&
+    opts.forcedStyle !== "All" &&
+    MUSIC_STYLES.includes(opts.forcedStyle)
       ? opts.forcedStyle
       : inferredFromGenre !== "Electronic"
       ? inferredFromGenre
@@ -291,14 +293,22 @@ async function fetchRemoteEvents(
 
 export const apiEventsRepo: EventsRepo = {
   async list(params, opts) {
-    const organizerEvents = listPublicOrganizerEvents();
+    const organizerEvents = await listPublicOrganizerEvents({
+      originLat: DEFAULT_LAT,
+      originLng: DEFAULT_LNG,
+    });
+
     const remoteEvents = await fetchRemoteEvents(params, { signal: opts?.signal });
+
     const merged = mergeUnique(organizerEvents, remoteEvents);
     return applyFilters(merged, params);
   },
 
   async getById(eventId, opts) {
-    const organizerEvent = getPublicOrganizerEventById(eventId);
+    const organizerEvent = await getPublicOrganizerEventById(eventId, {
+      originLat: DEFAULT_LAT,
+      originLng: DEFAULT_LNG,
+    });
     if (organizerEvent) return { ...organizerEvent };
 
     const cached = remoteById.get(eventId);

@@ -36,6 +36,12 @@ function parseKm(raw: string | null, fallback: number) {
   return clamp(n, 1, 100);
 }
 
+function scrollToId(id: string) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
 function EventCard({ event, search }: { event: EventItem; search: string }) {
   const metaParts = [
     event.artistName || null,
@@ -77,6 +83,7 @@ export default function EventDashboardPage() {
   const { user } = useAuth();
   const userId = user?.id ?? null;
   const isOrganizer = user?.role === "organizer" || user?.role === "admin";
+  const isAdmin = user?.role === "admin";
 
   const location = useLocation();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -86,7 +93,7 @@ export default function EventDashboardPage() {
   const selectedStyle = MUSIC_STYLES.includes(styleRaw) ? styleRaw : "All";
   const maxDistanceKm = parseKm(searchParams.get("km"), 20);
 
-  // ✅ NEW: location query param (shareable links)
+  // shareable location param
   const locRaw = (searchParams.get("loc") ?? "").trim();
 
   const styleOptions = useMemo(() => [...MUSIC_STYLES], []);
@@ -95,35 +102,28 @@ export default function EventDashboardPage() {
     []
   );
 
-  // ✅ NEW: origin state (lat/lng)
+  // origin state (lat/lng)
   const [origin, setOriginState] = useState(() => getOrigin());
 
   useEffect(() => {
-    // keep local state in sync when origin changes elsewhere
     return subscribeOriginChanged(() => setOriginState(getOrigin()));
   }, []);
 
   useEffect(() => {
-    // URL param drives origin selection (shareable links)
     if (!locRaw) return;
 
     const lower = locRaw.toLowerCase();
 
-    // "me" / "My location"
     if (lower === "me" || lower === "my" || locRaw === "My location") {
-      // AppShellLayout doet al 1x per sessie prompt, hier enkel best-effort syncen
       requestGeolocationOrigin({ timeoutMs: 6000 }).catch(() => {});
       return;
     }
 
-    // city mode
     const city = BELGIUM_CITIES.find((c) => c.name === locRaw);
     if (!city) return;
 
-    // ✅ enkel store updaten, subscription zet origin state
     setCityOrigin(city.name);
   }, [locRaw]);
-
 
   function updateParams(next: { style?: string; km?: number; loc?: string }) {
     const sp = new URLSearchParams(searchParams);
@@ -142,7 +142,6 @@ export default function EventDashboardPage() {
     if (next.loc !== undefined) {
       const clean = next.loc.trim();
 
-      // default Brussels => keep URL clean
       if (!clean || clean === "Brussels") sp.delete("loc");
       else if (clean === "My location") sp.set("loc", "me");
       else sp.set("loc", clean);
@@ -160,7 +159,7 @@ export default function EventDashboardPage() {
     return subscribeOrganizerEventsChanged(() => setReloadTick((t) => t + 1));
   }, []);
 
-  // ✅ NEW: pass originLat/originLng to repo.list
+  // list events (with origin)
   useEffect(() => {
     const controller = new AbortController();
 
@@ -198,6 +197,7 @@ export default function EventDashboardPage() {
     [events]
   );
 
+  // signals for personalization
   const [signalsTick, setSignalsTick] = useState(0);
   useEffect(() => {
     if (!userId) return;
@@ -213,6 +213,17 @@ export default function EventDashboardPage() {
     };
   }, [userId]);
 
+  // ✅ derive ids using signalsTick (avoid eslint warning by consuming it)
+  const favIds = useMemo(() => {
+    void signalsTick;
+    return userId ? getUserFavoriteEventIds(userId) : [];
+  }, [userId, signalsTick]);
+
+  const goingIds = useMemo(() => {
+    void signalsTick;
+    return userId ? getUserGoingEventIds(userId) : [];
+  }, [userId, signalsTick]);
+
   const [prefTags, setPrefTags] = useState<string[]>([]);
   useEffect(() => {
     if (!userId) return;
@@ -221,10 +232,7 @@ export default function EventDashboardPage() {
 
     const refreshTags = async () => {
       try {
-        const f = getUserFavoriteEventIds(userId);
-        const g = getUserGoingEventIds(userId);
-
-        const ids = Array.from(new Set([...f, ...g])).slice(0, 30);
+        const ids = Array.from(new Set([...favIds, ...goingIds])).slice(0, 30);
         if (ids.length === 0) {
           setPrefTags([]);
           return;
@@ -237,7 +245,7 @@ export default function EventDashboardPage() {
         const counts = new Map<string, number>();
         for (const e of results) {
           if (!e) continue;
-          const weight = g.includes(e.id) ? 2 : 1;
+          const weight = goingIds.includes(e.id) ? 2 : 1;
           for (const t of e.tags) {
             if (!t || t === "All") continue;
             counts.set(t, (counts.get(t) ?? 0) + weight);
@@ -257,15 +265,9 @@ export default function EventDashboardPage() {
 
     refreshTags();
     return () => controller.abort();
-  }, [userId, signalsTick]);
+  }, [userId, favIds, goingIds]);
 
   const recommendedEvents = useMemo(() => {
-    const _tick = signalsTick;
-    void _tick;
-
-    const favIds = userId ? getUserFavoriteEventIds(userId) : [];
-    const goingIds = userId ? getUserGoingEventIds(userId) : [];
-
     const exclude = new Set([...favIds, ...goingIds]);
     const base = events.filter((e) => !exclude.has(e.id));
 
@@ -280,13 +282,11 @@ export default function EventDashboardPage() {
       return s;
     };
 
-    if (!userId || prefTags.length === 0) {
-      return base.filter((e) => !e.trending).slice(0, 8);
-    }
+    if (!userId || prefTags.length === 0) return [];
 
     const sorted = [...base].sort((a, b) => score(b) - score(a));
     return sorted.filter((e) => score(e) > 0).slice(0, 8);
-  }, [events, prefTags, userId, signalsTick]);
+  }, [events, prefTags, userId, favIds, goingIds]);
 
   const filterLabel = [
     selectedStyle !== "All" ? selectedStyle : null,
@@ -297,62 +297,90 @@ export default function EventDashboardPage() {
     .filter(Boolean)
     .join(" • ");
 
-  const myPendingSubmissions = useMemo(() => {
-    const _tick = reloadTick;
-    void _tick;
+  // pending submissions (async, no sync setState when userId is null)
+  const [pendingSubmissionsState, setPendingSubmissionsState] = useState(0);
+  const pendingSubmissions = userId ? pendingSubmissionsState : 0;
 
-    if (!userId) return 0;
-    return listOrganizerEventsByOwner(userId).filter((e) => e.status === "pending")
-      .length;
+  useEffect(() => {
+    if (!userId) return;
+
+    let cancelled = false;
+
+    (async () => {
+      try {
+        const mine = await listOrganizerEventsByOwner(userId);
+        const pending = mine.filter((e) => e.status === "pending").length;
+        if (!cancelled) setPendingSubmissionsState(pending);
+      } catch {
+        if (!cancelled) setPendingSubmissionsState(0);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
   }, [userId, reloadTick]);
 
-  const cta = useMemo(() => {
+  const showRecommended =
+    Boolean(userId) && prefTags.length > 0 && recommendedEvents.length > 0;
+
+  const signalsCount = useMemo(() => {
+    return favIds.length + goingIds.length;
+  }, [favIds.length, goingIds.length]);
+
+  const ctaModel = useMemo(() => {
     if (!user) {
       return {
-        title: "Organisator? Make some noise!",
-        hint: "Login om je eerste aanvraag te doen en events in te dienen.",
-        to: "/login",
-        label: "Login",
+        title: "Post your own event on Eventify",
+        hint: "Create an account, submit 1 proposal, and get approved by an admin to unlock organizer tools.",
+        primaryTo: "/login",
+        primaryLabel: "Login",
+        secondaryTo: "/register",
+        secondaryLabel: "Create account",
+        badge: null as string | null,
       };
     }
 
     if (isOrganizer) {
       return {
-        title: "Organisator? Make some noise!",
-        hint: "Create, edit en boost je events.",
-        to: "/my-events",
-        label: "Promote my event!",
+        title: "Organizer tools",
+        hint: "Create, edit & boost events. Track views and goings in your dashboard.",
+        primaryTo: "/my-events",
+        primaryLabel: "Open organizer dashboard",
+        secondaryTo: isAdmin ? "/admin" : null,
+        secondaryLabel: isAdmin ? "Admin" : null,
+        badge: null as string | null,
       };
     }
 
     return {
-      title: "Organisator? Make some noise!",
+      title: "Become an organizer",
       hint:
-        myPendingSubmissions > 0
-          ? `Je aanvraag is in review (${myPendingSubmissions}). Admin moet goedkeuren.`
-          : "Dien je eerste event in voor review. Na approval word je organizer.",
-      to: "/my-events",
-      label: myPendingSubmissions > 0 ? "Request pending…" : "Request approval",
+        pendingSubmissions > 0
+          ? "Your proposal is pending review. You can view/edit your request on the organizer page."
+          : "Submit your first event proposal. Once approved, your event goes live and your account becomes organizer.",
+      primaryTo: "/my-events",
+      primaryLabel:
+        pendingSubmissions > 0 ? "View my request" : "Submit a proposal",
+      secondaryTo: null,
+      secondaryLabel: null,
+      badge: pendingSubmissions > 0 ? `Pending: ${pendingSubmissions}` : null,
     };
-  }, [user, isOrganizer, myPendingSubmissions]);
+  }, [user, isOrganizer, isAdmin, pendingSubmissions]);
 
   return (
     <div>
       {/* HERO */}
-      <section className="heroBanner">
-        <div
-          className="heroImage"
-          style={{
-            backgroundImage:
-              "url(https://images.unsplash.com/photo-1501386761578-eac5c94b800a?w=1800&q=80)",
-          }}
-        />
+      <section className="heroBanner heroBannerDashboard">
+        <div className="heroImage heroImageDashboard" />
         <div className="heroShade" />
 
         <div className="heroCenter">
           <div>
             <h1 className="heroTitle">Your local scene awaits.</h1>
-            <p className="heroSubtitle">Discover all the concerts around you.</p>
+            <p className="heroSubtitle">
+              Discover concerts around you — fast, local, personal.
+            </p>
 
             <div className="heroFilterBar">
               <SelectField
@@ -363,7 +391,6 @@ export default function EventDashboardPage() {
                 searchPlaceholder="Search a style…"
               />
 
-              {/* ✅ NEW Location dropdown */}
               <SelectField
                 value={
                   origin.source === "geolocation"
@@ -380,7 +407,6 @@ export default function EventDashboardPage() {
                       setOriginState(next);
                       updateParams({ loc: "My location" });
                     } catch {
-                      // blocked/denied => keep current
                       updateParams({ loc: origin.cityName || origin.label });
                     }
                     return;
@@ -411,40 +437,140 @@ export default function EventDashboardPage() {
             </div>
 
             {isLoading ? <div className="sectionHint">Loading…</div> : null}
-            {error ? <div className="sectionHint">Error: {error}</div> : null}
+            {error ? (
+              <div className="authError" style={{ marginTop: 10 }}>
+                {error}
+              </div>
+            ) : null}
           </div>
         </div>
       </section>
 
-      {/* RECOMMENDED */}
-      <div className="sectionTitleRow">
-        <div>
-          <div className="sectionTitle">Recommended for you</div>
-          <div className="sectionHint">
-            {userId && prefTags.length > 0
-              ? `Based on: ${prefTags.slice(0, 3).join(", ")}`
-              : "Login + Save/Going to personalize"}
+      {/* TOP STRIP: clear CTA + quick nav */}
+      <section className="dashboardTopStrip">
+        <div className="dashboardTopLeft">
+          <div className="dashboardKicker">Showing</div>
+          <div className="dashboardActiveFilters">
+            {filterLabel || "No filters"}
+          </div>
+
+          <div className="dashboardNav">
+            <button
+              className="dashboardNavBtn"
+              type="button"
+              onClick={() => scrollToId("dash-trending")}
+            >
+              Trending
+            </button>
+            <button
+              className="dashboardNavBtn"
+              type="button"
+              onClick={() => scrollToId("dash-all")}
+            >
+              All events
+            </button>
+            {showRecommended ? (
+              <button
+                className="dashboardNavBtn"
+                type="button"
+                onClick={() => scrollToId("dash-recommended")}
+              >
+                For you
+              </button>
+            ) : null}
           </div>
         </div>
-        <div className="sectionHint">{filterLabel || "No filters"}</div>
-      </div>
 
-      <div className="trendingRow">
-        {isLoading && events.length === 0 ? (
-          <div className="sectionHint">Loading recommendations…</div>
-        ) : recommendedEvents.length === 0 ? (
-          <div className="sectionHint">
-            No recommendations yet. Save or join a few events.
+        <div className="organizerCTA organizerCTATop">
+          <div>
+            <div className="ctaTitleRow">
+              <div className="ctaTitle">{ctaModel.title}</div>
+              {ctaModel.badge ? (
+                <span className="ctaBadge">{ctaModel.badge}</span>
+              ) : null}
+            </div>
+            <div className="ctaHint">{ctaModel.hint}</div>
           </div>
-        ) : (
-          recommendedEvents.map((e) => (
-            <EventCard key={e.id} event={e} search={location.search} />
-          ))
-        )}
-      </div>
+
+          <div className="ctaActions">
+            <Link className="ctaButton" to={ctaModel.primaryTo}>
+              {ctaModel.primaryLabel}
+            </Link>
+
+            {ctaModel.secondaryTo && ctaModel.secondaryLabel ? (
+              <Link
+                className="ctaButton ctaButtonSecondary"
+                to={ctaModel.secondaryTo}
+              >
+                {ctaModel.secondaryLabel}
+              </Link>
+            ) : null}
+          </div>
+        </div>
+      </section>
+
+      {/* RECOMMENDED (only when useful) */}
+      {showRecommended ? (
+        <>
+          <div id="dash-recommended" className="sectionTitleRow">
+            <div>
+              <div className="sectionTitle">Recommended for you</div>
+              <div className="sectionHint">
+                Based on:
+                {prefTags.slice(0, 3).map((t) => (
+                  <span key={t} className="tagPill" style={{ marginLeft: 8 }}>
+                    {t}
+                  </span>
+                ))}
+              </div>
+            </div>
+            <div className="sectionHint">
+              {signalsCount > 0 ? `${signalsCount} signals used` : "Personalized"}
+            </div>
+          </div>
+
+          <div className="trendingRow">
+            {recommendedEvents.map((e) => (
+              <EventCard key={e.id} event={e} search={location.search} />
+            ))}
+          </div>
+        </>
+      ) : userId ? (
+        <div className="dashboardHintCard">
+          <div className="dashboardHintTitle">Make recommendations smarter</div>
+          <div className="dashboardHintText">
+            Save a few events or mark “Going” — then Eventify can recommend based
+            on your taste.
+          </div>
+          <div className="dashboardHintActions">
+            <button
+              className="dashboardNavBtn"
+              type="button"
+              onClick={() => scrollToId("dash-trending")}
+            >
+              Show trending
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div className="dashboardHintCard">
+          <div className="dashboardHintTitle">Want “Recommended for you”?</div>
+          <div className="dashboardHintText">
+            Login and save/going a few events — then we personalize your feed.
+          </div>
+          <div className="dashboardHintActions">
+            <Link className="dashboardNavBtn" to="/login">
+              Login
+            </Link>
+            <Link className="dashboardNavBtn" to="/register">
+              Create account
+            </Link>
+          </div>
+        </div>
+      )}
 
       {/* TRENDING */}
-      <div className="sectionTitleRow">
+      <div id="dash-trending" className="sectionTitleRow">
         <div>
           <div className="sectionTitle">Trending</div>
           <div className="sectionHint">Hot events around you</div>
@@ -465,10 +591,10 @@ export default function EventDashboardPage() {
       </div>
 
       {/* ALL EVENTS */}
-      <div className="sectionTitleRow">
+      <div id="dash-all" className="sectionTitleRow">
         <div>
-          <div className="sectionTitle">Dashboard</div>
-          <div className="sectionHint">All events</div>
+          <div className="sectionTitle">All events</div>
+          <div className="sectionHint">Everything that matches your filters</div>
         </div>
       </div>
 
@@ -482,18 +608,6 @@ export default function EventDashboardPage() {
             <EventCard key={e.id} event={e} search={location.search} />
           ))
         )}
-      </div>
-
-      {/* CTA */}
-      <div className="organizerCTA">
-        <div>
-          <div className="ctaTitle">{cta.title}</div>
-          <div className="ctaHint">{cta.hint}</div>
-        </div>
-
-        <Link className="ctaButton" to={cta.to}>
-          {cta.label}
-        </Link>
       </div>
     </div>
   );

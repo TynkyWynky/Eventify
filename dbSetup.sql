@@ -13,6 +13,7 @@ CREATE TABLE users (
     phone           VARCHAR(20),
     is_organisator  BOOLEAN DEFAULT FALSE,
     is_admin        BOOLEAN DEFAULT FALSE,
+    is_active       BOOLEAN DEFAULT TRUE,
     created_at      TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     updated_at      TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     last_login      TIMESTAMP WITH TIME ZONE
@@ -110,6 +111,9 @@ CREATE TABLE event_registrations (
 CREATE INDEX idx_registrations_event ON event_registrations(event_id);
 CREATE INDEX idx_registrations_user ON event_registrations(user_id);
 
+-- ============================================
+-- SYNC LOGS
+-- ============================================
 CREATE TABLE sync_logs (
     id              SERIAL PRIMARY KEY,
     started_at      TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
@@ -126,8 +130,84 @@ CREATE TABLE sync_logs (
 CREATE INDEX idx_sync_logs_status ON sync_logs(status);
 CREATE INDEX idx_sync_logs_started ON sync_logs(started_at);
 
+-- ============================================
+-- SOCIAL / NOTIFICATIONS (Friends, Going, Invites)
+-- ============================================
 
+-- Friend requests
+CREATE TABLE friend_requests (
+    id              SERIAL PRIMARY KEY,
+    from_user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    to_user_id      INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    status          VARCHAR(20) NOT NULL DEFAULT 'pending'
+                    CHECK (status IN ('pending', 'accepted', 'declined', 'cancelled')),
+    created_at      TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    responded_at    TIMESTAMP WITH TIME ZONE,
+    CONSTRAINT unique_friend_request UNIQUE (from_user_id, to_user_id),
+    CONSTRAINT chk_friend_request_self CHECK (from_user_id <> to_user_id)
+);
+
+CREATE INDEX idx_friend_requests_to_status ON friend_requests(to_user_id, status);
+CREATE INDEX idx_friend_requests_from_status ON friend_requests(from_user_id, status);
+
+-- Friends (store as 2 rows for easy querying)
+CREATE TABLE user_friends (
+    user_id         INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    friend_user_id  INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at      TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (user_id, friend_user_id),
+    CONSTRAINT chk_friends_self CHECK (user_id <> friend_user_id)
+);
+
+CREATE INDEX idx_user_friends_user ON user_friends(user_id);
+
+-- Event attendance (server-side “going” by event_key = jullie frontend event.id)
+CREATE TABLE event_attendance (
+    id              SERIAL PRIMARY KEY,
+    user_id         INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    event_key       TEXT NOT NULL,
+    is_going        BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at      TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at      TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT unique_attendance UNIQUE (user_id, event_key)
+);
+
+CREATE INDEX idx_event_attendance_event ON event_attendance(event_key, is_going);
+CREATE INDEX idx_event_attendance_user ON event_attendance(user_id, updated_at DESC);
+
+-- Event invites
+CREATE TABLE event_invites (
+    id              SERIAL PRIMARY KEY,
+    event_key       TEXT NOT NULL,
+    inviter_id      INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    invitee_id      INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    status          VARCHAR(20) NOT NULL DEFAULT 'pending'
+                    CHECK (status IN ('pending', 'accepted', 'declined', 'cancelled')),
+    created_at      TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    responded_at    TIMESTAMP WITH TIME ZONE,
+    CONSTRAINT unique_invite UNIQUE (event_key, invitee_id),
+    CONSTRAINT chk_invite_self CHECK (inviter_id <> invitee_id)
+);
+
+CREATE INDEX idx_event_invites_invitee_status ON event_invites(invitee_id, status);
+
+-- Notifications
+CREATE TABLE notifications (
+    id              SERIAL PRIMARY KEY,
+    user_id         INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    type            VARCHAR(50) NOT NULL,
+    title           TEXT NOT NULL,
+    message         TEXT NOT NULL,
+    payload         JSONB DEFAULT '{}'::jsonb,
+    is_read         BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at      TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX idx_notifications_user_read_created ON notifications(user_id, is_read, created_at DESC);
+
+-- ============================================
 -- Function to hash password using bcrypt
+-- ============================================
 CREATE OR REPLACE FUNCTION hash_password(plain_password TEXT)
 RETURNS TEXT AS $$
 BEGIN
@@ -163,6 +243,15 @@ CREATE TRIGGER update_events_updated_at
     FOR EACH ROW
     EXECUTE FUNCTION update_updated_at_column();
 
+-- Trigger for event_attendance updated_at
+CREATE TRIGGER update_event_attendance_updated_at
+    BEFORE UPDATE ON event_attendance
+    FOR EACH ROW
+    EXECUTE FUNCTION update_updated_at_column();
+
+-- ============================================
+-- Views
+-- ============================================
 
 -- View: Upcoming events with organizer info
 CREATE VIEW upcoming_events AS
@@ -207,13 +296,17 @@ FROM events
 WHERE source IS NOT NULL
 GROUP BY source;
 
+-- ============================================
+-- Seed data
+-- ============================================
 
 -- Insert sample users (password: 'password123')
-INSERT INTO users (username, email, password_hash, first_name, last_name, is_admin) VALUES
-('admin', 'admin@events.com', crypt('password123', gen_salt('bf', 10)), 'Admin', 'User', TRUE),
-('sync_bot', 'sync@events.com', crypt('sync_password_123', gen_salt('bf', 10)), 'Sync', 'Bot', FALSE),
-('john_doe', 'john@example.com', crypt('password123', gen_salt('bf', 10)), 'John', 'Doe', FALSE),
-('jane_smith', 'jane@example.com', crypt('password123', gen_salt('bf', 10)), 'Jane', 'Smith', FALSE);
+-- These match the demo accounts used in the front-end.
+INSERT INTO users (username, email, password_hash, first_name, last_name, is_admin, is_organisator) VALUES
+('admin', 'admin@eventify.local', crypt('password123', gen_salt('bf', 10)), 'Demo', 'Admin', TRUE, TRUE),
+('orga', 'orga@eventify.local', crypt('password123', gen_salt('bf', 10)), 'Demo', 'Organizer', FALSE, TRUE),
+('demo', 'demo@eventify.local', crypt('password123', gen_salt('bf', 10)), 'Demo', 'User', FALSE, FALSE),
+('sync_bot', 'sync@eventify.local', crypt('sync_password_123', gen_salt('bf', 10)), 'Sync', 'Bot', FALSE, TRUE);
 
 -- Insert sample events (manual events without source)
 INSERT INTO events (title, description, start_datetime, end_datetime, venue_name, address, city, cost, category, tags, organizer_id, status, capacity) VALUES
