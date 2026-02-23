@@ -2286,3 +2286,23 @@ a.accountFriendAction {
     min-width: 0;
   }
 }
+
+.heroImageDashboard {
+  background-image:
+    radial-gradient(900px 520px at 15% 25%, rgba(178,106,168,.42), transparent 62%),
+    radial-gradient(860px 520px at 85% 70%, rgba(139,63,127,.30), transparent 62%),
+    radial-gradient(620px 320px at 50% 10%, rgba(255,255,255,.12), transparent 55%),
+    conic-gradient(from 210deg at 50% 55%, rgba(178,106,168,.16), rgba(0,0,0,0) 35%, rgba(139,63,127,.14), rgba(0,0,0,0) 75%, rgba(178,106,168,.12)),
+    radial-gradient(1200px 700px at 50% 60%, rgba(0,0,0,.35), rgba(0,0,0,.88));
+  background-blend-mode: screen, screen, screen, normal, normal;
+}
+
+.heroImageAuth {
+  background-image:
+    radial-gradient(920px 520px at 20% 30%, rgba(178,106,168,.36), transparent 62%),
+    radial-gradient(880px 520px at 78% 68%, rgba(139,63,127,.26), transparent 62%),
+    radial-gradient(560px 300px at 50% 12%, rgba(255,255,255,.12), transparent 55%),
+    conic-gradient(from 190deg at 50% 55%, rgba(178,106,168,.15), rgba(0,0,0,0) 40%, rgba(139,63,127,.14), rgba(0,0,0,0) 78%, rgba(178,106,168,.12)),
+    radial-gradient(1200px 700px at 50% 60%, rgba(0,0,0,.35), rgba(0,0,0,.88));
+  background-blend-mode: screen, screen, screen, normal, normal;
+}
