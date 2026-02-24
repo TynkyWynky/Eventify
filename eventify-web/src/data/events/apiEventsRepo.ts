@@ -265,6 +265,9 @@ async function fetchRemoteEvents(
   url.searchParams.set("lng", String(DEFAULT_LNG));
   url.searchParams.set("radiusKm", String(radiusKm));
   url.searchParams.set("size", String(size));
+  url.searchParams.set("maxResults", String(size));
+  url.searchParams.set("includeScraped", "1");
+  url.searchParams.set("includeSetlists", "0");
   if (keyword) url.searchParams.set("keyword", keyword);
 
   const res = await fetch(url.toString(), { signal: opts?.signal });

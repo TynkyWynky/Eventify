@@ -71,6 +71,7 @@ CREATE TABLE events (
     source          VARCHAR(50),           -- e.g., 'ticketmaster', 'setlistfm'
     source_id       VARCHAR(255),          -- Original ID from source API
     source_url      VARCHAR(500),          -- Link to original event
+    source_metadata JSONB,                 -- Raw source payload (scraped/API)
     
     -- Timestamps
     created_at      TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,

@@ -30,7 +30,9 @@ function parseKm(raw: string | null, fallback: number) {
 }
 
 function EventCard({ event, search }: { event: EventItem; search: string }) {
+  const sourceLabel = event.source ? `source: ${event.source}` : null;
   const metaParts = [
+    sourceLabel,
     event.artistName || null,
     event.venue,
     `${event.distanceKm.toFixed(1)} km`,

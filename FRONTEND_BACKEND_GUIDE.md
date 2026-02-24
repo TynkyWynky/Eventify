@@ -21,11 +21,15 @@ it means Docker Desktop engine is not running yet. Start Docker Desktop, wait un
 ## 1) Backend shape (what exists today)
 
 - `server.js` exposes:
-  - `GET /events`: fetches upcoming events from Ticketmaster, optional setlist enrichment.
+  - `GET /events`: fetches upcoming events from Ticketmaster and optional web-scraped sources, with optional setlist enrichment.
+  - includes cross-source dedupe + source interleaving + scrape caching.
+  - Songkick items can be enriched with the official venue event page URL.
+  - Eventbrite listing URLs are supported and can fetch detail pages for richer fields.
   - `GET /setlists`: fetches historical setlists by `artistName` or `cityName`.
 - `sync.js` is a worker:
   - pulls from `GET /events`
   - upserts into PostgreSQL (`events` table)
+  - removes exact duplicate synced rows (same title/start/city/venue)
   - runs on cron (`SYNC_INTERVAL`)
 
 Important: your frontend currently consumes `/events` directly, not the DB.
@@ -40,6 +44,7 @@ Main tables:
 
 Key points:
 - `events` has source-tracking fields (`source`, `source_id`, `source_url`)
+- `events.source_metadata` stores raw provider payload (JSONB) for full-fidelity imports
 - unique source constraint: `(source, source_id)`
 - helper views exist: `upcoming_events`, `user_event_registrations`, `api_synced_events`
 
@@ -91,6 +96,13 @@ Backend env file:
 - `dateLabel` <- formatted `start`
 - `distanceKm` <- computed from default origin (`VITE_DEFAULT_LAT/LNG`) and event coords
 - `tags` <- inferred from title/artist (or forced by selected filter)
+
+Additional backend fields now available in `GET /events` for DB sync:
+- `description`, `end`, `timezone`
+- `address`, `state`, `country`, `postalCode`
+- `isFree`, `cost`, `currency`
+- `isVirtual`, `virtualLink`
+- `category`, `status`, `metadata`
 
 ## 6) Current API gaps to be aware of
 

@@ -1,6 +1,7 @@
 const axios = require("axios");
 const { Pool } = require("pg");
 const cron = require("node-cron");
+const crypto = require("crypto");
 require("dotenv").config();
 
 const CONFIG = {
@@ -27,6 +28,99 @@ const CONFIG = {
 function parseDbSsl(value) {
   const normalized = String(value || "").trim().toLowerCase();
   return normalized === "1" || normalized === "true" || normalized === "require";
+}
+
+function cleanText(value) {
+  if (value == null) return null;
+  const text = String(value).replace(/\s+/g, " ").trim();
+  return text || null;
+}
+
+function toBool(value, fallback = false) {
+  if (value == null || value === "") return fallback;
+  const normalized = String(value).trim().toLowerCase();
+  if (["1", "true", "yes", "on"].includes(normalized)) return true;
+  if (["0", "false", "no", "off"].includes(normalized)) return false;
+  return fallback;
+}
+
+function toNumberOrNull(value) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
+function parseDateTime(value) {
+  const text = cleanText(value);
+  if (!text) return null;
+  const dt = new Date(text);
+  return Number.isNaN(dt.getTime()) ? null : dt;
+}
+
+function normalizeTag(tag) {
+  const normalized = cleanText(tag)
+    ?.toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return normalized || null;
+}
+
+function parseTags(apiEvent) {
+  const out = [];
+  const seen = new Set();
+  const add = (value) => {
+    const normalized = normalizeTag(value);
+    if (!normalized || seen.has(normalized)) return;
+    seen.add(normalized);
+    out.push(normalized);
+  };
+
+  if (Array.isArray(apiEvent.tags)) {
+    for (const tag of apiEvent.tags) add(tag);
+  } else if (typeof apiEvent.tags === "string") {
+    for (const tag of apiEvent.tags.split(/[;,|]/)) add(tag);
+  }
+
+  add(apiEvent.genre);
+  add(apiEvent.category);
+  add(apiEvent.artistName);
+
+  return out;
+}
+
+function mapStatus(status) {
+  const normalized = cleanText(status)?.toLowerCase();
+  if (!normalized) return "published";
+  if (["draft", "published", "cancelled", "completed"].includes(normalized)) {
+    return normalized;
+  }
+  if (["scheduled", "onsale", "active", "upcoming"].includes(normalized)) {
+    return "published";
+  }
+  if (["canceled", "cancelled"].includes(normalized)) {
+    return "cancelled";
+  }
+  if (["done", "past"].includes(normalized)) {
+    return "completed";
+  }
+  return "published";
+}
+
+function buildSourceId(apiEvent, source) {
+  const provided = cleanText(apiEvent.sourceId);
+  if (provided) return provided.slice(0, 255);
+
+  const seed = [
+    source,
+    cleanText(apiEvent.url),
+    cleanText(apiEvent.title),
+    cleanText(apiEvent.start),
+    cleanText(apiEvent.city),
+  ]
+    .filter(Boolean)
+    .join("|");
+
+  const digest = crypto.createHash("sha1").update(seed || String(Date.now())).digest("hex");
+  return digest.slice(0, 64);
 }
 
 const pool = new Pool({
@@ -68,6 +162,8 @@ async function fetchEventsFromAPI({
         lng,
         radiusKm,
         size,
+        maxResults: size,
+        includeScraped: 1,
         keyword: keyword || undefined,
       },
       timeout: 30000,
@@ -90,58 +186,65 @@ async function fetchEventsFromAPI({
  * Map API event to database schema
  */
 function mapApiEventToDb(apiEvent) {
-  
-  let startDatetime = null;
-  if (apiEvent.start) {
-    
-    startDatetime = new Date(apiEvent.start);
-    if (isNaN(startDatetime.getTime())) {
-      startDatetime = null;
-    }
+  const startDatetime = parseDateTime(apiEvent.start);
+  if (!startDatetime) {
+    throw new Error("Missing/invalid start datetime");
   }
 
-  const sourceId = `${apiEvent.source || 'unknown'}_${apiEvent.sourceId || apiEvent.title}`;
+  const endDatetime = parseDateTime(apiEvent.end);
+  const source = cleanText(apiEvent.source) || "unknown";
+  const sourceId = buildSourceId(apiEvent, source);
+  const ticketUrl = cleanText(apiEvent.ticketUrl) || cleanText(apiEvent.url);
+  const category = cleanText(apiEvent.category) || cleanText(apiEvent.genre) || "Music";
+  const tags = parseTags(apiEvent);
+
+  const parsedCost = toNumberOrNull(apiEvent.cost);
+  const isFree = toBool(apiEvent.isFree, false) || parsedCost === 0;
+
+  const sourceMetadata =
+    apiEvent && typeof apiEvent === "object"
+      ? {
+          fetched_at: new Date().toISOString(),
+          metadata:
+            apiEvent.metadata && typeof apiEvent.metadata === "object"
+              ? apiEvent.metadata
+              : null,
+          raw_event: apiEvent,
+        }
+      : null;
 
   return {
-    
-    title: apiEvent.title || "Untitled Event",
-    description: apiEvent.artistName 
-      ? `Featuring: ${apiEvent.artistName}` 
-      : null,
-    
-    
+    title: cleanText(apiEvent.title) || "Untitled Event",
+    description:
+      cleanText(apiEvent.description) ||
+      (cleanText(apiEvent.artistName) ? `Featuring: ${cleanText(apiEvent.artistName)}` : null),
     start_datetime: startDatetime,
-    end_datetime: null, 
-    timezone: "UTC",
-    
-    venue_name: apiEvent.venue,
-    address: null, 
-    city: apiEvent.city,
-    state: null,
-    country: null,
-    postal_code: null,
-    latitude: apiEvent.lat,
-    longitude: apiEvent.lng,
-    is_virtual: false,
-    virtual_link: null,
-    
-    is_free: false, 
-    cost: null,     
-    currency: "USD",
-    ticket_url: apiEvent.url,
-    
+    end_datetime: endDatetime,
+    timezone: cleanText(apiEvent.timezone) || "UTC",
+    venue_name: cleanText(apiEvent.venue),
+    address: cleanText(apiEvent.address),
+    city: cleanText(apiEvent.city),
+    state: cleanText(apiEvent.state),
+    country: cleanText(apiEvent.country),
+    postal_code: cleanText(apiEvent.postalCode),
+    latitude: toNumberOrNull(apiEvent.lat),
+    longitude: toNumberOrNull(apiEvent.lng),
+    is_virtual: toBool(apiEvent.isVirtual, false),
+    virtual_link: cleanText(apiEvent.virtualLink),
+    is_free: isFree,
+    cost: parsedCost != null ? parsedCost : isFree ? 0 : null,
+    currency: cleanText(apiEvent.currency) || "USD",
+    ticket_url: ticketUrl,
     organizer_id: CONFIG.SYNC_USER_ID,
-    category: "Music",
-    tags: apiEvent.artistName ? [apiEvent.artistName.toLowerCase().replace(/\s+/g, '-')] : [],
-    
-    status: "published",
-    capacity: null,
-    
-    cover_image_url: apiEvent.imageUrl || null,
-    
-    source: apiEvent.source || "unknown",
-    source_id: apiEvent.sourceId || null,
-    source_url: apiEvent.url || null,
+    category,
+    tags,
+    status: mapStatus(apiEvent.status),
+    capacity: toNumberOrNull(apiEvent.capacity),
+    cover_image_url: cleanText(apiEvent.imageUrl),
+    source,
+    source_id: sourceId,
+    source_url: cleanText(apiEvent.url) || ticketUrl,
+    source_metadata: sourceMetadata,
   };
 }
 
@@ -151,22 +254,28 @@ function mapApiEventToDb(apiEvent) {
 async function ensureSourceColumns() {
   const client = await pool.connect();
   try {
-    const checkResult = await client.query(`
-      SELECT column_name 
-      FROM information_schema.columns 
-      WHERE table_name = 'events' AND column_name = 'source'
+    await client.query(`
+      ALTER TABLE events 
+      ADD COLUMN IF NOT EXISTS source VARCHAR(50),
+      ADD COLUMN IF NOT EXISTS source_id VARCHAR(255),
+      ADD COLUMN IF NOT EXISTS source_url VARCHAR(500),
+      ADD COLUMN IF NOT EXISTS source_metadata JSONB
     `);
-    
-    if (checkResult.rows.length === 0) {
-      console.log(" Adding source tracking columns to events table...");
+
+    const constraintResult = await client.query(`
+      SELECT 1
+      FROM pg_constraint
+      WHERE conname = 'unique_source_event'
+        AND conrelid = 'events'::regclass
+    `);
+
+    if (constraintResult.rowCount === 0) {
+      console.log(" Adding unique_source_event constraint...");
       await client.query(`
-        ALTER TABLE events 
-        ADD COLUMN IF NOT EXISTS source VARCHAR(50),
-        ADD COLUMN IF NOT EXISTS source_id VARCHAR(255),
-        ADD COLUMN IF NOT EXISTS source_url VARCHAR(500),
+        ALTER TABLE events
         ADD CONSTRAINT unique_source_event UNIQUE (source, source_id)
       `);
-      console.log(" Source columns added");
+      console.log(" unique_source_event constraint added");
     }
   } finally {
     client.release();
@@ -187,10 +296,10 @@ async function upsertEvent(eventData) {
         is_free, cost, currency, ticket_url,
         organizer_id, category, tags, status, capacity,
         cover_image_url, source, source_id, source_url,
-        published_at
+        source_metadata, published_at
       ) VALUES (
         $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15,
-        $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29
+        $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30
       )
       ON CONFLICT (source, source_id) 
       DO UPDATE SET
@@ -198,13 +307,27 @@ async function upsertEvent(eventData) {
         description = EXCLUDED.description,
         start_datetime = EXCLUDED.start_datetime,
         end_datetime = EXCLUDED.end_datetime,
+        timezone = EXCLUDED.timezone,
         venue_name = EXCLUDED.venue_name,
+        address = EXCLUDED.address,
         city = EXCLUDED.city,
+        state = EXCLUDED.state,
+        country = EXCLUDED.country,
+        postal_code = EXCLUDED.postal_code,
         latitude = EXCLUDED.latitude,
         longitude = EXCLUDED.longitude,
+        is_virtual = EXCLUDED.is_virtual,
+        virtual_link = EXCLUDED.virtual_link,
+        is_free = EXCLUDED.is_free,
+        cost = EXCLUDED.cost,
+        currency = EXCLUDED.currency,
         ticket_url = EXCLUDED.ticket_url,
         category = EXCLUDED.category,
         tags = EXCLUDED.tags,
+        status = EXCLUDED.status,
+        cover_image_url = EXCLUDED.cover_image_url,
+        source_url = EXCLUDED.source_url,
+        source_metadata = EXCLUDED.source_metadata,
         updated_at = CURRENT_TIMESTAMP
       RETURNING id, title, source_id, 
         CASE WHEN xmax::text::int > 0 THEN 'updated' ELSE 'inserted' END as action
@@ -239,6 +362,7 @@ async function upsertEvent(eventData) {
       eventData.source,
       eventData.source_id,
       eventData.source_url,
+      eventData.source_metadata,
       eventData.status === 'published' ? new Date() : null,
     ];
 
@@ -263,7 +387,7 @@ async function markCompletedEvents() {
       SET status = 'completed',
           updated_at = CURRENT_TIMESTAMP
       WHERE status = 'published'
-        AND end_datetime < CURRENT_TIMESTAMP - INTERVAL '1 day'
+        AND COALESCE(end_datetime, start_datetime) < CURRENT_TIMESTAMP - INTERVAL '1 day'
         AND source IS NOT NULL
       RETURNING id, title
     `);
@@ -304,6 +428,168 @@ async function getSyncStats() {
       upcomingEvents: parseInt(upcomingResult.rows[0].upcoming),
       bySource: bySourceResult.rows,
     };
+  } finally {
+    client.release();
+  }
+}
+
+/**
+ * Remove exact duplicate synced events.
+ * Duplicate key: lower(title) + start_datetime + lower(city) + lower(venue_name)
+ */
+async function cleanupDuplicateSyncedEvents() {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+
+    const duplicateCountResult = await client.query(`
+      WITH ranked AS (
+        SELECT
+          id,
+          FIRST_VALUE(id) OVER (
+            PARTITION BY
+              LOWER(title),
+              start_datetime,
+              LOWER(COALESCE(city, '')),
+              LOWER(COALESCE(venue_name, ''))
+            ORDER BY updated_at DESC NULLS LAST, id DESC
+          ) AS keep_id,
+          ROW_NUMBER() OVER (
+            PARTITION BY
+              LOWER(title),
+              start_datetime,
+              LOWER(COALESCE(city, '')),
+              LOWER(COALESCE(venue_name, ''))
+            ORDER BY updated_at DESC NULLS LAST, id DESC
+          ) AS rn
+        FROM events
+        WHERE source IS NOT NULL
+          AND start_datetime IS NOT NULL
+      )
+      SELECT COUNT(*)::int AS total_duplicates
+      FROM ranked
+      WHERE rn > 1
+    `);
+
+    const totalDuplicates = duplicateCountResult.rows[0]?.total_duplicates || 0;
+    if (totalDuplicates === 0) {
+      await client.query("COMMIT");
+      return { removed: 0, mergedRegistrations: 0 };
+    }
+
+    const mergedRegistrationsResult = await client.query(`
+      WITH ranked AS (
+        SELECT
+          id,
+          FIRST_VALUE(id) OVER (
+            PARTITION BY
+              LOWER(title),
+              start_datetime,
+              LOWER(COALESCE(city, '')),
+              LOWER(COALESCE(venue_name, ''))
+            ORDER BY updated_at DESC NULLS LAST, id DESC
+          ) AS keep_id,
+          ROW_NUMBER() OVER (
+            PARTITION BY
+              LOWER(title),
+              start_datetime,
+              LOWER(COALESCE(city, '')),
+              LOWER(COALESCE(venue_name, ''))
+            ORDER BY updated_at DESC NULLS LAST, id DESC
+          ) AS rn
+        FROM events
+        WHERE source IS NOT NULL
+          AND start_datetime IS NOT NULL
+      ),
+      duplicates AS (
+        SELECT id, keep_id
+        FROM ranked
+        WHERE rn > 1
+      )
+      INSERT INTO event_registrations (event_id, user_id, registered_at, status, notes)
+      SELECT d.keep_id, er.user_id, er.registered_at, er.status, er.notes
+      FROM duplicates d
+      JOIN event_registrations er ON er.event_id = d.id
+      ON CONFLICT (event_id, user_id) DO NOTHING
+    `);
+
+    await client.query(`
+      WITH ranked AS (
+        SELECT
+          id,
+          FIRST_VALUE(id) OVER (
+            PARTITION BY
+              LOWER(title),
+              start_datetime,
+              LOWER(COALESCE(city, '')),
+              LOWER(COALESCE(venue_name, ''))
+            ORDER BY updated_at DESC NULLS LAST, id DESC
+          ) AS keep_id,
+          ROW_NUMBER() OVER (
+            PARTITION BY
+              LOWER(title),
+              start_datetime,
+              LOWER(COALESCE(city, '')),
+              LOWER(COALESCE(venue_name, ''))
+            ORDER BY updated_at DESC NULLS LAST, id DESC
+          ) AS rn
+        FROM events
+        WHERE source IS NOT NULL
+          AND start_datetime IS NOT NULL
+      ),
+      duplicates AS (
+        SELECT id
+        FROM ranked
+        WHERE rn > 1
+      )
+      DELETE FROM event_registrations er
+      USING duplicates d
+      WHERE er.event_id = d.id
+    `);
+
+    const deleteResult = await client.query(`
+      WITH ranked AS (
+        SELECT
+          id,
+          FIRST_VALUE(id) OVER (
+            PARTITION BY
+              LOWER(title),
+              start_datetime,
+              LOWER(COALESCE(city, '')),
+              LOWER(COALESCE(venue_name, ''))
+            ORDER BY updated_at DESC NULLS LAST, id DESC
+          ) AS keep_id,
+          ROW_NUMBER() OVER (
+            PARTITION BY
+              LOWER(title),
+              start_datetime,
+              LOWER(COALESCE(city, '')),
+              LOWER(COALESCE(venue_name, ''))
+            ORDER BY updated_at DESC NULLS LAST, id DESC
+          ) AS rn
+        FROM events
+        WHERE source IS NOT NULL
+          AND start_datetime IS NOT NULL
+      ),
+      duplicates AS (
+        SELECT id
+        FROM ranked
+        WHERE rn > 1
+      )
+      DELETE FROM events e
+      USING duplicates d
+      WHERE e.id = d.id
+      RETURNING e.id
+    `);
+
+    await client.query("COMMIT");
+    return {
+      removed: deleteResult.rowCount || 0,
+      mergedRegistrations: mergedRegistrationsResult.rowCount || 0,
+    };
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
   } finally {
     client.release();
   }
@@ -350,6 +636,12 @@ async function syncEvents() {
     }
 
     await markCompletedEvents();
+    const dedupeResult = await cleanupDuplicateSyncedEvents();
+    if (dedupeResult.removed > 0) {
+      console.log(
+        `🧹 Removed ${dedupeResult.removed} duplicate synced events (merged registrations: ${dedupeResult.mergedRegistrations})`
+      );
+    }
 
     const stats = await getSyncStats();
 
