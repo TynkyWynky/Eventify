@@ -2306,3 +2306,477 @@ a.accountFriendAction {
     radial-gradient(1200px 700px at 50% 60%, rgba(0,0,0,.35), rgba(0,0,0,.88));
   background-blend-mode: screen, screen, screen, normal, normal;
 }
+
+/* =========================
+   WIDGET — VibeFinder (floating assistant)
+   ========================= */
+.copilotWrap {
+  position: fixed;
+  right: 18px;
+  bottom: 18px;
+  z-index: 80;
+}
+
+/* Floating button */
+.copilotFab {
+  width: 58px;
+  height: 58px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background:
+    radial-gradient(18px 18px at 28% 28%, rgba(255,255,255,.22), rgba(255,255,255,0) 62%),
+    linear-gradient(135deg, rgba(178,106,168,.98), rgba(139,63,127,.96));
+  color: rgba(255,255,255,.96);
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  box-shadow: 0 18px 60px rgba(0,0,0,.62), 0 0 45px rgba(178,106,168,.18);
+  transition: transform .15s ease, filter .15s ease, box-shadow .15s ease;
+  position: relative;
+}
+
+.copilotFab:hover { transform: translateY(-1px); filter: brightness(1.04); }
+
+.copilotFabOpen {
+  box-shadow: 0 22px 70px rgba(0,0,0,.70), 0 0 0 1px rgba(178,106,168,.35), 0 0 55px rgba(178,106,168,.22);
+}
+
+.aiFabIcon { display: grid; place-items: center; }
+
+.aiFabDot {
+  position: absolute;
+  right: 10px;
+  top: 10px;
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  background: rgba(255,255,255,.95);
+  box-shadow: 0 0 0 3px rgba(178,106,168,.22), 0 0 18px rgba(255,255,255,.30);
+  opacity: .9;
+}
+
+/* Panel */
+.copilotPanel {
+  position: fixed;
+  right: 18px;
+  bottom: 90px;
+  width: 420px;
+  max-height: min(680px, calc(100vh - 120px));
+
+  display: flex;
+  flex-direction: column;
+
+  border-radius: 20px;
+  border: 1px solid rgba(255,255,255,.12);
+  background: rgba(12, 12, 18, 0.92);
+  backdrop-filter: blur(16px);
+  box-shadow: 0 26px 80px rgba(0,0,0,.72), 0 0 0 1px rgba(255,255,255,.04);
+  overflow: hidden;
+
+  transform-origin: bottom right;
+  animation: aiPop .14s ease-out;
+}
+
+@keyframes aiPop {
+  from { transform: translateY(8px) scale(.98); opacity: .0; }
+  to   { transform: translateY(0) scale(1); opacity: 1; }
+}
+
+/* Header */
+.aiHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 12px 12px;
+  border-bottom: 1px solid rgba(255,255,255,.10);
+  background:
+    radial-gradient(500px 220px at 20% 0%, rgba(178,106,168,.22), rgba(0,0,0,0) 55%),
+    rgba(0,0,0,.10);
+}
+
+.aiBrand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.aiBrandIcon {
+  width: 36px;
+  height: 36px;
+  border-radius: 14px;
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(255,255,255,.14);
+  background: rgba(0,0,0,.20);
+  box-shadow: 0 10px 24px rgba(0,0,0,.35);
+}
+
+.aiBrandText { display: flex; flex-direction: column; gap: 2px; }
+
+.aiBrandName {
+  font-weight: 950;
+  letter-spacing: .2px;
+  line-height: 1;
+}
+
+.aiBadge {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 3px 7px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 900;
+  border: 1px solid rgba(255,255,255,.14);
+  background: rgba(0,0,0,.18);
+  color: rgba(255,255,255,.9);
+}
+
+.aiBrandSub {
+  font-size: 12px;
+  color: rgba(255,255,255,.62);
+}
+
+.aiHeaderRight { display: flex; gap: 8px; align-items: center; }
+
+.aiIconBtn {
+  width: 34px;
+  height: 34px;
+  border-radius: 12px;
+  border: 1px solid rgba(255,255,255,.12);
+  background: rgba(0,0,0,.22);
+  color: rgba(255,255,255,.9);
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  transition: transform .12s ease, border-color .12s ease, box-shadow .12s ease;
+}
+.aiIconBtn:hover {
+  transform: translateY(-1px);
+  border-color: rgba(255,255,255,.22);
+  box-shadow: 0 0 0 1px rgba(178,106,168,.22), 0 0 26px rgba(178,106,168,.14);
+}
+
+/* Body */
+.aiBody {
+  display: flex;
+  flex-direction: column;
+  padding: 10px 10px 0;
+  min-height: 0;
+  gap: 10px;
+}
+
+.aiQuickRow {
+  display: flex;
+  gap: 8px;
+  overflow: auto;
+  padding: 2px 2px 6px;
+}
+
+.aiQuickChip {
+  flex: 0 0 auto;
+  border-radius: 999px;
+  border: 1px solid rgba(255,255,255,.12);
+  background: rgba(0,0,0,.20);
+  padding: 8px 10px;
+  font-size: 12px;
+  color: rgba(255,255,255,.88);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.aiQuickChip:hover {
+  border-color: rgba(255,255,255,.22);
+  box-shadow: 0 0 0 1px rgba(178,106,168,.18), 0 0 20px rgba(178,106,168,.12);
+}
+
+.aiToolbar {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: center;
+  padding: 0 2px;
+}
+
+.aiToolbarHint {
+  font-size: 12px;
+  color: rgba(255,255,255,.56);
+}
+
+.aiMiniBtn {
+  border-radius: 999px;
+  border: 1px solid rgba(255,255,255,.14);
+  background: rgba(0,0,0,.20);
+  padding: 7px 10px;
+  font-size: 12px;
+  font-weight: 900;
+  cursor: pointer;
+  color: rgba(255,255,255,.9);
+}
+.aiMiniBtn:disabled { opacity: .55; cursor: not-allowed; }
+.aiMiniBtnActive {
+  border-color: rgba(178,106,168,.34);
+  background: rgba(178,106,168,.14);
+}
+
+/* Invite */
+.aiInvite {
+  border-radius: 16px;
+  border: 1px solid rgba(255,255,255,.10);
+  background: rgba(0,0,0,.18);
+  padding: 10px;
+}
+
+.aiInviteHint { font-size: 12px; color: rgba(255,255,255,.68); }
+
+.aiInviteRow {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.aiSelect {
+  flex: 1;
+  border-radius: 14px;
+  border: 1px solid rgba(255,255,255,.12);
+  background: rgba(0,0,0,.22);
+  padding: 9px 10px;
+  font-size: 12px;
+  color: rgba(255,255,255,.9);
+  outline: none;
+}
+
+.aiPills {
+  margin-top: 10px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.aiPill {
+  border-radius: 999px;
+  border: 1px solid rgba(178,106,168,.30);
+  background: rgba(178,106,168,.14);
+  padding: 6px 10px;
+  font-size: 12px;
+  cursor: pointer;
+  color: rgba(255,255,255,.92);
+}
+
+/* Messages */
+.aiMessages {
+  overflow: auto;
+  min-height: 0;
+  padding: 2px 2px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.aiMsg { display: flex; }
+.aiMsgUser { justify-content: flex-end; }
+.aiMsgAssistant { justify-content: flex-start; }
+
+.aiBubble {
+  max-width: 90%;
+  border-radius: 18px;
+  border: 1px solid rgba(255,255,255,.10);
+  padding: 10px 12px;
+  background: rgba(0,0,0,.22);
+}
+
+.aiMsgUser .aiBubble {
+  background: linear-gradient(135deg, rgba(178,106,168,.22), rgba(139,63,127,.18));
+  border-color: rgba(178,106,168,.26);
+}
+
+.aiBubbleLoading { opacity: .85; }
+.aiLine { margin: 0; line-height: 1.28; font-size: 13px; }
+
+/* Cards */
+.aiCards {
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.aiCard {
+  border-radius: 16px;
+  border: 1px solid rgba(255,255,255,.10);
+  background: rgba(0,0,0,.18);
+  padding: 10px;
+}
+
+.aiCardTop {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: flex-start;
+}
+
+.aiCardTitleWrap { min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+
+.aiCardTitle {
+  font-weight: 950;
+  text-decoration: none;
+  color: rgba(255,255,255,.96);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 300px;
+}
+
+.aiCardTitle:hover { text-decoration: underline; }
+
+.aiCardMeta {
+  font-size: 12px;
+  color: rgba(255,255,255,.66);
+}
+
+.aiStats {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.aiStat {
+  font-size: 12px;
+  color: rgba(255,255,255,.74);
+  border: 1px solid rgba(255,255,255,.10);
+  background: rgba(0,0,0,.18);
+  padding: 4px 8px;
+  border-radius: 999px;
+}
+
+.aiReasons {
+  margin-top: 10px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.aiReasonChip {
+  font-size: 12px;
+  color: rgba(255,255,255,.80);
+  border: 1px solid rgba(255,255,255,.10);
+  background: rgba(0,0,0,.16);
+  padding: 6px 8px;
+  border-radius: 999px;
+}
+
+/* Buttons */
+.aiActions {
+  margin-top: 10px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.aiBtn {
+  border-radius: 14px;
+  padding: 9px 10px;
+  font-size: 12px;
+  font-weight: 950;
+  cursor: pointer;
+  border: 1px solid rgba(255,255,255,.12);
+  background: rgba(0,0,0,.20);
+  color: rgba(255,255,255,.92);
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform .12s ease, filter .12s ease, border-color .12s ease;
+}
+
+.aiBtn:hover { transform: translateY(-1px); border-color: rgba(255,255,255,.22); }
+
+.aiBtnPrimary {
+  border-color: rgba(178,106,168,.36);
+  background: linear-gradient(135deg, rgba(178,106,168,.88), rgba(139,63,127,.86));
+  color: rgba(255,255,255,.98);
+}
+
+.aiBtnOutline {
+  background: rgba(0,0,0,.20);
+}
+
+.aiBtnGhost {
+  background: rgba(0,0,0,.10);
+}
+
+.aiBtn:disabled {
+  opacity: .55;
+  cursor: not-allowed;
+  transform: none;
+}
+
+/* Composer */
+.aiComposer {
+  padding: 10px;
+  border-top: 1px solid rgba(255,255,255,.10);
+  display: flex;
+  gap: 10px;
+  align-items: flex-end;
+  background: rgba(0,0,0,.10);
+}
+
+.aiInput {
+  flex: 1;
+  resize: none;
+  border-radius: 16px;
+  border: 1px solid rgba(255,255,255,.12);
+  background: rgba(0,0,0,.22);
+  padding: 10px 12px;
+  font-size: 13px;
+  outline: none;
+  color: rgba(255,255,255,.92);
+}
+
+.aiInput:focus {
+  border-color: rgba(178,106,168,.60);
+  box-shadow: 0 0 0 1px rgba(178,106,168,.22), 0 0 26px rgba(178,106,168,.14);
+}
+
+.aiSend {
+  border-radius: 16px;
+  border: 1px solid rgba(178,106,168,.34);
+  background: linear-gradient(135deg, rgba(178,106,168,.88), rgba(139,63,127,.86));
+  color: #fff;
+  padding: 10px 12px;
+  cursor: pointer;
+  font-weight: 950;
+}
+
+.aiSend:disabled { opacity: .55; cursor: not-allowed; }
+
+/* Toast */
+.aiToast {
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  bottom: 94px;
+  border-radius: 14px;
+  border: 1px solid rgba(255,255,255,.12);
+  background: rgba(0,0,0,.38);
+  backdrop-filter: blur(12px);
+  padding: 10px 12px;
+  font-size: 12px;
+  color: rgba(255,255,255,.9);
+  box-shadow: 0 18px 50px rgba(0,0,0,.45);
+}
+
+/* Mobile */
+@media (max-width: 520px) {
+  .copilotWrap { right: 12px; bottom: 12px; }
+
+  .copilotPanel {
+    right: 12px;
+    left: 12px;
+    width: auto;
+    bottom: 82px;
+    max-height: calc(100vh - 110px);
+  }
+
+  .aiToolbarHint { display: none; }
+}

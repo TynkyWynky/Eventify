@@ -1416,3 +1416,464 @@ app.get("/health", async (_req, res) => {
 });
 
 app.listen(PORT, () => console.log(`API running on http://localhost:${PORT}`));
+
+// -----------------------------
+// Copilot (NL prompt -> intent -> events -> ranking)
+// -----------------------------
+
+const COPILOT_CITIES = [
+  { name: "Brussels", aliases: ["brussel", "bruxelles", "brussels"], lat: 50.8466, lng: 4.3528 },
+  { name: "Ixelles", aliases: ["ixelles", "elsene"], lat: 50.8333, lng: 4.3667 },
+  { name: "Uccle", aliases: ["uccle", "ukkel"], lat: 50.802, lng: 4.336 },
+  { name: "Schaerbeek", aliases: ["schaerbeek", "schaarbeek"], lat: 50.867, lng: 4.375 },
+  { name: "Anderlecht", aliases: ["anderlecht"], lat: 50.836, lng: 4.309 },
+  { name: "Antwerp", aliases: ["antwerp", "antwerpen"], lat: 51.2194, lng: 4.4025 },
+  { name: "Ghent", aliases: ["ghent", "gent"], lat: 51.0543, lng: 3.7174 },
+  { name: "Leuven", aliases: ["leuven", "louvain"], lat: 50.8798, lng: 4.7005 },
+  { name: "Liège", aliases: ["liège", "liege", "luik"], lat: 50.6326, lng: 5.5797 },
+  { name: "Namur", aliases: ["namur", "namen"], lat: 50.4669, lng: 4.8675 },
+  { name: "Charleroi", aliases: ["charleroi"], lat: 50.4108, lng: 4.4446 },
+  { name: "Mons", aliases: ["mons", "bergen"], lat: 50.4542, lng: 3.9567 },
+  { name: "Bruges", aliases: ["bruges", "brugge"], lat: 51.2093, lng: 3.2247 },
+  { name: "Mechelen", aliases: ["mechelen", "malines"], lat: 51.0257, lng: 4.4776 },
+  { name: "Hasselt", aliases: ["hasselt"], lat: 50.9307, lng: 5.3325 },
+  { name: "Halle", aliases: ["halle"], lat: 50.7333, lng: 4.234 },
+  { name: "Lessines", aliases: ["lessines", "leuze", "7860"], lat: 50.712, lng: 3.836 },
+  { name: "Tournai", aliases: ["tournai", "doornik"], lat: 50.605, lng: 3.389 },
+];
+
+function copilotNormalize(s) {
+  return String(s || "").trim().toLowerCase();
+}
+
+function toRouteSafeId(value) {
+  const safe = String(value || "").replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 80);
+  return safe || "event";
+}
+
+function hashText(input) {
+  let h = 0;
+  const s = String(input || "");
+  for (let i = 0; i < s.length; i++) {
+    h = (h << 5) - h + s.charCodeAt(i);
+    h |= 0;
+  }
+  return Math.abs(h);
+}
+
+function buildEventKeyFromApiEvent(apiEvent, rank) {
+  const source = String(apiEvent?.source || "remote").toLowerCase();
+  const rawSourceId = String(apiEvent?.sourceId || apiEvent?.title || `evt_${rank}`);
+  const stableHash = hashText(rawSourceId).toString(36);
+  const sourceId = `${toRouteSafeId(rawSourceId)}_${stableHash}`;
+  return `${source}:${sourceId}`; // must match frontend id logic
+}
+
+function haversineKm(lat1, lng1, lat2, lng2) {
+  const toRad = (d) => (d * Math.PI) / 180;
+  const r = 6371;
+  const dLat = toRad(lat2 - lat1);
+  const dLng = toRad(lng2 - lng1);
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(toRad(lat1)) *
+      Math.cos(toRad(lat2)) *
+      Math.sin(dLng / 2) *
+      Math.sin(dLng / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return r * c;
+}
+
+function inferStyle(text) {
+  const t = copilotNormalize(text);
+  if (!t) return "Electronic";
+  if (t.includes("techno")) return "Techno";
+  if (t.includes("house")) return "House";
+  if (t.includes("drum") || t.includes("dnb")) return "Drum & Bass";
+  if (t.includes("hip hop") || t.includes("hip-hop") || t.includes("rap")) return "Hip-Hop";
+  if (t.includes("jazz")) return "Jazz";
+  if (t.includes("metal")) return "Metal";
+  if (t.includes("rock")) return "Rock";
+  if (t.includes("indie")) return "Indie";
+  if (t.includes("r&b") || t.includes("rnb")) return "R&B";
+  if (t.includes("pop")) return "Pop";
+  return "Electronic";
+}
+
+function parseMaxKm(message) {
+  const m = copilotNormalize(message);
+  const r1 = m.match(/max(?:imum)?\s*(\d{1,3})\s*km/);
+  if (r1 && r1[1]) return Math.max(1, Math.min(200, Number(r1[1]) || 0));
+  const r2 = m.match(/(\d{1,3})\s*km/);
+  if (r2 && r2[1]) return Math.max(1, Math.min(200, Number(r2[1]) || 0));
+  return null;
+}
+
+function parseFriendCount(message) {
+  const m = copilotNormalize(message);
+  const r1 = m.match(/(\d+)\s*(vriend|vrienden|friends)/);
+  if (r1 && r1[1]) return Math.max(0, Math.min(20, Number(r1[1]) || 0));
+  const r2 = m.match(/we\s*zijn\s*met\s*(\d+)/);
+  if (r2 && r2[1]) return Math.max(1, Math.min(20, Number(r2[1]) || 0)) - 1;
+  return null;
+}
+
+function parseBudget(message) {
+  const m = copilotNormalize(message);
+  const r = m.match(/(\d{1,4})\s*€|€\s*(\d{1,4})/);
+  const n = Number(r?.[1] || r?.[2]);
+  if (Number.isFinite(n) && n > 0) return n;
+  if (m.includes("niet te duur") || m.includes("pas cher") || m.includes("cheap")) return "cheap";
+  return null;
+}
+
+function parseRequestedStyles(message) {
+  const m = copilotNormalize(message);
+  const styles = new Set();
+
+  if (m.includes("techno")) styles.add("Techno");
+  if (m.includes("house")) styles.add("House");
+  if (m.includes("drum") || m.includes("dnb")) styles.add("Drum & Bass");
+  if (m.includes("hip hop") || m.includes("hip-hop") || m.includes("rap")) styles.add("Hip-Hop");
+  if (m.includes("jazz")) styles.add("Jazz");
+  if (m.includes("metal")) styles.add("Metal");
+  if (m.includes("rock")) styles.add("Rock");
+  if (m.includes("indie")) styles.add("Indie");
+  if (m.includes("r&b") || m.includes("rnb")) styles.add("R&B");
+  if (m.includes("pop")) styles.add("Pop");
+  if (m.includes("electronic") || m.includes("edm")) styles.add("Electronic");
+
+  return Array.from(styles);
+}
+
+function findCity(message) {
+  const m = copilotNormalize(message);
+  for (const c of COPILOT_CITIES) {
+    for (const a of c.aliases) {
+      if (m.includes(a)) return c;
+    }
+  }
+  return null;
+}
+
+function startOfDay(d) {
+  const x = new Date(d);
+  x.setHours(0, 0, 0, 0);
+  return x;
+}
+
+function endOfDay(d) {
+  const x = new Date(d);
+  x.setHours(23, 59, 59, 999);
+  return x;
+}
+
+function nextWeekdayRange(now, targetDow) {
+  const from = new Date(now);
+  const dow = from.getDay(); // 0..6
+  let delta = (targetDow - dow + 7) % 7;
+  // if same day and it's already late, jump to next week
+  if (delta === 0) delta = 0;
+  const day = new Date(from);
+  day.setDate(day.getDate() + delta);
+  return { from: startOfDay(day), to: endOfDay(day), label: day.toDateString() };
+}
+
+function parseDateRange(message, clientNowIso) {
+  const m = copilotNormalize(message);
+  const now = clientNowIso ? new Date(clientNowIso) : new Date();
+
+  if (m.includes("morgen") || m.includes("demain") || m.includes("tomorrow")) {
+    const d = new Date(now);
+    d.setDate(d.getDate() + 1);
+    return { from: startOfDay(d), to: endOfDay(d), label: "tomorrow" };
+  }
+
+  if (m.includes("vandaag") || m.includes("aujourd") || m.includes("today") || m.includes("vanavond")) {
+    return { from: startOfDay(now), to: endOfDay(now), label: "today" };
+  }
+
+  if (m.includes("dit weekend") || m.includes("ce week-end") || m.includes("this weekend") || m.includes("weekend")) {
+    const d = new Date(now);
+    const dow = d.getDay();
+    const deltaToSat = (6 - dow + 7) % 7; // Saturday = 6
+    const sat = new Date(d);
+    sat.setDate(sat.getDate() + deltaToSat);
+    const sun = new Date(sat);
+    sun.setDate(sun.getDate() + 1);
+    return { from: startOfDay(sat), to: endOfDay(sun), label: "this weekend" };
+  }
+
+  // NL/EN/FR days
+  const days = [
+    { keys: ["zondag", "sunday", "dimanche"], dow: 0 },
+    { keys: ["maandag", "monday", "lundi"], dow: 1 },
+    { keys: ["dinsdag", "tuesday", "mardi"], dow: 2 },
+    { keys: ["woensdag", "wednesday", "mercredi"], dow: 3 },
+    { keys: ["donderdag", "thursday", "jeudi"], dow: 4 },
+    { keys: ["vrijdag", "friday", "vendredi"], dow: 5 },
+    { keys: ["zaterdag", "saturday", "samedi"], dow: 6 },
+  ];
+
+  for (const d of days) {
+    if (d.keys.some((k) => m.includes(k))) {
+      return nextWeekdayRange(now, d.dow);
+    }
+  }
+
+  return null; // no explicit date constraint
+}
+
+function clamp01(x) {
+  if (x < 0) return 0;
+  if (x > 1) return 1;
+  return x;
+}
+
+async function getTrendingCountsOptional(eventKeys) {
+  if (!pool || !eventKeys || eventKeys.length === 0) return new Map();
+  const db = pool;
+  const r = await db.query(
+    `
+    SELECT event_key, COUNT(*)::int AS c
+    FROM event_attendance
+    WHERE is_going = TRUE AND event_key = ANY($1::text[])
+    GROUP BY event_key
+    `,
+    [eventKeys]
+  );
+  const map = new Map();
+  for (const row of r.rows) map.set(String(row.event_key), Number(row.c) || 0);
+  return map;
+}
+
+async function getFriendsGoingCountsOptional(userId, eventKeys) {
+  if (!pool || !userId || !eventKeys || eventKeys.length === 0) return new Map();
+  const db = pool;
+  const r = await db.query(
+    `
+    SELECT a.event_key, COUNT(*)::int AS c
+    FROM user_friends f
+    JOIN event_attendance a
+      ON a.user_id = f.friend_user_id
+     AND a.is_going = TRUE
+     AND a.event_key = ANY($2::text[])
+    WHERE f.user_id = $1
+    GROUP BY a.event_key
+    `,
+    [userId, eventKeys]
+  );
+  const map = new Map();
+  for (const row of r.rows) map.set(String(row.event_key), Number(row.c) || 0);
+  return map;
+}
+
+app.post("/copilot", authOptional, async (req, res) => {
+  try {
+    const message = safeText(req.body?.message, "").trim();
+    const originLat = Number(req.body?.originLat);
+    const originLng = Number(req.body?.originLng);
+    const originLabel = safeText(req.body?.originLabel, "your location");
+    const clientNowIso = safeText(req.body?.clientNowIso, "");
+    const modeRaw = safeText(req.body?.mode, "");
+    const friendIds = Array.isArray(req.body?.friendIds) ? req.body.friendIds : [];
+
+    if (!message) return res.status(400).json({ ok: false, error: "Missing message" });
+    if (!Number.isFinite(originLat) || !Number.isFinite(originLng)) {
+      return res.status(400).json({ ok: false, error: "Invalid originLat/originLng" });
+    }
+
+    const city = findCity(message);
+    const styles = parseRequestedStyles(message); // e.g. ["Techno","House"]
+    const maxKm = parseMaxKm(message) ?? 30;
+    const budget = parseBudget(message);
+    const friendCount = parseFriendCount(message);
+    const dateRange = parseDateRange(message, clientNowIso);
+    const mode =
+      copilotNormalize(message).includes("plan voor ons") ||
+      copilotNormalize(message).includes("plan for us") ||
+      modeRaw === "plan"
+        ? "plan"
+        : "normal";
+
+    const centerLat = city ? city.lat : originLat;
+    const centerLng = city ? city.lng : originLng;
+
+    // Fetch a bit more, then we filter + rank ourselves.
+    const tmEvents = await fetchTicketmaster({
+      keyword: "", // keep broad; we do filtering ourselves
+      lat: centerLat,
+      lng: centerLng,
+      radiusKm: maxKm,
+      size: 60,
+      classificationName: "music",
+    });
+
+    let candidates = (tmEvents || []).map((e, idx) => {
+      const eventKey = buildEventKeyFromApiEvent(e, idx);
+
+      const lat = typeof e.lat === "number" ? e.lat : null;
+      const lng = typeof e.lng === "number" ? e.lng : null;
+
+      const distanceKm =
+        lat != null && lng != null ? haversineKm(originLat, originLng, lat, lng) : null;
+
+      const inferredStyle = inferStyle(`${e.title || ""} ${e.artistName || ""} ${e.genre || ""}`);
+      const inferredTags = inferredStyle ? [inferredStyle] : [];
+
+      const startIso = e.start ? String(e.start) : null;
+      const startDate = startIso ? new Date(startIso) : null;
+
+      return {
+        eventKey,
+        title: e.title || "Untitled event",
+        startIso,
+        startDate,
+        venue: e.venue || null,
+        city: e.city || null,
+        lat,
+        lng,
+        url: e.url || null,
+        imageUrl: e.imageUrl || null,
+        tags: inferredTags,
+        distanceKm,
+        raw: e,
+      };
+    });
+
+    // Filter by date if user asked (Friday / weekend / tomorrow / ...)
+    if (dateRange) {
+      candidates = candidates.filter((c) => {
+        if (!c.startDate || Number.isNaN(c.startDate.getTime())) return true;
+        return c.startDate >= dateRange.from && c.startDate <= dateRange.to;
+      });
+    }
+
+    // Filter vibe if user asked specific styles
+    if (styles.length > 0) {
+      candidates = candidates.filter((c) => c.tags.some((t) => styles.includes(t)));
+    }
+
+    // Remove weird distances
+    candidates = candidates.filter((c) => c.distanceKm == null || c.distanceKm <= maxKm * 2);
+
+    const eventKeys = candidates.map((c) => c.eventKey);
+
+    const me = req.auth?.sub ? Number(req.auth.sub) : null;
+
+    const trendingMap = await getTrendingCountsOptional(eventKeys);
+    const friendsMap = await getFriendsGoingCountsOptional(me, eventKeys);
+
+    // Score + reasons
+    const scored = candidates.map((c) => {
+      const reasons = [];
+
+      // vibe score
+      let vibeScore = 0;
+      if (styles.length > 0) {
+        const matches = c.tags.filter((t) => styles.includes(t));
+        vibeScore = matches.length * 3;
+        if (matches.length) reasons.push(`Matches vibe: ${matches.join(", ")}`);
+      } else {
+        vibeScore = 1;
+        if (c.tags[0]) reasons.push(`Vibe: ${c.tags[0]}`);
+      }
+
+      // distance score
+      let distScore = 0;
+      if (typeof c.distanceKm === "number") {
+        const ratio = clamp01(1 - c.distanceKm / Math.max(1, maxKm));
+        distScore = ratio * 4;
+        reasons.push(`~${Math.round(c.distanceKm)}km away (max ${maxKm}km)`);
+      }
+
+      // trending
+      const goingCount = trendingMap.get(c.eventKey) || 0;
+      const trendScore = Math.min(6, Math.log2(goingCount + 1) * 2);
+      if (goingCount > 0) reasons.push(`Trending: ${goingCount} going`);
+
+      // friends going
+      const friendsGoing = friendsMap.get(c.eventKey) || 0;
+      const friendsScore = Math.min(6, friendsGoing * 3);
+      if (friendsGoing > 0) reasons.push(`${friendsGoing} friend(s) going`);
+
+      // date hint
+      if (dateRange && c.startDate && !Number.isNaN(c.startDate.getTime())) {
+        reasons.push(`Fits: ${dateRange.label}`);
+      }
+
+      // budget hint (Ticketmaster doesn’t always have price, so keep it a soft reason)
+      if (budget === "cheap") reasons.push("Prefer not too expensive (soft match)");
+
+      const total =
+        vibeScore * 2.2 +
+        distScore * 1.6 +
+        trendScore * 1.2 +
+        friendsScore * 1.4;
+
+      return {
+        ...c,
+        goingCount,
+        friendsGoing,
+        score: total,
+        reasons: reasons.slice(0, 4),
+      };
+    });
+
+    scored.sort((a, b) => b.score - a.score);
+
+    const suggestions = scored.slice(0, 5).map((s) => ({
+      eventKey: s.eventKey,
+      title: s.title,
+      startIso: s.startIso,
+      venue: s.venue,
+      city: s.city,
+      distanceKm: typeof s.distanceKm === "number" ? Math.round(s.distanceKm * 10) / 10 : null,
+      reasons: s.reasons,
+    }));
+
+    const intentBits = [
+      dateRange ? `when: ${dateRange.label}` : null,
+      city ? `city: ${city.name}` : null,
+      styles.length ? `vibe: ${styles.join("/")}` : null,
+      `max ${maxKm}km`,
+      budget ? `budget: ${budget === "cheap" ? "not too expensive" : `€${budget}`}` : null,
+      typeof friendCount === "number" ? `friends: ${friendCount}` : null,
+      mode === "plan" ? `mode: plan` : null,
+    ].filter(Boolean);
+
+    const answer =
+      `Oké — ik snap je. (${intentBits.join(", ")})\n` +
+      `Hier zijn mijn beste matches rond ${city ? city.name : originLabel}.`;
+
+    // MVP plan-mode: just pick first as "best match" for now (fairness comes later)
+    const bestMatchEventKey = mode === "plan" && suggestions.length ? suggestions[0].eventKey : null;
+
+    const shareText =
+      suggestions.length > 0
+        ? `Vrij om mee te gaan? Ik vond "${suggestions[0].title}" (${suggestions[0].city || ""}). Link: /events/${encodeURIComponent(
+            suggestions[0].eventKey
+          )}`
+        : `Vrij om mee te gaan? Ik zoek iets in ${city ? city.name : originLabel}.`;
+
+    return res.json({
+      ok: true,
+      intent: {
+        city: city ? city.name : null,
+        styles,
+        maxKm,
+        budget,
+        friendCount,
+        mode,
+        friendIdsCount: friendIds.length,
+        dateRange: dateRange ? { from: dateRange.from, to: dateRange.to, label: dateRange.label } : null,
+      },
+      answer,
+      suggestions,
+      bestMatchEventKey,
+      shareText,
+    });
+  } catch (err) {
+    return res.status(500).json({ ok: false, error: err?.message || String(err) });
+  }
+});
