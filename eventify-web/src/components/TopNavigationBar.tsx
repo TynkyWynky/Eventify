@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Link,
   NavLink,
@@ -41,6 +41,9 @@ export default function TopNavigationBar() {
   const [isNotifOpen, setNotifOpen] = useState(false);
   const [isProfileOpen, setProfileOpen] = useState(false);
 
+  const notifWrapRef = useRef<HTMLDivElement | null>(null);
+  const profileWrapRef = useRef<HTMLDivElement | null>(null);
+
   const latest = useMemo(() => notifications.slice(0, 6), [notifications]);
 
   // ✅ URL-driven search (q=...)
@@ -50,6 +53,28 @@ export default function TopNavigationBar() {
 
   const qFromUrl = searchParams.get("q") ?? "";
   const [query, setQuery] = useState(qFromUrl);
+
+  // Close popovers when clicking outside
+  useEffect(() => {
+    function onPointerDown(e: PointerEvent) {
+      const target = e.target as Node | null;
+      if (!target) return;
+
+      if (isNotifOpen) {
+        const wrap = notifWrapRef.current;
+        if (wrap && !wrap.contains(target)) setNotifOpen(false);
+      }
+
+      if (isProfileOpen) {
+        const wrap = profileWrapRef.current;
+        if (wrap && !wrap.contains(target)) setProfileOpen(false);
+      }
+    }
+
+    // capture=true zodat het ook werkt als ergens stopPropagation gebeurt
+    document.addEventListener("pointerdown", onPointerDown, true);
+    return () => document.removeEventListener("pointerdown", onPointerDown, true);
+  }, [isNotifOpen, isProfileOpen]);
 
   // Sync input when URL changes (back/forward, clicks, etc.)
   useEffect(() => {
@@ -128,7 +153,7 @@ export default function TopNavigationBar() {
           ) : (
             <>
               {/* Notifications */}
-              <div className="navPopoverWrap">
+              <div className="navPopoverWrap" ref={notifWrapRef}>
                 <button
                   className="navIconBtn"
                   onClick={() => {
@@ -178,7 +203,7 @@ export default function TopNavigationBar() {
               </div>
 
               {/* Profile */}
-              <div className="navPopoverWrap">
+              <div className="navPopoverWrap" ref={profileWrapRef}>
                 <button
                   className="navIconBtn"
                   onClick={() => {
@@ -207,6 +232,7 @@ export default function TopNavigationBar() {
                       >
                         Account
                       </Link>
+
                       {(user.role === "organizer" || user.role === "admin") && (
                         <Link
                           className="popoverLink"
@@ -216,16 +242,16 @@ export default function TopNavigationBar() {
                           My Events
                         </Link>
                       )}
-                      {user.role === "admin" && (
-                      <Link
-                        className="popoverLink"
-                        to="/admin"
-                        onClick={() => setProfileOpen(false)}
-                      >
-                        Admin Dashboard
-                      </Link>
-                    )}
 
+                      {user.role === "admin" && (
+                        <Link
+                          className="popoverLink"
+                          to="/admin"
+                          onClick={() => setProfileOpen(false)}
+                        >
+                          Admin Dashboard
+                        </Link>
+                      )}
 
                       <Link
                         className="popoverLink"
@@ -234,6 +260,7 @@ export default function TopNavigationBar() {
                       >
                         Settings
                       </Link>
+
                       <button className="popoverLink danger" onClick={logout}>
                         Logout
                       </button>

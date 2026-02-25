@@ -5,6 +5,10 @@ export type EventsListParams = {
   maxDistanceKm?: number;
   query?: string;
   trendingOnly?: boolean;
+
+  // ✅ NEW: origin for distance calculation
+  originLat?: number;
+  originLng?: number;
 };
 
 export type EventsRepo = {

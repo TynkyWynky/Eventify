@@ -23,6 +23,9 @@ services:
     build: .
     container_name: events_api
     command: ["node", "server.js"]
+    depends_on:
+      postgres:
+        condition: service_healthy
     environment:
       PORT: 3000
       TICKETMASTER_API_KEY: ${TICKETMASTER_API_KEY}
@@ -47,6 +50,10 @@ services:
       SCRAPE_EVENTBRITE_DETAIL_LOOKUP: ${SCRAPE_EVENTBRITE_DETAIL_LOOKUP:-true}
       SCRAPE_EVENTBRITE_DETAIL_ENRICH_LIMIT: ${SCRAPE_EVENTBRITE_DETAIL_ENRICH_LIMIT:-8}
       SCRAPE_EVENTBRITE_DETAIL_TIMEOUT_MS: ${SCRAPE_EVENTBRITE_DETAIL_TIMEOUT_MS:-10000}
+      DATABASE_URL: postgres://events_user:events_password@postgres:5432/events_db
+      DATABASE_SSL: ${DATABASE_SSL:-false}
+      JWT_SECRET: ${JWT_SECRET:-dev_change_me}
+      JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-7d}
       NODE_ENV: production
     ports:
       - "3000:3000"

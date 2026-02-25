@@ -3,7 +3,7 @@ export type Role = "user" | "organizer" | "admin";
 export type User = {
   id: string;
   name: string;
-  email: string; 
+  email: string;
   role: Role;
 };
 
@@ -17,18 +17,18 @@ export type NotificationItem = {
   id: string;
   title: string;
   message: string;
-  createdAt: string; 
+  createdAt: string;
   isRead: boolean;
 };
 
 export type AuthState = {
   user: User | null;
+  token: string | null;
   notifications: NotificationItem[];
   unreadCount: number;
 
-  login: (email: string, name?: string) => void;
-  loginWithPassword: (email: string, password: string) => void;
-  register: (payload: RegisterPayload) => void;
+  loginWithPassword: (emailOrUsername: string, password: string) => Promise<void>;
+  register: (payload: RegisterPayload) => Promise<void>;
   logout: () => void;
 
   markAllAsRead: () => void;
