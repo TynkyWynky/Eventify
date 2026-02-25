@@ -41,3 +41,110 @@ Eventify bundelt lokale events op één plek en maakt ontdekken simpel, snel en 
 ---
 
 ## Projectstructuur (indicatief)
+
+---
+
+## Web scraping + DB sync (nieuw)
+
+De backend kan nu events uit extra websites scrapen en samenvoegen met Ticketmaster:
+
+- `GET /events` combineert:
+  - Ticketmaster events
+  - JSON-LD (`schema.org/Event`) scraping van URL's in `SCRAPE_SOURCE_URLS`
+  - Eventbrite listing pages (`/d/.../events/`) worden direct ondersteund, inclusief detail-verrijking
+  - Venue agenda pages werken ook (bv. `.../agenda`, `.../calendar`) zolang event detailpagina's JSON-LD Event bevatten
+- Cross-source dedupe: events met dezelfde titel+tijd+stad+venue worden samengevoegd
+- Scrape cache (stale-while-refresh) houdt laadtijd laag
+- Songkick verrijking: volgt `Venue Website`/ticket-redirects en gebruikt de officiële venue-eventpagina als link (`url`) wanneer beschikbaar
+- `sync.js` slaat verrijkte velden op in Postgres, inclusief ruwe bronpayload in `events.source_metadata` (JSONB)
+
+### Belangrijke env vars
+
+- `SCRAPE_ENABLED=true|false`
+- `SCRAPE_SOURCE_URLS=https://site-a.com/events,https://site-b.com/calendar`
+- Voorbeeld: `SCRAPE_SOURCE_URLS=https://www.eventbrite.com/d/belgium--brussels/music--events/,https://www.eventbrite.com/d/belgium--antwerp/music--events/`
+- `SCRAPE_MAX_EVENTS=40`
+- `SCRAPE_MAX_EVENTS_PER_SOURCE=25`
+- `SCRAPE_MAX_LINKS_PER_SOURCE=20`
+- `SCRAPE_TIMEOUT_MS=12000`
+- `SCRAPE_SOURCE_CONCURRENCY=3`
+- `SCRAPE_EVENTBRITE_DETAIL_LOOKUP=true`
+- `SCRAPE_EVENTBRITE_DETAIL_ENRICH_LIMIT=8`
+- `SCRAPE_EVENTBRITE_DETAIL_TIMEOUT_MS=10000`
+
+### Snelle test
+
+1. Zet minstens 1 URL in `SCRAPE_SOURCE_URLS`
+2. Start API: `npm run start`
+3. Vraag events op:
+   - `http://localhost:3000/events?includeScraped=1`
+4. Start sync:
+   - `npm run sync:once`
+
+---
+
+## AI features (MVP)
+
+Nieuwe backend endpoints voor explainable AI-functionaliteit:
+
+- `POST /ai/recommendations`
+  - Explainable ranking per event met componenten:
+    - `genreMatch`, `distance`, `popularity`, `similarity`
+  - Geeft per event redenen terug, bv:
+    - `Je houdt van indie / rock`
+    - `Het is op 6 km van je locatie`
+    - `3 gelijkaardige events heb je al geliket`
+
+- `POST /ai/genre-predict`
+  - Predict automatisch genre(s) op basis van titel/description/tags
+  - Inclusief `confidence` score
+  - Ondersteunt ook batch-predictie voor een events-array
+
+- `POST /ai/radar`
+  - Detecteert labels:
+    - `Hidden Gem`
+    - `Trending Local`
+  - Gebaseerd op relevantie, zichtbaarheid, freshness en trend-velocity
+
+- `POST /ai/taste-dna`
+  - Bouwt een smaakprofiel, bv:
+    - `48% Indie Explorer, 44% Jazz Drifter, ...`
+  - Gebruikt likes, genre-voorkeuren, afstand en tijdspatroon
+
+- `POST /ai/success-predictor`
+  - Voor organizer events:
+    - `probabilityHighAttendance`
+    - `bestPromotionDay`
+    - `targetAudienceAgeRange`
+  - Gebaseerd op vergelijkbare historische events + timing/prijs/locatie
+
+### Voorbeeld payloads
+
+```json
+POST /ai/recommendations
+{
+  "userProfile": {
+    "preferredGenres": ["indie", "rock"],
+    "lat": 50.8503,
+    "lng": 4.3517,
+    "maxDistanceKm": 30,
+    "likedEvents": []
+  },
+  "query": { "classificationName": "music", "maxResults": 120 },
+  "limit": 20
+}
+```
+
+```json
+POST /ai/success-predictor
+{
+  "draftEvent": {
+    "title": "New Indie Showcase",
+    "description": "Indie and folk artists live",
+    "genre": "Indie",
+    "city": "Brussels",
+    "start": "2026-04-17T19:30:00Z",
+    "cost": 18
+  }
+}
+```

@@ -144,12 +144,20 @@ Ensure-EnvFile -TargetPath $frontendEnvPath -ExamplePath $frontendEnvExamplePath
 
 $ticketmasterKey = Get-EnvValue -Path $backendEnvPath -Key "TICKETMASTER_API_KEY"
 $setlistFmKey = Get-EnvValue -Path $backendEnvPath -Key "SETLISTFM_API_KEY"
+$scrapeEnabled = Get-EnvValue -Path $backendEnvPath -Key "SCRAPE_ENABLED"
+$scrapeSources = Get-EnvValue -Path $backendEnvPath -Key "SCRAPE_SOURCE_URLS"
 
 if ([string]::IsNullOrWhiteSpace($ticketmasterKey)) {
     Write-WarnMsg "TICKETMASTER_API_KEY is empty in .env"
 }
 if ([string]::IsNullOrWhiteSpace($setlistFmKey)) {
     Write-WarnMsg "SETLISTFM_API_KEY is empty in .env"
+}
+
+$scrapeEnabledNormalized = if ([string]::IsNullOrWhiteSpace($scrapeEnabled)) { "true" } else { $scrapeEnabled.Trim().ToLowerInvariant() }
+$isScrapeEnabled = -not [string]::IsNullOrWhiteSpace($scrapeEnabledNormalized) -and @("1","true","yes","on") -contains $scrapeEnabledNormalized
+if ($isScrapeEnabled -and [string]::IsNullOrWhiteSpace($scrapeSources)) {
+    Write-WarnMsg "SCRAPE_ENABLED is true but SCRAPE_SOURCE_URLS is empty. /events will likely show only Ticketmaster events. Example: https://www.eventbrite.com/d/belgium--brussels/music--events/"
 }
 
 if (-not $SkipInstall) {

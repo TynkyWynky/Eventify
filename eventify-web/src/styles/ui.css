@@ -829,7 +829,11 @@ textarea.input { min-height: 110px; resize: vertical; }
   box-shadow: var(--glow);
 }
 
-.eventImageWrap { aspect-ratio: 16 / 9; overflow: hidden; }
+.eventImageWrap {
+  position: relative;
+  aspect-ratio: 16 / 9;
+  overflow: hidden;
+}
 
 .eventImage {
   width: 100%;
@@ -867,6 +871,15 @@ textarea.input { min-height: 110px; resize: vertical; }
 .eventCardMeta {
   font-size: 11px;
   color: rgba(255,255,255,.72);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.eventCardAiReason {
+  margin-top: 2px;
+  font-size: 11px;
+  color: rgba(178, 106, 168, 0.95);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -965,6 +978,33 @@ textarea.input { min-height: 110px; resize: vertical; }
   line-height: 1.35;
   max-width: 46ch;
 }
+
+.aiTastePanel {
+  margin-top: var(--space-5);
+  border-radius: var(--radius2);
+  border: 1px solid var(--border);
+  background: rgba(0, 0, 0, 0.22);
+  box-shadow: var(--glow);
+  padding: 14px;
+}
+
+.aiTasteTitle {
+  font-size: 18px;
+  font-weight: 900;
+}
+
+.aiTasteSummary {
+  margin-top: 8px;
+  font-size: 15px;
+  color: rgba(255, 255, 255, 0.92);
+}
+
+.aiTasteMeta {
+  margin-top: 8px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
 
 /* =========================
    AUTH PAGES
@@ -1336,6 +1376,16 @@ textarea.input { min-height: 110px; resize: vertical; }
   line-height: 1.55;
 }
 
+.eventAiReasonList {
+  margin: 8px 0 0 16px;
+  display: grid;
+  gap: 4px;
+}
+
+.detailCardTitle {
+  font-size: 18px;
+  font-weight: 900;
+  margin-bottom: var(--space-3);
 /* Friends going list */
 .friendsGoingList {
   margin-top: 10px;
@@ -1896,6 +1946,38 @@ a.accountFriendAction {
 .myEventsPromotionRow { display: flex; gap: 10px; flex-wrap: wrap; }
 .myEventsPromoHint { align-self: center; }
 
+.myEventsAiCard {
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.04);
+  border-radius: var(--radius);
+  padding: 12px;
+  display: grid;
+  gap: 8px;
+}
+
+.myEventsAiStats {
+  display: grid;
+  gap: 4px;
+  color: rgba(255, 255, 255, 0.88);
+  font-size: 13px;
+}
+
+.myEventsAiError {
+  color: #ffc2c2;
+}
+
+.myEventsAiNotes {
+  margin: 0;
+  padding-left: 18px;
+  display: grid;
+  gap: 4px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+@media (max-width: 900px) {
+  .myEventsKpiGrid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
 /* =========================
    ADMIN – FILTER CONTROLS
    ========================= */

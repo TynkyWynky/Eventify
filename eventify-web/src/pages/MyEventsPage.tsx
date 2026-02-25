@@ -18,6 +18,10 @@ import {
   getViews,
   subscribeMetricsChanged,
 } from "../data/events/eventMetricsStore";
+import {
+  fetchAiSuccessPredictor,
+  toAiEventPayload,
+} from "../data/events/aiClient";
 
 const DEFAULT_IMAGE =
   "https://images.unsplash.com/photo-1501386761578-eac5c94b800a?w=1400&q=80";
@@ -82,6 +86,16 @@ export default function MyEventsPage() {
 
   const [error, setError] = useState<string | null>(null);
   const [goingsMap, setGoingsMap] = useState<Record<string, number>>({});
+  const [successPredictLoading, setSuccessPredictLoading] = useState(false);
+  const [successPredictError, setSuccessPredictError] = useState<string | null>(null);
+  const [successPredict, setSuccessPredict] = useState<{
+    probabilityHighAttendance?: number;
+    expectedAttendance?: number;
+    bestPromotionDay?: string;
+    targetAudienceAgeRange?: string;
+    primaryGenre?: string;
+    notes?: string[];
+  } | null>(null);
 
   function resetForm() {
     setEditingId(null);
@@ -103,6 +117,9 @@ export default function MyEventsPage() {
     setGeoStatus(null);
     setGeoError(null);
     setIsGeocoding(false);
+    setSuccessPredict(null);
+    setSuccessPredictError(null);
+    setSuccessPredictLoading(false);
   }
 
   function startEdit(e: OrganizerEvent) {
@@ -188,6 +205,68 @@ export default function MyEventsPage() {
       setGeoError(e instanceof Error ? e.message : String(e));
     } finally {
       setIsGeocoding(false);
+    }
+  }
+
+  async function handlePredictSuccess() {
+    setSuccessPredictError(null);
+    setSuccessPredictLoading(true);
+
+    try {
+      const t = title.trim();
+      const c = city.trim();
+      const v = venue.trim();
+      if (!t || !c || !v) {
+        throw new Error("Fill in at least title, venue and city before prediction.");
+      }
+
+      const lat = safeNum(Number(latitude), DEFAULT_LAT);
+      const lng = safeNum(Number(longitude), DEFAULT_LNG);
+      const start = dateLabel.trim();
+
+      const draftEvent = {
+        title: t,
+        description: description.trim() || `${style} event at ${v} in ${c}.`,
+        genre: style,
+        category: style,
+        tags: [style],
+        venue: v,
+        city: c,
+        start,
+        lat,
+        lng,
+        isFree: false,
+      };
+
+      const historicalEvents = events.map((event) =>
+        toAiEventPayload(event, {
+          interestedCount: goingsMap[event.id] ?? 0,
+          peerInterestedCount: goingsMap[event.id] ?? 0,
+        })
+      );
+
+      const response = await fetchAiSuccessPredictor({
+        draftEvent,
+        historicalEvents,
+      });
+
+      if (!response.ok || !response.prediction) {
+        throw new Error(response.error || "Predictor returned no prediction.");
+      }
+
+      setSuccessPredict({
+        probabilityHighAttendance: response.prediction.probabilityHighAttendance,
+        expectedAttendance: response.prediction.expectedAttendance,
+        bestPromotionDay: response.prediction.bestPromotionDay,
+        targetAudienceAgeRange: response.prediction.targetAudienceAgeRange,
+        primaryGenre: response.prediction.primaryGenre,
+        notes: response.prediction.notes || [],
+      });
+    } catch (err: unknown) {
+      setSuccessPredict(null);
+      setSuccessPredictError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSuccessPredictLoading(false);
     }
   }
 
@@ -516,6 +595,15 @@ export default function MyEventsPage() {
 
             <div className="myEventsActionsRow">
               <button
+                className="btn btnSecondary"
+                type="button"
+                onClick={handlePredictSuccess}
+                disabled={isGeocoding || successPredictLoading}
+              >
+                {successPredictLoading ? "Predicting…" : "AI predict success"}
+              </button>
+
+              <button
                 className="btn btnPrimary"
                 type="button"
                 onClick={handleSave}
@@ -533,6 +621,38 @@ export default function MyEventsPage() {
                 Reset
               </button>
             </div>
+
+            {successPredictError ? (
+              <div className="sectionHint myEventsAiError">
+                Predictor unavailable: {successPredictError}
+              </div>
+            ) : null}
+            {successPredict ? (
+              <div className="myEventsAiCard">
+                <div className="myEventsStrongTitle">AI Success Predictor</div>
+                <div className="myEventsAiStats">
+                  <span>
+                    Chance of high turnout: <b>{successPredict.probabilityHighAttendance ?? "?"}%</b>
+                  </span>
+                  <span>
+                    Expected attendance: <b>{successPredict.expectedAttendance ?? "?"}</b>
+                  </span>
+                  <span>
+                    Best promo day: <b>{successPredict.bestPromotionDay ?? "—"}</b>
+                  </span>
+                  <span>
+                    Target audience: <b>{successPredict.targetAudienceAgeRange ?? "—"}</b>
+                  </span>
+                </div>
+                {successPredict.notes && successPredict.notes.length > 0 ? (
+                  <ul className="myEventsAiNotes">
+                    {successPredict.notes.slice(0, 4).map((note) => (
+                      <li key={note}>{note}</li>
+                    ))}
+                  </ul>
+                ) : null}
+              </div>
+            ) : null}
           </div>
         </div>
 
@@ -828,6 +948,15 @@ export default function MyEventsPage() {
 
           <div className="myEventsActionsRow">
             <button
+              className="btn btnSecondary"
+              type="button"
+              onClick={handlePredictSuccess}
+              disabled={isGeocoding || successPredictLoading}
+            >
+              {successPredictLoading ? "Predicting…" : "AI predict success"}
+            </button>
+
+            <button
               className="btn btnPrimary"
               type="button"
               onClick={handleSave}
@@ -845,6 +974,38 @@ export default function MyEventsPage() {
               Reset
             </button>
           </div>
+
+          {successPredictError ? (
+            <div className="sectionHint myEventsAiError">
+              Predictor unavailable: {successPredictError}
+            </div>
+          ) : null}
+          {successPredict ? (
+            <div className="myEventsAiCard">
+              <div className="myEventsStrongTitle">AI Success Predictor</div>
+              <div className="myEventsAiStats">
+                <span>
+                  Chance of high turnout: <b>{successPredict.probabilityHighAttendance ?? "?"}%</b>
+                </span>
+                <span>
+                  Expected attendance: <b>{successPredict.expectedAttendance ?? "?"}</b>
+                </span>
+                <span>
+                  Best promo day: <b>{successPredict.bestPromotionDay ?? "—"}</b>
+                </span>
+                <span>
+                  Target audience: <b>{successPredict.targetAudienceAgeRange ?? "—"}</b>
+                </span>
+              </div>
+              {successPredict.notes && successPredict.notes.length > 0 ? (
+                <ul className="myEventsAiNotes">
+                  {successPredict.notes.slice(0, 4).map((note) => (
+                    <li key={note}>{note}</li>
+                  ))}
+                </ul>
+              ) : null}
+            </div>
+          ) : null}
         </div>
       </div>
 

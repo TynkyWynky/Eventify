@@ -51,6 +51,18 @@ async function testDatabase() {
       
       if (colCheck.rows.length > 0) {
         console.log(" 'source' column exists (API sync ready)");
+
+        const metadataColCheck = await client.query(`
+          SELECT column_name
+          FROM information_schema.columns
+          WHERE table_name = 'events' AND column_name = 'source_metadata'
+        `);
+
+        if (metadataColCheck.rows.length > 0) {
+          console.log(" 'source_metadata' column exists (raw payload storage ready)");
+        } else {
+          console.log("  'source_metadata' column missing - sync will auto-add it");
+        }
       } else {
         console.log("  'source' column missing - run updated schema!");
       }
