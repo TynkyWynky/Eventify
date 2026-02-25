@@ -43,6 +43,98 @@ function toArray(value) {
   return [value];
 }
 
+function toFiniteNumber(value) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
+function normalizeNumericToken(rawToken) {
+  const token = cleanText(rawToken);
+  if (!token || !/\d/.test(token)) return null;
+
+  let text = token.replace(/\s+/g, "");
+  const commaCount = (text.match(/,/g) || []).length;
+  const dotCount = (text.match(/\./g) || []).length;
+  const hasComma = commaCount > 0;
+  const hasDot = dotCount > 0;
+
+  if (hasComma && hasDot) {
+    if (text.lastIndexOf(",") > text.lastIndexOf(".")) {
+      // 1.234,56 -> 1234.56
+      text = text.replace(/\./g, "").replace(",", ".");
+    } else {
+      // 1,234.56 -> 1234.56
+      text = text.replace(/,/g, "");
+    }
+  } else if (hasComma) {
+    if (commaCount > 1) {
+      const last = text.lastIndexOf(",");
+      const head = text.slice(0, last).replace(/,/g, "");
+      const tail = text.slice(last + 1);
+      text = tail.length <= 2 ? `${head}.${tail}` : `${head}${tail}`;
+    } else {
+      const split = text.split(",");
+      const tail = split[1] || "";
+      text = tail.length <= 2 ? text.replace(",", ".") : text.replace(/,/g, "");
+    }
+  } else if (hasDot) {
+    if (dotCount > 1) {
+      const last = text.lastIndexOf(".");
+      const head = text.slice(0, last).replace(/\./g, "");
+      const tail = text.slice(last + 1);
+      text = tail.length <= 2 ? `${head}.${tail}` : `${head}${tail}`;
+    } else {
+      const split = text.split(".");
+      const tail = split[1] || "";
+      if (tail.length > 2) {
+        text = text.replace(/\./g, "");
+      }
+    }
+  }
+
+  const parsed = Number(text);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function extractPriceNumbers(value) {
+  if (value == null) return [];
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? [value] : [];
+  }
+
+  const text = cleanText(value);
+  if (!text) return [];
+
+  const out = [];
+  const direct = normalizeNumericToken(text);
+  if (direct != null) out.push(direct);
+
+  const tokenMatches = text.match(/\d[\d.,\s]*/g) || [];
+  for (const token of tokenMatches) {
+    const parsed = normalizeNumericToken(token);
+    if (parsed != null) out.push(parsed);
+  }
+
+  const unique = new Set();
+  const deduped = [];
+  for (const amount of out) {
+    const key = String(Math.round(amount * 10000) / 10000);
+    if (unique.has(key)) continue;
+    unique.add(key);
+    deduped.push(amount);
+  }
+
+  return deduped;
+}
+
+function looksLikeFreePriceText(value) {
+  const text = cleanText(value);
+  if (!text) return false;
+  return /\b(free|gratis|gratuit(?:e)?|kostenlos|vrij(?:e)?\s*(?:toegang|entry|admission)?|no\s*charge)\b/i.test(
+    text
+  );
+}
+
 function toTypeList(value) {
   const asArray = toArray(value);
   return asArray
@@ -106,6 +198,25 @@ function extractJsonLdEventNodes(html) {
   });
 
   return out;
+}
+
+function extractEventbriteOffersFromNextData(html) {
+  const $ = cheerio.load(html);
+  const raw = cleanText($("#__NEXT_DATA__").text());
+  if (!raw) return [];
+
+  let parsed = null;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return [];
+  }
+
+  const offersSchema =
+    parsed?.props?.pageProps?.context?.seo?.offersSchema ??
+    parsed?.props?.pageProps?.seo?.offersSchema ??
+    parsed?.props?.pageProps?.event?.offersSchema;
+  return toArray(offersSchema).filter(Boolean);
 }
 
 function hostnameFromUrl(url) {
@@ -380,6 +491,33 @@ function normalizeEventDate(value) {
   return text;
 }
 
+function resolveMergedIsFree(primary, secondary, merged) {
+  const costCandidates = [
+    primary?.cost,
+    primary?.priceMin,
+    primary?.priceMax,
+    secondary?.cost,
+    secondary?.priceMin,
+    secondary?.priceMax,
+    merged?.cost,
+    merged?.priceMin,
+    merged?.priceMax,
+  ]
+    .map((value) => toFiniteNumber(value))
+    .filter((value) => value != null);
+
+  if (costCandidates.some((value) => value > 0)) return false;
+  if (costCandidates.some((value) => value === 0)) return true;
+
+  const flags = [primary?.isFree, secondary?.isFree].filter(
+    (value) => typeof value === "boolean"
+  );
+
+  if (flags.includes(false)) return false;
+  if (flags.includes(true)) return true;
+  return false;
+}
+
 function mergeEventData(baseEvent, enrichment) {
   const merged = { ...baseEvent };
 
@@ -398,6 +536,8 @@ function mergeEventData(baseEvent, enrichment) {
     "lng",
     "virtualLink",
     "cost",
+    "priceMin",
+    "priceMax",
     "currency",
     "ticketUrl",
     "genre",
@@ -423,7 +563,7 @@ function mergeEventData(baseEvent, enrichment) {
     }
   }
 
-  merged.isFree = Boolean(baseEvent.isFree || enrichment.isFree);
+  merged.isFree = resolveMergedIsFree(baseEvent, enrichment, merged);
   merged.isVirtual = Boolean(baseEvent.isVirtual || enrichment.isVirtual);
 
   const tags = new Set([...(baseEvent.tags || []), ...(enrichment.tags || [])]);
@@ -674,35 +814,98 @@ function parseOffers(offers, pageUrl, isAccessibleForFree) {
   const candidates = toArray(offers).filter(Boolean);
 
   let cost = null;
+  let priceMin = null;
+  let priceMax = null;
   let currency = null;
   let ticketUrl = null;
-  let isFree = Boolean(isAccessibleForFree === true);
   let availability = null;
+  let sawPositivePrice = false;
+  let sawZeroPrice = false;
+  let sawFreeLabel = false;
+  const positivePrices = [];
+
+  const capturePrice = (value) => {
+    const amounts = extractPriceNumbers(value);
+    for (const amount of amounts) {
+      if (amount > 0) {
+        sawPositivePrice = true;
+        positivePrices.push(amount);
+      } else if (amount === 0) {
+        sawZeroPrice = true;
+      }
+    }
+    if (typeof value === "string" && looksLikeFreePriceText(value)) {
+      sawFreeLabel = true;
+    }
+  };
+
+  const inspectOfferNode = (node, depth = 0) => {
+    if (node == null || depth > 3) return;
+
+    if (Array.isArray(node)) {
+      for (const entry of node) inspectOfferNode(entry, depth + 1);
+      return;
+    }
+
+    if (typeof node !== "object") {
+      capturePrice(node);
+      return;
+    }
+
+    currency =
+      currency ||
+      cleanText(node.priceCurrency) ||
+      cleanText(node.currency) ||
+      cleanText(node.currencyCode);
+
+    capturePrice(node.price);
+    capturePrice(node.lowPrice);
+    capturePrice(node.highPrice);
+    capturePrice(node.minPrice);
+    capturePrice(node.maxPrice);
+    capturePrice(node.amount);
+    capturePrice(node.value);
+    capturePrice(node.listPrice);
+    capturePrice(node.priceRange);
+
+    if (node.priceSpecification != null) {
+      inspectOfferNode(node.priceSpecification, depth + 1);
+    }
+    if (node.offers != null) {
+      inspectOfferNode(node.offers, depth + 1);
+    }
+  };
 
   for (const offer of candidates) {
     ticketUrl = ticketUrl || normalizeEventUrl(offer?.url, pageUrl);
-    currency = currency || cleanText(offer?.priceCurrency);
     availability = availability || cleanText(offer?.availability);
-
-    const rawPrice = cleanText(offer?.price);
-    if (rawPrice) {
-      const normalizedPrice = rawPrice.replace(/,/g, ".");
-      const numeric = Number(normalizedPrice);
-      if (Number.isFinite(numeric)) {
-        if (cost == null) cost = numeric;
-        if (numeric === 0) isFree = true;
-      } else if (/free/i.test(rawPrice)) {
-        isFree = true;
-      }
-    }
+    inspectOfferNode(offer);
   }
 
-  if (isFree && cost == null) {
+  const weakAccessibleHint = Boolean(
+    isAccessibleForFree === true && candidates.length === 0
+  );
+
+  const isFree = sawPositivePrice
+    ? false
+    : sawZeroPrice || sawFreeLabel || weakAccessibleHint;
+
+  if (positivePrices.length > 0) {
+    priceMin = Math.min(...positivePrices);
+    priceMax = Math.max(...positivePrices);
+    cost = priceMin;
+  }
+
+  if (isFree && cost == null && !sawPositivePrice) {
     cost = 0;
+    priceMin = 0;
+    priceMax = 0;
   }
 
   return {
     cost,
+    priceMin,
+    priceMax,
     currency,
     ticketUrl,
     isFree,
@@ -829,6 +1032,8 @@ function normalizeJsonLdEvent(eventNode, context) {
     virtualLink: isVirtual ? location.virtualLink || eventUrl : null,
     isFree: offers.isFree,
     cost: offers.cost,
+    priceMin: offers.priceMin,
+    priceMax: offers.priceMax,
     currency: offers.currency || "USD",
     url: eventUrl,
     ticketUrl: normalizeEventUrl(offers.ticketUrl || eventUrl, context.pageUrl),
@@ -844,6 +1049,8 @@ function normalizeJsonLdEvent(eventNode, context) {
       sourceListingUrl: cleanText(context.sourceUrl) || cleanText(context.pageUrl),
       sourceHost: context.sourceHost,
       availability: offers.availability,
+      priceMin: offers.priceMin,
+      priceMax: offers.priceMax,
       raw: eventNode,
     },
   };
@@ -1157,7 +1364,42 @@ async function scrapeSource(sourceUrl, options) {
           pool.sort(
             (a, b) => scoreEventCompleteness(b) - scoreEventCompleteness(a)
           );
-          events[i] = mergeEventData(pool[0], event);
+          let mergedEvent = mergeEventData(pool[0], event);
+
+          const fallbackOffers = extractEventbriteOffersFromNextData(detailHtml);
+          if (fallbackOffers.length > 0) {
+            const fallbackPrice = parseOffers(fallbackOffers, detailUrl, false);
+            if (
+              fallbackPrice.cost != null ||
+              fallbackPrice.priceMin != null ||
+              fallbackPrice.priceMax != null
+            ) {
+              mergedEvent = mergeEventData(mergedEvent, {
+                cost: fallbackPrice.cost,
+                priceMin: fallbackPrice.priceMin,
+                priceMax: fallbackPrice.priceMax,
+                currency: fallbackPrice.currency,
+                ticketUrl: fallbackPrice.ticketUrl,
+                isFree: fallbackPrice.isFree,
+              });
+              mergedEvent.metadata = {
+                ...(mergedEvent.metadata || {}),
+                priceMin:
+                  mergedEvent.priceMin ??
+                  fallbackPrice.priceMin ??
+                  mergedEvent.metadata?.priceMin ??
+                  null,
+                priceMax:
+                  mergedEvent.priceMax ??
+                  fallbackPrice.priceMax ??
+                  mergedEvent.metadata?.priceMax ??
+                  null,
+                eventbriteOfferSource: "next_data",
+              };
+            }
+          }
+
+          events[i] = mergedEvent;
         }
       } catch {
         // Skip per-event enrichment failures.

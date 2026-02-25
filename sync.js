@@ -199,7 +199,20 @@ function mapApiEventToDb(apiEvent) {
   const tags = parseTags(apiEvent);
 
   const parsedCost = toNumberOrNull(apiEvent.cost);
-  const isFree = toBool(apiEvent.isFree, false) || parsedCost === 0;
+  const parsedPriceMin = toNumberOrNull(
+    apiEvent.priceMin ?? apiEvent?.metadata?.priceMin
+  );
+  const parsedPriceMax = toNumberOrNull(
+    apiEvent.priceMax ?? apiEvent?.metadata?.priceMax
+  );
+  const resolvedCost =
+    parsedCost != null
+      ? parsedCost
+      : parsedPriceMin != null
+      ? parsedPriceMin
+      : parsedPriceMax;
+  const apiIsFree = toBool(apiEvent.isFree, false);
+  const isFree = resolvedCost != null ? resolvedCost === 0 : apiIsFree;
 
   const sourceMetadata =
     apiEvent && typeof apiEvent === "object"
@@ -232,7 +245,7 @@ function mapApiEventToDb(apiEvent) {
     is_virtual: toBool(apiEvent.isVirtual, false),
     virtual_link: cleanText(apiEvent.virtualLink),
     is_free: isFree,
-    cost: parsedCost != null ? parsedCost : isFree ? 0 : null,
+    cost: resolvedCost != null ? resolvedCost : isFree ? 0 : null,
     currency: cleanText(apiEvent.currency) || "USD",
     ticket_url: ticketUrl,
     organizer_id: CONFIG.SYNC_USER_ID,

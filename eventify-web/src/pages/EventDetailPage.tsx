@@ -6,6 +6,7 @@ import { getGenreFallbackImage } from "../data/events/genreImages";
 import { useAuth } from "../auth/AuthContext";
 import {
   countGoings,
+  getUserGoingEventIds,
   getViews,
   incrementView,
   isUserGoing,
@@ -13,10 +14,18 @@ import {
   toggleGoing,
 } from "../data/events/eventMetricsStore";
 import {
+  getUserFavoriteEventIds,
   isFavorite as isUserFavorite,
   subscribeFavoritesChanged,
   toggleFavorite as toggleUserFavorite,
 } from "../data/events/eventFavoritesStore";
+import {
+  DEFAULT_USER_LAT,
+  DEFAULT_USER_LNG,
+  fetchAiGenrePredict,
+  fetchAiRecommendations,
+  toAiEventPayload,
+} from "../data/events/aiClient";
 
 import { MapContainer, TileLayer, Marker, Popup } from "react-leaflet";
 import L from "leaflet";
@@ -36,6 +45,10 @@ function safeNum(n: unknown, fallback: number) {
   return Number.isFinite(v) ? v : fallback;
 }
 
+function dedupeIds(values: string[]) {
+  return Array.from(new Set(values.filter(Boolean)));
+}
+
 type SetlistItem = {
   id?: string | null;
   eventDate?: string | null;
@@ -51,6 +64,29 @@ type SetlistsResponse = {
   error?: string;
   items?: SetlistItem[];
 };
+
+type EnrichResponse = {
+  ok: boolean;
+  error?: string;
+  event?: {
+    description?: string | null;
+    url?: string | null;
+    ticketUrl?: string | null;
+    artistName?: string | null;
+    start?: string | null;
+    cost?: number | null;
+    priceMin?: number | null;
+    priceMax?: number | null;
+    currency?: string | null;
+    isFree?: boolean | null;
+    metadata?: {
+      priceMin?: number | null;
+      priceMax?: number | null;
+    } | null;
+  };
+};
+
+type HttpStatusError = Error & { status?: number };
 
 function getApiBaseUrl() {
   const raw = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.trim();
@@ -72,6 +108,62 @@ function formatStartIso(startIso?: string | null) {
   });
 }
 
+function normalizeComparable(text: string) {
+  return text
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+function sanitizeDetailDescription(
+  description: string,
+  options: { artistName?: string; startLabel?: string }
+) {
+  const raw = (description || "").replace(/\s+/g, " ").trim();
+  if (!raw) return null;
+
+  const artist = normalizeComparable(options.artistName || "");
+  const start = normalizeComparable(options.startLabel || "");
+  const parts = raw
+    .split(/(?<=[.!?])\s+|[\r\n]+/)
+    .map((part) => part.trim())
+    .filter(Boolean);
+
+  const filtered = parts.filter((part) => {
+    const norm = normalizeComparable(part);
+    if (!norm) return false;
+    if (norm === "tickets available online") return false;
+    if (/^starts? /.test(norm)) return false;
+    if (start && norm === start) return false;
+
+    if (artist) {
+      if (norm === artist) return false;
+      const stripped = norm.replace(/^(artist|featuring|feat|ft|with|avec)\s+/, "").trim();
+      if (stripped === artist) return false;
+    }
+
+    return true;
+  });
+
+  const cleaned = filtered.join(" ").trim();
+  return cleaned || null;
+}
+
+function toPercentLabel(value?: number | null) {
+  if (typeof value !== "number" || !Number.isFinite(value)) return null;
+  return `${Math.round(value * 100)}%`;
+}
+
+function getMatchLevel(score: number | null) {
+  if (typeof score !== "number" || !Number.isFinite(score)) return null;
+  if (score >= 0.75) return "strong";
+  if (score >= 0.55) return "decent";
+  return "weak";
+}
+
 export default function EventDetailPage() {
   const { eventId } = useParams();
   const { user } = useAuth();
@@ -90,7 +182,22 @@ export default function EventDetailPage() {
   const [setlists, setSetlists] = useState<SetlistItem[]>([]);
   const [setlistsLoading, setSetlistsLoading] = useState(false);
   const [setlistsError, setSetlistsError] = useState<string | null>(null);
+  const [hideSetlistsSection, setHideSetlistsSection] = useState(false);
   const [heroImageUrl, setHeroImageUrl] = useState<string>("");
+  const [tmEnrichAttemptedSourceId, setTmEnrichAttemptedSourceId] = useState<string | null>(null);
+  const [aiInsightsLoading, setAiInsightsLoading] = useState(false);
+  const [aiInsightsError, setAiInsightsError] = useState<string | null>(null);
+  const [aiReasons, setAiReasons] = useState<string[]>([]);
+  const [aiScore, setAiScore] = useState<number | null>(null);
+  const [aiComponents, setAiComponents] = useState<{
+    genreMatch?: number;
+    distance?: number;
+    popularity?: number;
+    similarity?: number;
+  } | null>(null);
+  const [aiGenrePredictions, setAiGenrePredictions] = useState<
+    Array<{ genre: string; confidence: number }>
+  >([]);
 
   useEffect(() => {
     if (!eventId) return;
@@ -146,11 +253,16 @@ export default function EventDetailPage() {
   }, [eventId, user]);
 
   useEffect(() => {
+    setTmEnrichAttemptedSourceId(null);
+  }, [eventId]);
+
+  useEffect(() => {
     const artist = event?.artistName?.trim();
     if (!artist) {
       setSetlists([]);
       setSetlistsError(null);
       setSetlistsLoading(false);
+      setHideSetlistsSection(false);
       return;
     }
 
@@ -161,19 +273,42 @@ export default function EventDetailPage() {
 
     setSetlistsLoading(true);
     setSetlistsError(null);
+    setHideSetlistsSection(false);
 
     fetch(url.toString(), { signal: controller.signal })
       .then(async (res) => {
         if (!res.ok) {
-          throw new Error(`Setlists request failed (${res.status})`);
+          const statusError = new Error(
+            `Setlists request failed (${res.status})`
+          ) as HttpStatusError;
+          statusError.status = res.status;
+          throw statusError;
         }
         const data = (await res.json()) as SetlistsResponse;
         if (!data.ok) throw new Error(data.error || "Could not fetch setlists");
         setSetlists((data.items || []).slice(0, 5));
+        setHideSetlistsSection(false);
       })
       .catch((err: unknown) => {
         if (err instanceof DOMException && err.name === "AbortError") return;
+
+        const maybeStatus =
+          typeof err === "object" &&
+          err != null &&
+          "status" in err &&
+          typeof (err as { status?: unknown }).status === "number"
+            ? Number((err as { status?: number }).status)
+            : null;
+
+        if (maybeStatus === 500) {
+          setSetlists([]);
+          setSetlistsError(null);
+          setHideSetlistsSection(true);
+          return;
+        }
+
         setSetlists([]);
+        setHideSetlistsSection(false);
         setSetlistsError(err instanceof Error ? err.message : String(err));
       })
       .finally(() => {
@@ -182,6 +317,141 @@ export default function EventDetailPage() {
 
     return () => controller.abort();
   }, [event?.artistName]);
+
+  useEffect(() => {
+    if (!event || !eventId) {
+      setAiInsightsLoading(false);
+      setAiInsightsError(null);
+      setAiReasons([]);
+      setAiScore(null);
+      setAiComponents(null);
+      setAiGenrePredictions([]);
+      return;
+    }
+
+    const controller = new AbortController();
+    setAiInsightsLoading(true);
+    setAiInsightsError(null);
+
+    (async () => {
+      const interestedCount = countGoings(eventId);
+      const eventPayload = toAiEventPayload(event, {
+        interestedCount,
+        peerInterestedCount: interestedCount,
+      });
+
+      const likedPayload: Array<Record<string, unknown>> = [];
+      const preferredGenreCounts = new Map<string, number>();
+      for (const tag of event.tags) {
+        if (!tag || tag === "All") continue;
+        preferredGenreCounts.set(tag, (preferredGenreCounts.get(tag) ?? 0) + 1);
+      }
+
+      if (user) {
+        const favoriteIds = getUserFavoriteEventIds(user.id);
+        const goingIds = getUserGoingEventIds(user.id);
+        const favoriteSet = new Set(favoriteIds);
+        const goingSet = new Set(goingIds);
+        const ids = dedupeIds([...favoriteIds, ...goingIds]).slice(0, 16);
+
+        for (const id of ids) {
+          if (controller.signal.aborted) return;
+          const liked = await eventsRepo.getById(id, { signal: controller.signal });
+          if (!liked || liked.id === event.id) continue;
+
+          likedPayload.push(
+            toAiEventPayload(liked, {
+              interestedCount: countGoings(liked.id),
+              peerInterestedCount: countGoings(liked.id),
+              preferenceWeight:
+                (favoriteSet.has(liked.id) ? 1.7 : 0) +
+                  (goingSet.has(liked.id) ? 1.3 : 0) || 1,
+            })
+          );
+
+          for (const tag of liked.tags) {
+            if (!tag || tag === "All") continue;
+            preferredGenreCounts.set(tag, (preferredGenreCounts.get(tag) ?? 0) + 2);
+          }
+        }
+      }
+
+      const preferredGenres = [...preferredGenreCounts.entries()]
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 5)
+        .map(([genre]) => genre);
+
+      const userProfile = {
+        preferredGenres,
+        likedEvents: likedPayload,
+        lat: DEFAULT_USER_LAT,
+        lng: DEFAULT_USER_LNG,
+        maxDistanceKm: 30,
+        peerInterestByEventId: { [eventId]: interestedCount },
+      };
+
+      const [genreRes, recRes] = await Promise.all([
+        fetchAiGenrePredict(
+          {
+            events: [eventPayload],
+            topK: 3,
+            enrichMissingGenres: true,
+          },
+          controller.signal
+        ),
+        fetchAiRecommendations(
+          {
+            events: [eventPayload],
+            userProfile,
+            limit: 1,
+          },
+          controller.signal
+        ),
+      ]);
+
+      if (controller.signal.aborted) return;
+      if (!genreRes.ok || !recRes.ok) {
+        throw new Error(
+          genreRes.error || recRes.error || "AI insights endpoints failed."
+        );
+      }
+
+      const predictions = genreRes.events?.[0]?.predictions || [];
+      const rec = recRes.events?.[0]?.aiRecommendation;
+
+      setAiGenrePredictions(
+        predictions.map((entry) => ({
+          genre: entry.genre,
+          confidence: entry.confidence,
+        }))
+      );
+      setAiReasons(Array.isArray(rec?.reasons) ? rec.reasons.slice(0, 4) : []);
+      setAiScore(typeof rec?.score === "number" ? rec.score : null);
+      setAiComponents(
+        rec?.components && typeof rec.components === "object"
+          ? {
+              genreMatch: rec.components.genreMatch,
+              distance: rec.components.distance,
+              popularity: rec.components.popularity,
+              similarity: rec.components.similarity,
+            }
+          : null
+      );
+    })()
+      .catch((err: unknown) => {
+        if (err instanceof DOMException && err.name === "AbortError") return;
+        setAiInsightsError(err instanceof Error ? err.message : String(err));
+        setAiReasons([]);
+        setAiScore(null);
+        setAiComponents(null);
+        setAiGenrePredictions([]);
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setAiInsightsLoading(false);
+      });
+
+    return () => controller.abort();
+  }, [event, eventId, user?.id]);
 
   useEffect(() => {
     if (!event) {
@@ -210,6 +480,117 @@ export default function EventDetailPage() {
       active = false;
     };
   }, [event]);
+
+  useEffect(() => {
+    if (!event) return;
+    if ((event.source || "").toLowerCase() !== "ticketmaster") return;
+    const sourceId = (event.sourceId || "").trim();
+    if (!sourceId) return;
+    if (tmEnrichAttemptedSourceId === sourceId) return;
+
+    const startLabelForCheck = formatStartIso(event.startIso) || event.dateLabel;
+    const hasMeaningfulDescription = Boolean(
+      sanitizeDetailDescription(event.description || "", {
+        artistName: event.artistName,
+        startLabel: startLabelForCheck,
+      })
+    );
+    const hasPriceData =
+      event.isFree === true ||
+      typeof event.priceMin === "number" ||
+      typeof event.priceMax === "number" ||
+      typeof event.cost === "number";
+
+    if (hasMeaningfulDescription && hasPriceData) return;
+
+    setTmEnrichAttemptedSourceId(sourceId);
+    const controller = new AbortController();
+    const base = getApiBaseUrl();
+    const url = new URL("events/enrich", base.endsWith("/") ? base : `${base}/`);
+    url.searchParams.set("source", "ticketmaster");
+    url.searchParams.set("sourceId", sourceId);
+
+    fetch(url.toString(), { signal: controller.signal })
+      .then(async (res) => {
+        if (!res.ok) throw new Error(`Enrichment request failed (${res.status})`);
+        const payload = (await res.json()) as EnrichResponse;
+        if (!payload.ok) throw new Error(payload.error || "Enrichment failed");
+        const enriched = payload.event || {};
+
+        setEvent((prev) => {
+          if (!prev || prev.id !== event.id) return prev;
+
+          const priceMin =
+            typeof enriched.priceMin === "number"
+              ? enriched.priceMin
+              : typeof enriched.metadata?.priceMin === "number"
+              ? enriched.metadata.priceMin
+              : prev.priceMin ?? null;
+          const priceMax =
+            typeof enriched.priceMax === "number"
+              ? enriched.priceMax
+              : typeof enriched.metadata?.priceMax === "number"
+              ? enriched.metadata.priceMax
+              : prev.priceMax ?? null;
+          const cost =
+            typeof enriched.cost === "number" ? enriched.cost : prev.cost ?? null;
+          const enrichedPriceMin =
+            typeof enriched.priceMin === "number"
+              ? enriched.priceMin
+              : typeof enriched.metadata?.priceMin === "number"
+              ? enriched.metadata.priceMin
+              : null;
+          const enrichedPriceMax =
+            typeof enriched.priceMax === "number"
+              ? enriched.priceMax
+              : typeof enriched.metadata?.priceMax === "number"
+              ? enriched.metadata.priceMax
+              : null;
+          const enrichedHasPaidPrice =
+            (typeof enriched.cost === "number" && enriched.cost > 0) ||
+            (typeof enrichedPriceMin === "number" && enrichedPriceMin > 0) ||
+            (typeof enrichedPriceMax === "number" && enrichedPriceMax > 0);
+          const nextIsFree = enrichedHasPaidPrice
+            ? false
+            : enriched.isFree === true
+            ? true
+            : enriched.isFree === false
+            ? false
+            : prev.isFree;
+
+          return {
+            ...prev,
+            description:
+              typeof enriched.description === "string" &&
+              enriched.description.trim().length > 0
+                ? enriched.description.trim()
+                : prev.description,
+            sourceUrl:
+              (typeof enriched.ticketUrl === "string" && enriched.ticketUrl.trim()) ||
+              (typeof enriched.url === "string" && enriched.url.trim()) ||
+              prev.sourceUrl,
+            artistName:
+              (typeof enriched.artistName === "string" && enriched.artistName.trim()) ||
+              prev.artistName,
+            startIso:
+              (typeof enriched.start === "string" && enriched.start.trim()) ||
+              prev.startIso,
+            cost,
+            currency:
+              (typeof enriched.currency === "string" && enriched.currency.trim()) ||
+              prev.currency,
+            isFree: nextIsFree,
+            priceMin,
+            priceMax,
+          };
+        });
+      })
+      .catch((err: unknown) => {
+        if (err instanceof DOMException && err.name === "AbortError") return;
+      });
+
+    return () => controller.abort();
+  }, [event, tmEnrichAttemptedSourceId]);
 
   const mapPos = useMemo(() => {
     if (!event) return [50.8466, 4.3528] as [number, number];
@@ -274,6 +655,27 @@ export default function EventDetailPage() {
   const fullAddress = `${event.addressLine}, ${event.postalCode} ${event.city}, ${event.country}`;
   const googleMapsUrl = `https://www.google.com/maps?q=${event.latitude},${event.longitude}`;
   const startLabel = formatStartIso(event.startIso) || event.dateLabel;
+  const cleanDescription = sanitizeDetailDescription(event.description, {
+    artistName: event.artistName,
+    startLabel,
+  });
+  const matchLevel = getMatchLevel(aiScore);
+  const componentSummary = [
+    aiComponents?.genreMatch != null
+      ? `Genre ${toPercentLabel(aiComponents.genreMatch)}`
+      : null,
+    aiComponents?.distance != null
+      ? `Distance ${toPercentLabel(aiComponents.distance)}`
+      : null,
+    aiComponents?.similarity != null
+      ? `Similarity ${toPercentLabel(aiComponents.similarity)}`
+      : null,
+    aiComponents?.popularity != null
+      ? `Popularity ${toPercentLabel(aiComponents.popularity)}`
+      : null,
+  ]
+    .filter(Boolean)
+    .join(" • ");
 
   return (
     <div className="eventDetailPage">
@@ -303,12 +705,6 @@ export default function EventDetailPage() {
             <span>{startLabel}</span>
             <span className="dotSep">•</span>
             <span>{event.city}</span>
-            {event.source ? (
-              <>
-                <span className="dotSep">•</span>
-                <span>{event.source}</span>
-              </>
-            ) : null}
           </div>
 
           <div className="eventDetailTags">
@@ -386,18 +782,59 @@ export default function EventDetailPage() {
           <div className="eventDetailText">
             <b>Starts:</b> {startLabel}
           </div>
-          {event.source ? (
-            <div className="eventDetailText">
-              <b>Source:</b> {event.source}
-            </div>
+          {cleanDescription ? (
+            <div className="eventDetailText">{cleanDescription}</div>
           ) : null}
-          <div className="eventDetailText">{event.description}</div>
-          {event.sourceUrl ? (
-            <div className="eventDetailText">
-              <a href={event.sourceUrl} target="_blank" rel="noreferrer">
-                Open official event page
-              </a>
-            </div>
+        </div>
+
+        <div className="eventDetailCard">
+          <div className="eventDetailCardTitle">AI Insights</div>
+          {aiInsightsLoading ? (
+            <div className="sectionHint">Building explainability…</div>
+          ) : null}
+          {aiInsightsError ? (
+            <div className="sectionHint">AI unavailable: {aiInsightsError}</div>
+          ) : null}
+          {!aiInsightsLoading && !aiInsightsError ? (
+            <>
+              {typeof aiScore === "number" ? (
+                <div className="eventDetailText">
+                  <b>Match score:</b> {Math.round(aiScore * 100)}%
+                  {matchLevel ? ` (${matchLevel} match)` : ""}
+                </div>
+              ) : null}
+              {componentSummary ? (
+                <div className="eventDetailText">
+                  <b>Signal breakdown:</b> {componentSummary}
+                </div>
+              ) : null}
+              {aiReasons.length > 0 ? (
+                <div className="eventDetailText">
+                  <b>Why this score?</b>
+                  <ul className="eventAiReasonList">
+                    {aiReasons.map((reason) => (
+                      <li key={reason}>{reason}</li>
+                    ))}
+                  </ul>
+                </div>
+              ) : (
+                <div className="eventDetailText">
+                  AI recommendation reasons are not available for this event yet.
+                </div>
+              )}
+              {aiGenrePredictions.length > 0 ? (
+                <div className="eventDetailText">
+                  <b>Predicted genres:</b>{" "}
+                  {aiGenrePredictions
+                    .slice(0, 3)
+                    .map(
+                      (item) =>
+                        `${item.genre} (${Math.round(item.confidence * 100)}%)`
+                    )
+                    .join(" • ")}
+                </div>
+              ) : null}
+            </>
           ) : null}
         </div>
 
@@ -427,7 +864,7 @@ export default function EventDetailPage() {
           </div>
         </div>
 
-        {event.artistName ? (
+        {event.artistName && !hideSetlistsSection ? (
           <div className="eventDetailCard">
             <div className="eventDetailCardTitle">Recent Setlists</div>
             <div className="eventDetailText">

@@ -80,3 +80,71 @@ De backend kan nu events uit extra websites scrapen en samenvoegen met Ticketmas
    - `http://localhost:3000/events?includeScraped=1`
 4. Start sync:
    - `npm run sync:once`
+
+---
+
+## AI features (MVP)
+
+Nieuwe backend endpoints voor explainable AI-functionaliteit:
+
+- `POST /ai/recommendations`
+  - Explainable ranking per event met componenten:
+    - `genreMatch`, `distance`, `popularity`, `similarity`
+  - Geeft per event redenen terug, bv:
+    - `Je houdt van indie / rock`
+    - `Het is op 6 km van je locatie`
+    - `3 gelijkaardige events heb je al geliket`
+
+- `POST /ai/genre-predict`
+  - Predict automatisch genre(s) op basis van titel/description/tags
+  - Inclusief `confidence` score
+  - Ondersteunt ook batch-predictie voor een events-array
+
+- `POST /ai/radar`
+  - Detecteert labels:
+    - `Hidden Gem`
+    - `Trending Local`
+  - Gebaseerd op relevantie, zichtbaarheid, freshness en trend-velocity
+
+- `POST /ai/taste-dna`
+  - Bouwt een smaakprofiel, bv:
+    - `48% Indie Explorer, 44% Jazz Drifter, ...`
+  - Gebruikt likes, genre-voorkeuren, afstand en tijdspatroon
+
+- `POST /ai/success-predictor`
+  - Voor organizer events:
+    - `probabilityHighAttendance`
+    - `bestPromotionDay`
+    - `targetAudienceAgeRange`
+  - Gebaseerd op vergelijkbare historische events + timing/prijs/locatie
+
+### Voorbeeld payloads
+
+```json
+POST /ai/recommendations
+{
+  "userProfile": {
+    "preferredGenres": ["indie", "rock"],
+    "lat": 50.8503,
+    "lng": 4.3517,
+    "maxDistanceKm": 30,
+    "likedEvents": []
+  },
+  "query": { "classificationName": "music", "maxResults": 120 },
+  "limit": 20
+}
+```
+
+```json
+POST /ai/success-predictor
+{
+  "draftEvent": {
+    "title": "New Indie Showcase",
+    "description": "Indie and folk artists live",
+    "genre": "Indie",
+    "city": "Brussels",
+    "start": "2026-04-17T19:30:00Z",
+    "cost": 18
+  }
+}
+```

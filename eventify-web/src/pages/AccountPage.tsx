@@ -4,6 +4,7 @@ import type { EventItem } from "../events/eventsStore";
 import { eventsRepo } from "../data/events";
 import { useAuth } from "../auth/AuthContext";
 import {
+  countGoingsForEvents,
   getUserGoingEventIds,
   subscribeMetricsChanged,
 } from "../data/events/eventMetricsStore";
@@ -11,6 +12,13 @@ import {
   getUserFavoriteEventIds,
   subscribeFavoritesChanged,
 } from "../data/events/eventFavoritesStore";
+import {
+  DEFAULT_USER_LAT,
+  DEFAULT_USER_LNG,
+  fetchAiTasteDna,
+  toAiEventPayload,
+  type AiTasteDnaResponse,
+} from "../data/events/aiClient";
 
 //type Friend = { id: string; name: string; status: string };
 
@@ -57,6 +65,38 @@ async function fetchEventsByIds(ids: string[], signal: AbortSignal) {
   return ids.map((id) => map.get(id)).filter(Boolean) as EventItem[];
 }
 
+function dedupeEventsById(items: EventItem[]) {
+  const map = new Map<string, EventItem>();
+  for (const item of items) {
+    map.set(item.id, item);
+  }
+  return [...map.values()];
+}
+
+function labelGenre(genre: string) {
+  const g = genre.trim().toLowerCase();
+  if (!g) return "Unknown";
+
+  const map: Record<string, string> = {
+    electronic: "Electronic",
+    "hip-hop": "Hip-Hop",
+    "singer-songwriter": "Singer-Songwriter",
+    indie: "Indie",
+    rock: "Rock",
+    pop: "Pop",
+    jazz: "Jazz",
+    blues: "Blues",
+    folk: "Folk",
+    metal: "Metal",
+    soul: "R&B",
+    classical: "Classical",
+    latin: "Latin",
+    world: "World",
+  };
+
+  return map[g] || genre;
+}
+
 export default function AccountPage() {
   const { user } = useAuth();
   const userId = user?.id ?? null;
@@ -89,6 +129,26 @@ export default function AccountPage() {
     const sorted = [...counts.entries()].sort((a, b) => b[1] - a[1]);
     return sorted.slice(0, 8).map(([tag]) => tag);
   }, [favoriteEvents, goingEvents]);
+
+  const likedEvents = useMemo(
+    () => dedupeEventsById([...favoriteEvents, ...goingEvents]),
+    [favoriteEvents, goingEvents]
+  );
+
+  const [taste, setTaste] = useState<AiTasteDnaResponse | null>(null);
+  const [tasteLoading, setTasteLoading] = useState(false);
+  const [tasteError, setTasteError] = useState<string | null>(null);
+
+  const tasteSampleSize = taste?.inferredPreferences?.sampleSize ?? 0;
+  const hasStrongTasteSignal = tasteSampleSize >= 3;
+  const topTasteGenres = Array.from(
+    new Set(
+      (taste?.inferredPreferences?.topGenres || [])
+        .slice(0, 4)
+        .map((genre) => labelGenre(genre))
+        .filter(Boolean)
+    )
+  );
 
   useEffect(() => {
     if (!userId) return;
@@ -147,6 +207,78 @@ export default function AccountPage() {
       unsub();
     };
   }, [userId]);
+
+  useEffect(() => {
+    if (!userId) {
+      setTaste(null);
+      setTasteLoading(false);
+      setTasteError(null);
+      return;
+    }
+
+    const controller = new AbortController();
+
+    const refreshTaste = async () => {
+      if (likedEvents.length === 0) {
+        setTaste(null);
+        setTasteError(null);
+        setTasteLoading(false);
+        return;
+      }
+
+      try {
+        setTasteLoading(true);
+        setTasteError(null);
+
+        const favoriteSet = new Set(favoriteEvents.map((event) => event.id));
+        const goingSet = new Set(goingEvents.map((event) => event.id));
+        const goingsMap = countGoingsForEvents(likedEvents.map((event) => event.id));
+
+        const likedPayload = likedEvents.map((event) =>
+          toAiEventPayload(event, {
+            interestedCount: goingsMap[event.id] ?? 0,
+            peerInterestedCount: goingsMap[event.id] ?? 0,
+            preferenceWeight:
+              (favoriteSet.has(event.id) ? 1.7 : 0) +
+                (goingSet.has(event.id) ? 1.3 : 0) ||
+              1,
+          })
+        );
+
+        const response = await fetchAiTasteDna(
+          {
+            userProfile: {
+              preferredGenres: preferredTags,
+              likedEvents: likedPayload,
+              lat: DEFAULT_USER_LAT,
+              lng: DEFAULT_USER_LNG,
+              maxDistanceKm: 35,
+              peerInterestByEventId: goingsMap,
+            },
+            likedEventKeys: likedEvents.map((event) => event.id),
+            bootstrapFromFeed: false,
+          },
+          controller.signal
+        );
+
+        if (controller.signal.aborted) return;
+        if (!response.ok) {
+          throw new Error(response.error || "Taste request failed.");
+        }
+
+        setTaste(response);
+      } catch (err: unknown) {
+        if (err instanceof DOMException && err.name === "AbortError") return;
+        setTaste(null);
+        setTasteError(err instanceof Error ? err.message : String(err));
+      } finally {
+        if (!controller.signal.aborted) setTasteLoading(false);
+      }
+    };
+
+    refreshTaste();
+    return () => controller.abort();
+  }, [favoriteEvents, goingEvents, likedEvents, preferredTags, userId]);
 
   if (!user) return null;
 
@@ -227,24 +359,60 @@ export default function AccountPage() {
 
         <section className="accountSection">
           <div className="accountSectionHeader">
-            <div className="accountSectionTitle">Type preferences</div>
+            <div className="accountSectionTitle">Taste</div>
             <div className="accountSectionHint">
-              Based on your Save + Going behavior
+              AI profile based on your Save + Going behavior
             </div>
           </div>
 
-          <div className="accountChips">
-            {preferredTags.length === 0 ? (
-              <div className="accountSectionHint">
-                No signal yet. Save / Join events to build your taste profile.
+          <div className="accountList">
+            {tasteLoading ? (
+              <div className="accountSectionHint">Building your Taste…</div>
+            ) : null}
+
+            {tasteError ? (
+              <div className="accountSectionHint">Error: {tasteError}</div>
+            ) : null}
+
+            {!tasteLoading && !tasteError && taste?.summary && hasStrongTasteSignal ? (
+              <>
+                <div className="aiTasteSummary">{taste.summary}</div>
+                <div className="aiTasteMeta">
+                  Top genres: {topTasteGenres.join(", ") || "—"}
+                </div>
+                <div className="accountChips">
+                  {(taste.archetypes || []).slice(0, 3).map((entry) => (
+                    <span key={entry.label} className="accountChip">
+                      {entry.percentage}% {entry.label}
+                    </span>
+                  ))}
+                </div>
+              </>
+            ) : null}
+
+            {!tasteLoading && !tasteError && (!taste?.summary || !hasStrongTasteSignal) ? (
+              <div className="accountChips">
+                {preferredTags.length > 0 ? (
+                  preferredTags.map((tag) => (
+                    <span key={tag} className="accountChip">
+                      {tag}
+                    </span>
+                  ))
+                ) : null}
               </div>
-            ) : (
-              preferredTags.map((p) => (
-                <span key={p} className="accountChip">
-                  {p}
-                </span>
-              ))
-            )}
+            ) : null}
+
+            {!tasteLoading && !tasteError && preferredTags.length === 0 && !taste?.summary ? (
+              <div className="accountSectionHint">
+                No signal yet. Save / Join events to build your taste.
+              </div>
+            ) : null}
+
+            {!tasteLoading && !tasteError && tasteSampleSize > 0 && tasteSampleSize < 3 ? (
+              <div className="accountSectionHint">
+                Add a few more saved/going events for a stronger Taste signal.
+              </div>
+            ) : null}
           </div>
         </section>
 

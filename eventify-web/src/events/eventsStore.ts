@@ -1,3 +1,34 @@
+export type AiRecommendationInfo = {
+  rank?: number;
+  score?: number;
+  reasons?: string[];
+  components?: {
+    genreMatch?: number;
+    distance?: number;
+    popularity?: number;
+    similarity?: number;
+  };
+  matchedGenres?: string[];
+  distanceKm?: number | null;
+  similarLikedCount?: number;
+  peerInterestedCount?: number;
+};
+
+export type AiRadarInfo = {
+  labels?: string[];
+  hiddenGemScore?: number;
+  trendingScore?: number;
+  freshness?: number;
+  lowVisibility?: number;
+  reasons?: string[];
+};
+
+export type AiGenrePredictionInfo = {
+  genre: string;
+  confidence: number;
+  score?: number;
+};
+
 export type EventItem = {
   id: string;
   title: string;
@@ -23,6 +54,19 @@ export type EventItem = {
   sourceUrl?: string;
   artistName?: string;
   startIso?: string | null;
+  cost?: number | null;
+  currency?: string;
+  isFree?: boolean;
+  priceMin?: number | null;
+  priceMax?: number | null;
+  rawGenre?: string;
+  rawCategory?: string;
+  rawTags?: string[];
+
+  // AI metadata (optional)
+  aiRecommendation?: AiRecommendationInfo;
+  aiRadar?: AiRadarInfo;
+  aiGenrePredictions?: AiGenrePredictionInfo[];
 };
 
 export const MUSIC_STYLES: string[] = [

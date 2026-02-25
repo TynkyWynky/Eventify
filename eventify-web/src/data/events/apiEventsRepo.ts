@@ -10,6 +10,7 @@ type ApiEvent = {
   source?: string | null;
   sourceId?: string | null;
   title?: string | null;
+  description?: string | null;
   start?: string | null;
   venue?: string | null;
   city?: string | null;
@@ -19,6 +20,17 @@ type ApiEvent = {
   artistName?: string | null;
   imageUrl?: string | null;
   genre?: string | null;
+  category?: string | null;
+  tags?: string[] | null;
+  cost?: number | null;
+  priceMin?: number | null;
+  priceMax?: number | null;
+  currency?: string | null;
+  isFree?: boolean | null;
+  metadata?: {
+    priceMin?: number | null;
+    priceMax?: number | null;
+  } | null;
 };
 
 type EventsApiResponse = {
@@ -31,9 +43,59 @@ function normalize(text: string) {
   return text.trim().toLowerCase();
 }
 
+function normalizeComparable(text: string) {
+  return normalize(text)
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+const MULTILINGUAL_REPLACEMENTS: Array<[RegExp, string]> = [
+  [/\bmusique\b|\bmuziek\b|\bmusik\b|\bmusica\b/g, " music "],
+  [/\bconcerten\b|\bconcerts\b|\bconcert\b|\bkonzert\b|\bkonzerte\b|\bconcierto\b|\bconciertos\b/g, " concert "],
+  [/\belektronisch\b|\belectronique\b|\belectronica\b/g, " electronic "],
+  [/\bhiphop\b|\bhip-hop\b/g, " hip hop "],
+  [/\bchanson\b|\bvariete\b/g, " pop "],
+  [/\bklassiek\b|\bclassique\b/g, " classical "],
+  [/\bfiesta latina\b/g, " latin "],
+  [/\bauteur-compositeur\b|\bcantautor\b/g, " singer songwriter "],
+  [/\bdrum n bass\b/g, " drum and bass "],
+];
+
+const STYLE_KEYWORDS: Array<{ style: string; keywords: string[] }> = [
+  { style: "Techno", keywords: ["techno", "industrial techno", "hard techno"] },
+  { style: "House", keywords: ["house", "deep house", "afro house"] },
+  { style: "Drum & Bass", keywords: ["drum and bass", "drum & bass", "dnb", "neurofunk"] },
+  { style: "Hip-Hop", keywords: ["hip hop", "rap", "trap", "drill"] },
+  { style: "Jazz", keywords: ["jazz", "bebop", "swing"] },
+  { style: "Metal", keywords: ["metal", "metalcore", "death metal", "thrash"] },
+  { style: "Rock", keywords: ["rock", "punk", "grunge", "garage rock"] },
+  { style: "Indie", keywords: ["indie", "alternative", "alternatif", "alternatieve", "shoegaze"] },
+  { style: "R&B", keywords: ["r&b", "rnb", "neo soul", "soul"] },
+  { style: "Pop", keywords: ["pop", "mainstream", "top 40", "chart"] },
+  { style: "Electronic", keywords: ["electronic", "electro", "edm", "trance", "dj set"] },
+];
+
+function normalizeMeaning(text: string) {
+  let out = normalize(text)
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9+&\s-]/g, " ");
+  for (const [regex, replacement] of MULTILINGUAL_REPLACEMENTS) {
+    out = out.replace(regex, replacement);
+  }
+  return out.replace(/\s+/g, " ").trim();
+}
+
 function safeNum(v: unknown, fallback: number) {
   const n = typeof v === "number" ? v : Number(v);
   return Number.isFinite(n) ? n : fallback;
+}
+
+function toNumberOrNull(v: unknown) {
+  const n = typeof v === "number" ? v : Number(v);
+  return Number.isFinite(n) ? n : null;
 }
 
 function toEnvNum(raw: string | undefined, fallback: number) {
@@ -69,21 +131,6 @@ function formatDateLabel(start: string | null | undefined) {
   });
 }
 
-function formatReadableStart(start: string | null | undefined) {
-  if (!start) return null;
-  const d = new Date(start);
-  if (Number.isNaN(d.getTime())) return null;
-  return d.toLocaleString(undefined, {
-    weekday: "short",
-    day: "2-digit",
-    month: "short",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  });
-}
-
 function haversineKm(lat1: number, lng1: number, lat2: number, lng2: number) {
   const toRad = (d: number) => (d * Math.PI) / 180;
   const r = 6371;
@@ -100,22 +147,24 @@ function haversineKm(lat1: number, lng1: number, lat2: number, lng2: number) {
 }
 
 function inferStyle(text: string) {
-  const t = normalize(text);
-  if (!t) return "Electronic";
+  const t = normalizeMeaning(text);
+  if (!t) return null;
 
-  if (t.includes("techno")) return "Techno";
-  if (t.includes("house")) return "House";
-  if (t.includes("drum") || t.includes("dnb")) return "Drum & Bass";
-  if (t.includes("hip hop") || t.includes("hip-hop") || t.includes("rap")) {
-    return "Hip-Hop";
+  let best: { style: string; score: number } | null = null;
+  for (const entry of STYLE_KEYWORDS) {
+    let score = 0;
+    for (const rawKeyword of entry.keywords) {
+      const keyword = normalizeMeaning(rawKeyword);
+      if (!keyword) continue;
+      if (t.includes(keyword)) {
+        score += keyword.includes(" ") ? 2.2 : 1.2;
+      }
+    }
+    if (!best || score > best.score) best = { style: entry.style, score };
   }
-  if (t.includes("jazz")) return "Jazz";
-  if (t.includes("metal")) return "Metal";
-  if (t.includes("rock")) return "Rock";
-  if (t.includes("indie")) return "Indie";
-  if (t.includes("r&b") || t.includes("rnb")) return "R&B";
-  if (t.includes("pop")) return "Pop";
-  return "Electronic";
+
+  if (!best || best.score < 1.2) return null;
+  return best.style;
 }
 
 function cleanImageUrl(url?: string | null) {
@@ -123,6 +172,26 @@ function cleanImageUrl(url?: string | null) {
   if (!value) return null;
   if (!/^https?:\/\//i.test(value)) return null;
   return value;
+}
+
+function sanitizeDescription(description?: string | null, artistName?: string | null) {
+  const raw = (description || "").replace(/\s+/g, " ").trim();
+  if (!raw) return null;
+
+  const normalized = normalizeComparable(raw);
+  const artist = normalizeComparable(artistName || "");
+
+  if (!normalized) return null;
+  if (normalized === "tickets available online") return null;
+  if (/^starts? /.test(normalized)) return null;
+
+  if (artist) {
+    if (normalized === artist) return null;
+    const stripped = normalized.replace(/^(artist|featuring|feat|ft|with|avec)\s+/, "").trim();
+    if (stripped === artist) return null;
+  }
+
+  return raw;
 }
 
 function matchesQuery(event: EventItem, query: string) {
@@ -202,23 +271,42 @@ function mapApiEventToItem(
     haversineKm(opts.originLat, opts.originLng, lat, lng) * 10
   ) / 10;
 
-  const inferred = inferStyle(`${title} ${apiEvent.artistName || ""}`);
-  const inferredFromGenre = inferStyle(apiEvent.genre || "");
+  const inferred = inferStyle(
+    [title, apiEvent.artistName || "", apiEvent.description || ""].filter(Boolean).join(" ")
+  );
+  const inferredFromGenre = inferStyle(
+    [apiEvent.genre, apiEvent.category, ...(apiEvent.tags || [])].filter(Boolean).join(" ")
+  );
   const style =
     opts.forcedStyle && opts.forcedStyle !== "All" && MUSIC_STYLES.includes(opts.forcedStyle)
       ? opts.forcedStyle
-      : inferredFromGenre !== "Electronic"
-      ? inferredFromGenre
-      : inferred;
+      : inferredFromGenre || inferred || "Electronic";
 
   const imageUrl = cleanImageUrl(apiEvent.imageUrl) || getGenreFallbackImage(style);
 
-  const readableStart = formatReadableStart(apiEvent.start);
-  const descriptionParts = [
-    apiEvent.artistName ? `Artist: ${apiEvent.artistName}.` : null,
-    readableStart ? `Starts: ${readableStart}.` : null,
-    apiEvent.url ? `Tickets available online.` : null,
-  ].filter(Boolean);
+  const remoteDescription = sanitizeDescription(apiEvent.description, apiEvent.artistName);
+  const fallbackDescription = apiEvent.url ? "" : "Event details coming soon.";
+  const priceMin = toNumberOrNull(
+    apiEvent.priceMin ?? apiEvent.metadata?.priceMin
+  );
+  const priceMax = toNumberOrNull(
+    apiEvent.priceMax ?? apiEvent.metadata?.priceMax
+  );
+  const cost = toNumberOrNull(apiEvent.cost);
+  const normalizedPriceMin = priceMin ?? cost;
+  const normalizedPriceMax = priceMax ?? cost;
+  const currency = apiEvent.currency?.trim() || undefined;
+  const hasPaidPrice =
+    (typeof normalizedPriceMin === "number" && normalizedPriceMin > 0) ||
+    (typeof normalizedPriceMax === "number" && normalizedPriceMax > 0) ||
+    (typeof cost === "number" && cost > 0);
+  const hasZeroPriceSignal =
+    normalizedPriceMin === 0 || normalizedPriceMax === 0 || cost === 0;
+  const isFree = !hasPaidPrice && (apiEvent.isFree === true || hasZeroPriceSignal);
+
+  const rawTags = (apiEvent.tags || [])
+    .map((tag) => (typeof tag === "string" ? tag.trim() : ""))
+    .filter(Boolean);
 
   return {
     id,
@@ -235,12 +323,20 @@ function mapApiEventToItem(
     country: "—",
     latitude: lat,
     longitude: lng,
-    description: descriptionParts.join(" ") || "Live music event.",
+    description: remoteDescription || fallbackDescription,
     source,
     sourceId: apiEvent.sourceId || undefined,
     sourceUrl: apiEvent.url || undefined,
     artistName: apiEvent.artistName || undefined,
     startIso: apiEvent.start || null,
+    cost,
+    currency,
+    isFree,
+    priceMin: normalizedPriceMin,
+    priceMax: normalizedPriceMax,
+    rawGenre: apiEvent.genre?.trim() || undefined,
+    rawCategory: apiEvent.category?.trim() || undefined,
+    rawTags: rawTags.length > 0 ? rawTags : undefined,
   };
 }
 

@@ -10,6 +10,7 @@ import {
 } from "../data/events/organizerEventsStore";
 import { useAuth } from "../auth/AuthContext";
 import {
+  countGoingsForEvents,
   getUserGoingEventIds,
   subscribeMetricsChanged,
 } from "../data/events/eventMetricsStore";
@@ -17,6 +18,12 @@ import {
   getUserFavoriteEventIds,
   subscribeFavoritesChanged,
 } from "../data/events/eventFavoritesStore";
+import {
+  DEFAULT_USER_LAT,
+  DEFAULT_USER_LNG,
+  fetchAiRecommendations,
+  toAiEventPayload,
+} from "../data/events/aiClient";
 
 function clamp(n: number, min: number, max: number) {
   return Math.min(max, Math.max(min, n));
@@ -29,10 +36,17 @@ function parseKm(raw: string | null, fallback: number) {
   return clamp(n, 1, 100);
 }
 
+function dedupeIds(values: string[]) {
+  return Array.from(new Set(values.filter(Boolean)));
+}
+
 function EventCard({ event, search }: { event: EventItem; search: string }) {
-  const sourceLabel = event.source ? `source: ${event.source}` : null;
+  const reasonList = Array.isArray(event.aiRecommendation?.reasons)
+    ? event.aiRecommendation?.reasons
+    : [];
+  const aiReason =
+    reasonList.find((reason) => !/\bkm\b/i.test(reason)) || reasonList[0] || null;
   const metaParts = [
-    sourceLabel,
     event.artistName || null,
     event.venue,
     `${event.distanceKm.toFixed(1)} km`,
@@ -60,6 +74,11 @@ function EventCard({ event, search }: { event: EventItem; search: string }) {
               {event.title}
             </div>
             <div className="eventCardMeta">{metaParts.join(" • ")}</div>
+            {aiReason ? (
+              <div className="eventCardAiReason" title={aiReason}>
+                {aiReason}
+              </div>
+            ) : null}
           </div>
           <div className="eventFooterRight">{event.dateLabel}</div>
         </div>
@@ -135,11 +154,6 @@ export default function EventDashboardPage() {
     return () => controller.abort();
   }, [maxDistanceKm, q, selectedStyle, reloadTick]);
 
-  const trendingEvents = useMemo(
-    () => events.filter((e) => Boolean(e.trending)),
-    [events]
-  );
-
   const [signalsTick, setSignalsTick] = useState(0);
   useEffect(() => {
     if (!userId) return;
@@ -157,7 +171,10 @@ export default function EventDashboardPage() {
 
   const [prefTags, setPrefTags] = useState<string[]>([]);
   useEffect(() => {
-    if (!userId) return;
+    if (!userId) {
+      setPrefTags([]);
+      return;
+    }
 
     const controller = new AbortController();
 
@@ -201,7 +218,7 @@ export default function EventDashboardPage() {
     return () => controller.abort();
   }, [userId, signalsTick]);
 
-  const recommendedEvents = useMemo(() => {
+  const fallbackRecommendedEvents = useMemo(() => {
     const _tick = signalsTick; 
     void _tick;
 
@@ -229,6 +246,159 @@ export default function EventDashboardPage() {
     const sorted = [...base].sort((a, b) => score(b) - score(a));
     return sorted.filter((e) => score(e) > 0).slice(0, 8);
   }, [events, prefTags, userId, signalsTick]);
+
+  const [aiRecommendedEvents, setAiRecommendedEvents] = useState<EventItem[]>([]);
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiError, setAiError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const controller = new AbortController();
+
+    if (events.length === 0) {
+      setAiRecommendedEvents([]);
+      setAiLoading(false);
+      setAiError(null);
+      return () => controller.abort();
+    }
+
+    setAiLoading(true);
+    setAiError(null);
+
+    (async () => {
+      const goingsMap = countGoingsForEvents(events.map((event) => event.id));
+      const eventsPayload = events.map((event) =>
+        toAiEventPayload(event, {
+          interestedCount: goingsMap[event.id] ?? 0,
+          peerInterestedCount: goingsMap[event.id] ?? 0,
+        })
+      );
+
+      const favoriteIds = userId ? getUserFavoriteEventIds(userId) : [];
+      const goingIds = userId ? getUserGoingEventIds(userId) : [];
+      const favoriteSet = new Set(favoriteIds);
+      const goingSet = new Set(goingIds);
+      const likedIds = dedupeIds([...favoriteIds, ...goingIds]).slice(0, 20);
+
+      const localEventById = new Map(events.map((event) => [event.id, event]));
+      const likedItems: EventItem[] = [];
+      for (const id of likedIds) {
+        if (controller.signal.aborted) return;
+        const local = localEventById.get(id);
+        if (local) {
+          likedItems.push(local);
+          continue;
+        }
+        const resolved = await eventsRepo.getById(id, { signal: controller.signal });
+        if (resolved) likedItems.push(resolved);
+      }
+
+      const likedPayload = likedItems.map((event) =>
+        toAiEventPayload(event, {
+          interestedCount: goingsMap[event.id] ?? 0,
+          peerInterestedCount: goingsMap[event.id] ?? 0,
+          preferenceWeight:
+            (favoriteSet.has(event.id) ? 1.7 : 0) + (goingSet.has(event.id) ? 1.3 : 0) || 1,
+        })
+      );
+
+      const derivedGenres =
+        prefTags.length > 0
+          ? prefTags
+          : selectedStyle !== "All"
+          ? [selectedStyle]
+          : [];
+
+      const userProfile = {
+        preferredGenres: derivedGenres,
+        likedEvents: likedPayload,
+        lat: DEFAULT_USER_LAT,
+        lng: DEFAULT_USER_LNG,
+        maxDistanceKm,
+        peerInterestByEventId: goingsMap,
+      };
+
+      const recRes = await fetchAiRecommendations(
+        {
+          events: eventsPayload,
+          userProfile,
+          limit: 8,
+        },
+        controller.signal
+      );
+
+      if (controller.signal.aborted) return;
+
+      if (!recRes.ok) {
+        const msg = recRes.error || "AI endpoints returned an error.";
+        throw new Error(msg);
+      }
+
+      const byId = new Map(events.map((event) => [event.id, event]));
+      const toUiEvent = (raw: EventItem): EventItem | null => {
+        const id = String(raw?.id || "");
+        const base = byId.get(id);
+        if (!base) return null;
+        return {
+          ...base,
+          aiRecommendation: raw.aiRecommendation || base.aiRecommendation,
+          aiGenrePredictions: raw.aiGenrePredictions || base.aiGenrePredictions,
+        };
+      };
+
+      const recommended = (recRes.events || [])
+        .map((item) => toUiEvent(item))
+        .filter((item): item is EventItem => item !== null)
+        .slice(0, 8);
+
+      setAiRecommendedEvents(recommended);
+    })()
+      .catch((err: unknown) => {
+        if (err instanceof DOMException && err.name === "AbortError") return;
+        setAiRecommendedEvents([]);
+        setAiError(err instanceof Error ? err.message : String(err));
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setAiLoading(false);
+      });
+
+    return () => controller.abort();
+  }, [events, maxDistanceKm, prefTags, selectedStyle, signalsTick, userId]);
+
+  const eventsWithAi = useMemo(() => {
+    const overlay = new Map<string, Partial<EventItem>>();
+
+    for (const event of aiRecommendedEvents) {
+      overlay.set(event.id, {
+        ...(overlay.get(event.id) || {}),
+        aiRecommendation: event.aiRecommendation,
+      });
+    }
+
+    return events.map((event) => ({
+      ...event,
+      ...(overlay.get(event.id) || {}),
+    }));
+  }, [aiRecommendedEvents, events]);
+
+  const recommendedEvents = useMemo(() => {
+    if (aiRecommendedEvents.length > 0) return aiRecommendedEvents;
+    return fallbackRecommendedEvents;
+  }, [aiRecommendedEvents, fallbackRecommendedEvents]);
+
+  const recommendedIds = useMemo(
+    () => new Set(recommendedEvents.map((event) => event.id)),
+    [recommendedEvents]
+  );
+
+  const trendingEvents = useMemo(
+    () =>
+      eventsWithAi.filter(
+        (event) =>
+          Boolean(event.trending) &&
+          !recommendedIds.has(event.id)
+      ),
+    [eventsWithAi, recommendedIds]
+  );
 
   const filterLabel = [
     selectedStyle !== "All" ? selectedStyle : null,
@@ -337,7 +507,9 @@ export default function EventDashboardPage() {
               : "Login + Save/Going to personalize"}
           </div>
         </div>
-        <div className="sectionHint">{filterLabel || "No filters"}</div>
+        <div className="sectionHint">
+          {aiLoading ? "AI updating…" : aiError ? `AI fallback: ${aiError}` : filterLabel || "No filters"}
+        </div>
       </div>
 
       <div className="trendingRow">
@@ -386,10 +558,10 @@ export default function EventDashboardPage() {
       <div className="eventsGrid">
         {isLoading && events.length === 0 ? (
           <div className="sectionHint">Loading events list…</div>
-        ) : events.length === 0 ? (
+        ) : eventsWithAi.length === 0 ? (
           <div className="sectionHint">No events match your filters.</div>
         ) : (
-          events.map((e) => (
+          eventsWithAi.map((e) => (
             <EventCard key={e.id} event={e} search={location.search} />
           ))
         )}

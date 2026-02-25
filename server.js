@@ -7,6 +7,16 @@ const {
   fetchScrapedEvents,
   parseDelimitedUrls,
 } = require("./webScraper");
+const {
+  DEFAULT_RECOMMENDATION_WEIGHTS,
+  DEFAULT_RADAR_THRESHOLDS,
+  predictGenresFromText,
+  predictGenresForEvent,
+  recommendEvents,
+  buildUndergroundRadar,
+  buildTasteDNA,
+  predictEventSuccess,
+} = require("./aiEngine");
 
 const app = express();
 app.use(cors());
@@ -68,6 +78,33 @@ function normalizeTags(tags) {
 function toNumberOrNull(value) {
   const n = Number(value);
   return Number.isFinite(n) ? n : null;
+}
+
+function resolveMergedIsFree(primary, secondary, merged) {
+  const costCandidates = [
+    primary?.cost,
+    primary?.priceMin,
+    primary?.priceMax,
+    secondary?.cost,
+    secondary?.priceMin,
+    secondary?.priceMax,
+    merged?.cost,
+    merged?.priceMin,
+    merged?.priceMax,
+  ]
+    .map((value) => toNumberOrNull(value))
+    .filter((value) => value != null);
+
+  if (costCandidates.some((value) => value > 0)) return false;
+  if (costCandidates.some((value) => value === 0)) return true;
+
+  const flags = [primary?.isFree, secondary?.isFree].filter(
+    (value) => typeof value === "boolean"
+  );
+
+  if (flags.includes(false)) return false;
+  if (flags.includes(true)) return true;
+  return false;
 }
 
 function normalizeCountryValue(value) {
@@ -199,6 +236,8 @@ function mergeEventsPrefer(primary, secondary) {
     "lng",
     "virtualLink",
     "cost",
+    "priceMin",
+    "priceMax",
     "currency",
     "ticketUrl",
     "url",
@@ -222,7 +261,7 @@ function mergeEventsPrefer(primary, secondary) {
     }
   }
 
-  merged.isFree = Boolean(primary?.isFree || secondary?.isFree);
+  merged.isFree = resolveMergedIsFree(primary, secondary, merged);
   merged.isVirtual = Boolean(primary?.isVirtual || secondary?.isVirtual);
 
   const tags = new Set([...(primary?.tags || []), ...(secondary?.tags || [])]);
@@ -585,11 +624,22 @@ function matchesKeywordForScraped(event, keyword) {
 
 const MUSIC_POSITIVE_TOKENS = [
   "music",
+  "musique",
+  "muziek",
+  "musik",
   "concert",
+  "concerten",
+  "konzert",
   "koncert",
   "live",
   "dj",
   "festival",
+  "fest",
+  "fete",
+  "feest",
+  "soiree",
+  "avond",
+  "nacht",
   "gig",
   "rave",
   "party",
@@ -615,6 +665,9 @@ const MUSIC_POSITIVE_TOKENS = [
   "house",
   "edm",
   "electronic",
+  "electro",
+  "electronique",
+  "elektronisch",
   "dancehall",
   "afrobeat",
   "amapiano",
@@ -624,15 +677,21 @@ const MUSIC_POSITIVE_TOKENS = [
 
 const MUSIC_NEGATIVE_TOKENS = [
   "workshop",
+  "atelier",
+  "werkplaats",
   "webinar",
   "bootcamp",
   "conference",
+  "conferentie",
   "summit",
   "career fair",
   "job fair",
+  "jobbeurs",
   "networking",
   "hiring",
   "course",
+  "opleiding",
+  "formation",
   "training",
   "masterclass",
   "real estate",
@@ -731,6 +790,266 @@ function pickTicketmasterImage(images) {
   return any.length > 0 ? any[0].url : null;
 }
 
+function cleanTicketmasterText(value) {
+  const clean = cleanText(value);
+  if (!clean) return null;
+  const noHtml = clean.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+  return noHtml || null;
+}
+
+function buildTicketmasterDescription(event, attraction, venue, promoter) {
+  const candidates = [
+    cleanTicketmasterText(event?.description),
+    cleanTicketmasterText(event?.info),
+    cleanTicketmasterText(event?.pleaseNote),
+    cleanTicketmasterText(event?.additionalInfo),
+    cleanTicketmasterText(event?.accessibility?.info),
+    cleanTicketmasterText(attraction?.info),
+    cleanTicketmasterText(attraction?.additionalInfo),
+    cleanTicketmasterText(attraction?.description),
+    cleanTicketmasterText(promoter?.description),
+    cleanTicketmasterText(venue?.generalInfo?.generalRule),
+    cleanTicketmasterText(venue?.generalInfo?.childRule),
+  ].filter(Boolean);
+
+  if (candidates.length === 0) return null;
+
+  const unique = [];
+  const seen = new Set();
+  for (const candidate of candidates) {
+    const key = normalizeKeyPart(candidate);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    unique.push(candidate);
+  }
+
+  if (unique.length === 0) return null;
+  const joined = unique.join(" ");
+  return joined.length > 900 ? `${joined.slice(0, 897)}...` : joined;
+}
+
+function extractTicketmasterPrice(event) {
+  const readRangeValues = (ranges) => {
+    const values = [];
+    let rangeCurrency = null;
+    if (!Array.isArray(ranges)) return { values, currency: rangeCurrency };
+    for (const range of ranges) {
+      const min = toNumberOrNull(range?.min);
+      const max = toNumberOrNull(range?.max);
+      if (min != null) values.push(min);
+      if (max != null) values.push(max);
+      if (!rangeCurrency) {
+        rangeCurrency = cleanText(
+          range?.currency || range?.currencyCode || range?.cur
+        );
+      }
+    }
+    return { values, currency: rangeCurrency };
+  };
+
+  const summarize = (values, currency) => {
+    const positives = values.filter((value) => value > 0);
+    if (positives.length > 0) {
+      return {
+        min: Math.min(...positives),
+        max: Math.max(...positives),
+        cost: Math.min(...positives),
+        currency: currency || null,
+        isFree: false,
+      };
+    }
+    return null;
+  };
+
+  const topLevel = readRangeValues(event?.priceRanges);
+  const topSummary = summarize(topLevel.values, topLevel.currency);
+  if (topSummary) return topSummary;
+
+  if (topLevel.values.length > 0 && topLevel.values.every((value) => value === 0)) {
+    return {
+      min: 0,
+      max: 0,
+      cost: 0,
+      currency: topLevel.currency || null,
+      isFree: true,
+    };
+  }
+
+  const nestedValues = [];
+  let nestedCurrency = topLevel.currency || null;
+  const feeLikeRegex = /(fee|delivery|shipping|service|handling|order|payment|charge|facility)/i;
+
+  const walkNested = (node, path = []) => {
+    if (!node) return;
+    if (Array.isArray(node)) {
+      node.forEach((item, index) => walkNested(item, path.concat(String(index))));
+      return;
+    }
+    if (typeof node !== "object") return;
+
+    const pathKey = normalizeKeyPart(path.join("."));
+    const metaKey = normalizeKeyPart(
+      [
+        cleanText(node.type),
+        cleanText(node.name),
+        cleanText(node.title),
+        cleanText(node.description),
+        cleanText(node.label),
+      ]
+        .filter(Boolean)
+        .join(" ")
+    );
+    const feeLike = feeLikeRegex.test(`${pathKey} ${metaKey}`);
+
+    if (!feeLike) {
+      const min = toNumberOrNull(node.min);
+      const max = toNumberOrNull(node.max);
+      if (min != null && min > 0) nestedValues.push(min);
+      if (max != null && max > 0) nestedValues.push(max);
+
+      if (node.price && typeof node.price === "object") {
+        const amount = toNumberOrNull(
+          node.price.amount ??
+            node.price.value ??
+            node.price.total ??
+            node.price.listPrice
+        );
+        if (amount != null && amount > 0) nestedValues.push(amount);
+        if (!nestedCurrency) {
+          nestedCurrency = cleanText(
+            node.price.currency || node.price.currencyCode
+          );
+        }
+      }
+
+      const directAmount = toNumberOrNull(node.amount ?? node.value ?? node.listPrice);
+      if (directAmount != null && directAmount > 0) nestedValues.push(directAmount);
+      if (!nestedCurrency) {
+        nestedCurrency = cleanText(
+          node.currency || node.currencyCode || node.cur
+        );
+      }
+    }
+
+    for (const [key, value] of Object.entries(node)) {
+      walkNested(value, path.concat(key));
+    }
+  };
+
+  walkNested(event?.products, ["products"]);
+  walkNested(event?.offers, ["offers"]);
+
+  const nestedSummary = summarize(nestedValues, nestedCurrency);
+  if (nestedSummary) return nestedSummary;
+
+  const freeHint = normalizeKeyPart(
+    [
+      cleanText(event?.name),
+      cleanText(event?.info),
+      cleanText(event?.description),
+      cleanText(event?.pleaseNote),
+      cleanText(event?.additionalInfo),
+    ]
+      .filter(Boolean)
+      .join(" ")
+  );
+  const explicitFree = /\b(free (entry|admission|event|concert|show|ticket)|entry free|admission free|gratis (toegang|inkom|concert|event)|gratuit(e)? (entree|acces|concert|evenement)|kostenlos(e)? (eintritt|ticket)|vrije toegang)\b/i.test(
+    freeHint || ""
+  );
+  if (explicitFree) {
+    return {
+      min: 0,
+      max: 0,
+      cost: 0,
+      currency: nestedCurrency || null,
+      isFree: true,
+    };
+  }
+
+  return {
+    min: null,
+    max: null,
+    cost: null,
+    currency: nestedCurrency || null,
+    isFree: false,
+  };
+}
+
+function mapTicketmasterEvent(e, { classificationName = "music" } = {}) {
+  const venue = e?._embedded?.venues?.[0];
+  const attraction = e?._embedded?.attractions?.[0];
+  const classification = e?.classifications?.[0];
+  const promoter = e?.promoter || e?.promoters?.[0];
+  const addressLine = [
+    cleanText(venue?.address?.line1),
+    cleanText(venue?.address?.line2),
+  ]
+    .filter(Boolean)
+    .join(", ");
+  const genre =
+    classification?.genre?.name ||
+    classification?.subGenre?.name ||
+    classification?.segment?.name ||
+    classificationName ||
+    null;
+  const category =
+    classification?.segment?.name ||
+    classification?.genre?.name ||
+    classificationName ||
+    null;
+  const tags = normalizeTags([
+    classification?.segment?.name,
+    classification?.genre?.name,
+    classification?.subGenre?.name,
+    attraction?.name,
+  ]);
+  const priceInfo = extractTicketmasterPrice(e);
+  const ticketUrl = cleanText(e.url);
+  const start = e.dates?.start?.dateTime || e.dates?.start?.localDate || null;
+
+  return {
+    source: "ticketmaster",
+    sourceId: String(e.id),
+    title: e.name,
+    description: buildTicketmasterDescription(e, attraction, venue, promoter),
+    start,
+    end: e.dates?.end?.dateTime || e.dates?.end?.localDate || null,
+    timezone: cleanText(e.dates?.timezone) || "UTC",
+    venue: venue?.name || null,
+    address: addressLine || cleanText(venue?.name),
+    city: venue?.city?.name || null,
+    state: venue?.state?.name || null,
+    country: venue?.country?.name || null,
+    postalCode: venue?.postalCode || null,
+    lat: venue?.location?.latitude ? Number(venue.location.latitude) : null,
+    lng: venue?.location?.longitude ? Number(venue.location.longitude) : null,
+    isVirtual: false,
+    virtualLink: null,
+    isFree: priceInfo.isFree,
+    cost: priceInfo.cost,
+    priceMin: priceInfo.min,
+    priceMax: priceInfo.max,
+    currency: priceInfo.currency,
+    url: ticketUrl,
+    ticketUrl,
+    imageUrl: pickTicketmasterImage(e?.images),
+    genre,
+    category,
+    tags,
+    status: mapTicketmasterStatus(e?.dates?.status?.code),
+    organizerName: cleanText(promoter?.name),
+
+    // Useful for setlist enrichment:
+    artistName: attraction?.name || null,
+
+    metadata: {
+      ticketmasterStatus: cleanText(e?.dates?.status?.code),
+      priceMin: priceInfo.min,
+      priceMax: priceInfo.max,
+    },
+  };
+}
+
 async function fetchTicketmaster({
   keyword,
   lat,
@@ -761,86 +1080,28 @@ async function fetchTicketmaster({
   });
 
   const events = data?._embedded?.events ?? [];
+  return events.map((e) => mapTicketmasterEvent(e, { classificationName }));
+}
 
-  return events.map((e) => {
-    const venue = e?._embedded?.venues?.[0];
-    const attraction = e?._embedded?.attractions?.[0];
-    const classification = e?.classifications?.[0];
-    const promoter = e?.promoter || e?.promoters?.[0];
-    const priceRange = Array.isArray(e?.priceRanges) ? e.priceRanges[0] : null;
-    const addressLine = [
-      cleanText(venue?.address?.line1),
-      cleanText(venue?.address?.line2),
-    ]
-      .filter(Boolean)
-      .join(", ");
-    const genre =
-      classification?.genre?.name ||
-      classification?.subGenre?.name ||
-      classification?.segment?.name ||
-      classificationName ||
-      null;
-    const category =
-      classification?.segment?.name ||
-      classification?.genre?.name ||
-      classificationName ||
-      null;
-    const tags = normalizeTags([
-      classification?.segment?.name,
-      classification?.genre?.name,
-      classification?.subGenre?.name,
-      attraction?.name,
-    ]);
-    const minPrice = toNumberOrNull(priceRange?.min);
-    const maxPrice = toNumberOrNull(priceRange?.max);
-    const cost = minPrice != null ? minPrice : maxPrice;
-    const isFree = cost === 0;
-    const ticketUrl = cleanText(e.url);
-    const start = e.dates?.start?.dateTime || e.dates?.start?.localDate || null;
+async function fetchTicketmasterEventById({
+  sourceId,
+  classificationName = "music",
+}) {
+  const cleanId = cleanText(sourceId);
+  if (!cleanId) return null;
+  const url = `https://app.ticketmaster.com/discovery/v2/events/${encodeURIComponent(
+    cleanId
+  )}.json`;
 
-    return {
-      source: "ticketmaster",
-      sourceId: String(e.id),
-      title: e.name,
-      description:
-        cleanText(e.info) ||
-        cleanText(e.pleaseNote) ||
-        (attraction?.name ? `Featuring: ${attraction.name}` : null),
-      start,
-      end: e.dates?.end?.dateTime || e.dates?.end?.localDate || null,
-      timezone: cleanText(e.dates?.timezone) || "UTC",
-      venue: venue?.name || null,
-      address: addressLine || cleanText(venue?.name),
-      city: venue?.city?.name || null,
-      state: venue?.state?.name || null,
-      country: venue?.country?.name || null,
-      postalCode: venue?.postalCode || null,
-      lat: venue?.location?.latitude ? Number(venue.location.latitude) : null,
-      lng: venue?.location?.longitude ? Number(venue.location.longitude) : null,
-      isVirtual: false,
-      virtualLink: null,
-      isFree,
-      cost,
-      currency: cleanText(priceRange?.currency) || "USD",
-      url: ticketUrl,
-      ticketUrl,
-      imageUrl: pickTicketmasterImage(e?.images),
-      genre,
-      category,
-      tags,
-      status: mapTicketmasterStatus(e?.dates?.status?.code),
-      organizerName: cleanText(promoter?.name),
-
-      // Useful for setlist enrichment:
-      artistName: attraction?.name || null,
-
-      metadata: {
-        ticketmasterStatus: cleanText(e?.dates?.status?.code),
-        priceMin: minPrice,
-        priceMax: maxPrice,
-      },
-    };
+  const { data } = await axios.get(url, {
+    params: {
+      apikey: process.env.TICKETMASTER_API_KEY,
+    },
+    timeout: 15000,
   });
+
+  if (!data || !data.id) return null;
+  return mapTicketmasterEvent(data, { classificationName });
 }
 
 // -----------------------------
@@ -913,6 +1174,53 @@ async function fetchSetlistFmSetlistsByCityName({ cityName, page = 1 }) {
       url: s?.url || null,
     })),
   };
+}
+
+function objectOrEmpty(value) {
+  return value && typeof value === "object" && !Array.isArray(value) ? value : {};
+}
+
+async function resolveEventsForAi({ events, query = {} } = {}) {
+  if (Array.isArray(events) && events.length > 0) {
+    return dedupe(events).slice(0, 300);
+  }
+
+  const safeQuery = objectOrEmpty(query);
+  const port = process.env.PORT ? Number(process.env.PORT) : 3000;
+  const endpoint = `http://127.0.0.1:${port}/events`;
+
+  const params = {
+    keyword: cleanText(safeQuery.keyword) || undefined,
+    lat: Number.isFinite(Number(safeQuery.lat))
+      ? Number(safeQuery.lat)
+      : 50.8503,
+    lng: Number.isFinite(Number(safeQuery.lng))
+      ? Number(safeQuery.lng)
+      : 4.3517,
+    radiusKm: Number.isFinite(Number(safeQuery.radiusKm))
+      ? Number(safeQuery.radiusKm)
+      : 30,
+    classificationName: cleanText(safeQuery.classificationName) || "music",
+    size: Number.isFinite(Number(safeQuery.size))
+      ? Math.max(1, Number(safeQuery.size))
+      : 40,
+    maxResults: Number.isFinite(Number(safeQuery.maxResults))
+      ? Math.max(1, Number(safeQuery.maxResults))
+      : 120,
+    includeScraped: toBool(safeQuery.includeScraped, true) ? 1 : 0,
+    includeSetlists: 0,
+  };
+
+  const { data } = await axios.get(endpoint, {
+    params,
+    timeout: 45000,
+  });
+
+  if (!data || data.ok !== true || !Array.isArray(data.events)) {
+    throw new Error("Failed to resolve events for AI endpoints.");
+  }
+
+  return data.events;
 }
 
 // -----------------------------
@@ -1117,6 +1425,47 @@ app.get("/events", async (req, res) => {
 });
 
 /**
+ * GET /events/enrich
+ * Query params:
+ * - source=ticketmaster
+ * - sourceId=<ticketmaster event id>
+ * - classificationName=music (optional)
+ */
+app.get("/events/enrich", async (req, res) => {
+  try {
+    const source = cleanText(req.query.source)?.toLowerCase() || "";
+    const sourceId = cleanText(req.query.sourceId);
+    const classificationName = cleanText(req.query.classificationName) || "music";
+
+    if (!sourceId) {
+      return res.status(400).json({
+        ok: false,
+        error: "Provide sourceId. Example: /events/enrich?source=ticketmaster&sourceId=XYZ",
+      });
+    }
+
+    if (source !== "ticketmaster") {
+      return res.status(400).json({
+        ok: false,
+        error: "Unsupported source. Currently only source=ticketmaster is supported.",
+      });
+    }
+
+    const event = await fetchTicketmasterEventById({ sourceId, classificationName });
+    if (!event) {
+      return res.status(404).json({
+        ok: false,
+        error: "Ticketmaster event not found for provided sourceId.",
+      });
+    }
+
+    return res.json({ ok: true, event });
+  } catch (err) {
+    return res.status(500).json({ ok: false, error: String(err) });
+  }
+});
+
+/**
  * GET /setlists
  * Query params:
  * - artistName=Coldplay OR cityName=Brussels
@@ -1145,6 +1494,250 @@ app.get("/setlists", async (req, res) => {
 
     const result = await fetchSetlistFmSetlistsByCityName({ cityName, page: pageNum });
     return res.json({ ok: true, mode: "cityName", cityName, page: pageNum, ...result });
+  } catch (err) {
+    return res.status(500).json({ ok: false, error: String(err) });
+  }
+});
+
+/**
+ * POST /ai/genre-predict
+ * Body:
+ * - text?: string
+ * - events?: event[]
+ * - topK?: number (default 3)
+ * - enrichMissingGenres?: boolean (default false)
+ */
+app.post("/ai/genre-predict", async (req, res) => {
+  try {
+    const body = objectOrEmpty(req.body);
+    const text = cleanText(body.text);
+    const events = Array.isArray(body.events) ? body.events : [];
+    const topK = toPositiveInt(body.topK, 3);
+    const enrichMissingGenres = toBool(body.enrichMissingGenres, false);
+
+    if (!text && events.length === 0) {
+      return res.status(400).json({
+        ok: false,
+        error: "Provide 'text' or a non-empty 'events' array.",
+      });
+    }
+
+    const result = { ok: true, topK };
+
+    if (text) {
+      result.textPrediction = predictGenresFromText(text, { topK });
+    }
+
+    if (events.length > 0) {
+      result.events = events.map((event, index) => {
+        const predictions = predictGenresForEvent(event, { topK });
+        const primary = predictions[0] || null;
+        const hasExplicitGenre = Boolean(
+          cleanText(event?.genre) || cleanText(event?.category)
+        );
+
+        const out = {
+          index,
+          eventId: cleanText(event?.id) || cleanText(event?.sourceId) || null,
+          title: cleanText(event?.title) || null,
+          predictions,
+          primaryGenre: primary?.genre || null,
+          primaryConfidence: primary?.confidence || null,
+        };
+
+        if (enrichMissingGenres && !hasExplicitGenre && primary) {
+          out.suggestedPatch = {
+            genre: primary.genre,
+            category: primary.genre,
+            confidence: primary.confidence,
+          };
+        }
+
+        return out;
+      });
+      result.count = result.events.length;
+    }
+
+    return res.json(result);
+  } catch (err) {
+    return res.status(500).json({ ok: false, error: String(err) });
+  }
+});
+
+/**
+ * POST /ai/recommendations
+ * Body:
+ * - userProfile?: { preferredGenres, likedEvents, lat, lng, maxDistanceKm, peerInterestByEventId }
+ * - events?: event[]
+ * - query?: /events-style query used if events omitted
+ * - limit?: number
+ * - weights?: { genreMatch, distance, popularity, similarity }
+ */
+app.post("/ai/recommendations", async (req, res) => {
+  try {
+    const body = objectOrEmpty(req.body);
+    const userProfile = objectOrEmpty(body.userProfile);
+    const limit = toPositiveInt(body.limit, 20);
+    const weights = objectOrEmpty(body.weights);
+
+    const events = await resolveEventsForAi({
+      events: Array.isArray(body.events) ? body.events : null,
+      query: objectOrEmpty(body.query),
+    });
+
+    const recommendation = recommendEvents(events, userProfile, {
+      limit,
+      weights,
+    });
+
+    return res.json({
+      ok: true,
+      count: recommendation.items.length,
+      weights: recommendation.weights,
+      defaults: DEFAULT_RECOMMENDATION_WEIGHTS,
+      inferredProfile: recommendation.inferredProfile,
+      events: recommendation.items,
+    });
+  } catch (err) {
+    return res.status(500).json({ ok: false, error: String(err) });
+  }
+});
+
+/**
+ * POST /ai/radar
+ * Body:
+ * - userProfile?: same as /ai/recommendations
+ * - events?: event[]
+ * - query?: /events-style query used if events omitted
+ * - limit?: number
+ * - hiddenGemThreshold?: number (0..1)
+ * - trendingThreshold?: number (0..1)
+ * - includeAll?: boolean
+ */
+app.post("/ai/radar", async (req, res) => {
+  try {
+    const body = objectOrEmpty(req.body);
+    const userProfile = objectOrEmpty(body.userProfile);
+
+    const events = await resolveEventsForAi({
+      events: Array.isArray(body.events) ? body.events : null,
+      query: objectOrEmpty(body.query),
+    });
+
+    const radar = buildUndergroundRadar(events, userProfile, {
+      limit: toPositiveInt(body.limit, 20),
+      hiddenGemThreshold: toNumberOrNull(body.hiddenGemThreshold),
+      trendingThreshold: toNumberOrNull(body.trendingThreshold),
+      includeAll: toBool(body.includeAll, false),
+      recommendationWeights: objectOrEmpty(body.weights),
+    });
+
+    return res.json({
+      ok: true,
+      thresholds: radar.thresholds,
+      defaults: DEFAULT_RADAR_THRESHOLDS,
+      count: radar.items.length,
+      events: radar.items,
+    });
+  } catch (err) {
+    return res.status(500).json({ ok: false, error: String(err) });
+  }
+});
+
+/**
+ * POST /ai/taste-dna
+ * Body:
+ * - userProfile?: { likedEvents, preferredGenres, lat, lng, maxDistanceKm }
+ * - events?: event[]
+ * - likedEventKeys?: string[] (ids/sourceIds/urls)
+ * - query?: /events-style query used if events omitted
+ * - bootstrapFromFeed?: boolean (default false)
+ */
+app.post("/ai/taste-dna", async (req, res) => {
+  try {
+    const body = objectOrEmpty(req.body);
+    const userProfile = { ...objectOrEmpty(body.userProfile) };
+    const likedEventKeys = Array.isArray(body.likedEventKeys)
+      ? body.likedEventKeys.map((value) => cleanText(value)).filter(Boolean)
+      : [];
+
+    let feedEvents = [];
+    if (Array.isArray(body.events) && body.events.length > 0) {
+      feedEvents = body.events;
+    } else if (likedEventKeys.length > 0 || toBool(body.bootstrapFromFeed, false)) {
+      feedEvents = await resolveEventsForAi({ query: objectOrEmpty(body.query) });
+    }
+
+    if (
+      (!Array.isArray(userProfile.likedEvents) || userProfile.likedEvents.length === 0) &&
+      feedEvents.length > 0
+    ) {
+      if (likedEventKeys.length > 0) {
+        const keySet = new Set(likedEventKeys.map((value) => String(value)));
+        userProfile.likedEvents = feedEvents.filter((event) => {
+          const candidates = [
+            cleanText(event?.id),
+            cleanText(event?.sourceId),
+            cleanText(event?.url),
+            cleanText(event?.ticketUrl),
+          ].filter(Boolean);
+          return candidates.some((candidate) => keySet.has(candidate));
+        });
+      } else if (toBool(body.bootstrapFromFeed, false)) {
+        userProfile.likedEvents = feedEvents.slice(0, 12);
+      }
+    }
+
+    const dna = buildTasteDNA(userProfile);
+    return res.json({ ok: true, ...dna });
+  } catch (err) {
+    return res.status(500).json({ ok: false, error: String(err) });
+  }
+});
+
+/**
+ * POST /ai/success-predictor
+ * Body:
+ * - draftEvent: event-like object
+ * - historicalEvents?: event[] (optional; auto-fetched if omitted)
+ * - query?: /events-style query used for auto-history
+ */
+app.post("/ai/success-predictor", async (req, res) => {
+  try {
+    const body = objectOrEmpty(req.body);
+    const draftEvent = objectOrEmpty(body.draftEvent);
+    if (!draftEvent || Object.keys(draftEvent).length === 0) {
+      return res.status(400).json({
+        ok: false,
+        error: "Provide 'draftEvent' in request body.",
+      });
+    }
+
+    let historicalEvents = Array.isArray(body.historicalEvents)
+      ? body.historicalEvents
+      : [];
+
+    if (historicalEvents.length === 0) {
+      const query = {
+        ...objectOrEmpty(body.query),
+        classificationName:
+          cleanText(body?.query?.classificationName) ||
+          cleanText(draftEvent?.genre) ||
+          cleanText(draftEvent?.category) ||
+          "music",
+        maxResults: toPositiveInt(body?.query?.maxResults, 140),
+      };
+
+      historicalEvents = await resolveEventsForAi({ query });
+    }
+
+    const prediction = predictEventSuccess(draftEvent, historicalEvents);
+
+    return res.json({
+      ok: true,
+      prediction,
+      historyCount: historicalEvents.length,
+    });
   } catch (err) {
     return res.status(500).json({ ok: false, error: String(err) });
   }
