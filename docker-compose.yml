@@ -56,7 +56,7 @@ services:
       JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-7d}
       NODE_ENV: production
     ports:
-      - "3000:3000"
+      - "${API_HOST_PORT:-3000}:3000"
 
   # Sync Service
   sync:

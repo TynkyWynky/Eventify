@@ -5,13 +5,7 @@ import { eventsRepo } from "../data/events";
 import { useAuth } from "../auth/AuthContext";
 import {
   countGoingsForEvents,
-  getUserGoingEventIds,
-  subscribeMetricsChanged,
 } from "../data/events/eventMetricsStore";
-import {
-  getUserFavoriteEventIds,
-  subscribeFavoritesChanged,
-} from "../data/events/eventFavoritesStore";
 import {
   DEFAULT_USER_LAT,
   DEFAULT_USER_LNG,

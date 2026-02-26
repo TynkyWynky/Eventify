@@ -70,6 +70,112 @@ function Get-EnvValue([string]$Path, [string]$Key) {
     return $line.Matches[0].Groups[1].Value.Trim()
 }
 
+function Set-EnvValue([string]$Path, [string]$Key, [string]$Value) {
+    if (-not (Test-Path $Path)) {
+        throw "Cannot set '$Key' in missing file: $Path"
+    }
+
+    $pattern = "^\s*$([regex]::Escape($Key))\s*="
+    $lines = @(Get-Content $Path)
+    $updated = $false
+
+    for ($i = 0; $i -lt $lines.Count; $i++) {
+        if ($lines[$i] -match $pattern) {
+            $lines[$i] = "$Key=$Value"
+            $updated = $true
+            break
+        }
+    }
+
+    if (-not $updated) {
+        $lines += "$Key=$Value"
+    }
+
+    Set-Content -Path $Path -Value $lines -Encoding utf8
+}
+
+function Get-ListeningProcessIdsByPort([int]$Port) {
+    try {
+        $rows = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction Stop
+        return @($rows | Select-Object -ExpandProperty OwningProcess -Unique)
+    }
+    catch {
+        return @()
+    }
+}
+
+function Get-ProcessSummary([int[]]$ProcessIds) {
+    $items = @()
+    foreach ($processId in ($ProcessIds | Sort-Object -Unique)) {
+        try {
+            $proc = Get-CimInstance Win32_Process -Filter "ProcessId=$processId" -ErrorAction Stop
+            if ($proc) {
+                $name = if ([string]::IsNullOrWhiteSpace($proc.Name)) { "unknown" } else { $proc.Name }
+                $cmd = if ([string]::IsNullOrWhiteSpace($proc.CommandLine)) { "" } else { $proc.CommandLine.Trim() }
+                if ($cmd.Length -gt 120) {
+                    $cmd = $cmd.Substring(0, 120) + "..."
+                }
+                if ($cmd) {
+                    $items += "PID $processId ($name): $cmd"
+                }
+                else {
+                    $items += "PID $processId ($name)"
+                }
+            }
+            else {
+                $items += "PID $processId"
+            }
+        }
+        catch {
+            $items += "PID $processId"
+        }
+    }
+    return $items -join "; "
+}
+
+function Get-AvailableHostPort([int]$PreferredPort, [int]$MaxSearch = 30) {
+    $start = [Math]::Max(1, $PreferredPort)
+    $end = [Math]::Min(65535, $start + $MaxSearch - 1)
+
+    for ($port = $start; $port -le $end; $port++) {
+        $owners = Get-ListeningProcessIdsByPort -Port $port
+        if ($owners.Count -eq 0) {
+            return $port
+        }
+    }
+
+    throw "Could not find an available host port between $start and $end."
+}
+
+function Get-ComposeApiPublishedPort([string]$ComposeDir) {
+    Push-Location $ComposeDir
+    try {
+        $previous = $ErrorActionPreference
+        $ErrorActionPreference = "Continue"
+        try {
+            $output = & docker compose port api 3000 2>$null
+            $exitCode = $LASTEXITCODE
+        }
+        finally {
+            $ErrorActionPreference = $previous
+        }
+
+        if ($exitCode -ne 0 -or [string]::IsNullOrWhiteSpace($output)) {
+            return $null
+        }
+
+        $line = (@($output) | Select-Object -First 1).ToString().Trim()
+        if ($line -match ':(\d+)\s*$') {
+            return [int]$Matches[1]
+        }
+
+        return $null
+    }
+    finally {
+        Pop-Location
+    }
+}
+
 function Test-DockerEngineReady {
     $previous = $ErrorActionPreference
     $ErrorActionPreference = "Continue"
@@ -160,6 +266,70 @@ if ($isScrapeEnabled -and [string]::IsNullOrWhiteSpace($scrapeSources)) {
     Write-WarnMsg "SCRAPE_ENABLED is true but SCRAPE_SOURCE_URLS is empty. /events will likely show only Ticketmaster events. Example: https://www.eventbrite.com/d/belgium--brussels/music--events/"
 }
 
+$preferredApiHostPort = 3000
+$configuredApiHostPort = Get-EnvValue -Path $backendEnvPath -Key "API_HOST_PORT"
+if (-not [string]::IsNullOrWhiteSpace($configuredApiHostPort)) {
+    $parsedApiHostPort = 0
+    if ([int]::TryParse($configuredApiHostPort, [ref]$parsedApiHostPort) -and $parsedApiHostPort -ge 1 -and $parsedApiHostPort -le 65535) {
+        $preferredApiHostPort = $parsedApiHostPort
+    }
+    else {
+        Write-WarnMsg "Ignoring invalid API_HOST_PORT='$configuredApiHostPort' in .env (expected 1-65535)."
+    }
+}
+
+$apiHostPort = $preferredApiHostPort
+$apiBaseUrl = "http://localhost:$apiHostPort"
+
+if (-not $SkipDocker) {
+    $currentComposePort = Get-ComposeApiPublishedPort -ComposeDir $scriptDir
+    $preferredOwners = Get-ListeningProcessIdsByPort -Port $preferredApiHostPort
+    if ($preferredOwners.Count -gt 0 -and $currentComposePort -eq $preferredApiHostPort) {
+        $apiHostPort = $preferredApiHostPort
+        Write-Ok "Reusing API host port $apiHostPort from the current Docker Compose stack."
+    }
+    else {
+        $apiHostPort = Get-AvailableHostPort -PreferredPort $preferredApiHostPort
+        if ($apiHostPort -ne $preferredApiHostPort) {
+            $busySummary = Get-ProcessSummary -ProcessIds $preferredOwners
+            if ([string]::IsNullOrWhiteSpace($busySummary)) {
+                Write-WarnMsg "Port $preferredApiHostPort is busy. Using API host port $apiHostPort instead."
+            }
+            else {
+                Write-WarnMsg "Port $preferredApiHostPort is busy ($busySummary). Using API host port $apiHostPort instead."
+            }
+        }
+        else {
+            Write-Ok "API host port $apiHostPort is available."
+        }
+    }
+    $apiBaseUrl = "http://localhost:$apiHostPort"
+
+    $env:API_HOST_PORT = "$apiHostPort"
+    Set-EnvValue -Path $backendEnvPath -Key "API_HOST_PORT" -Value "$apiHostPort"
+
+    $backendApiBaseCurrent = Get-EnvValue -Path $backendEnvPath -Key "API_BASE_URL"
+    $backendLooksLocal = [string]::IsNullOrWhiteSpace($backendApiBaseCurrent) -or
+        ($backendApiBaseCurrent -match '^https?://(localhost|127\.0\.0\.1)(:\d+)?/?$')
+    if ($backendLooksLocal -and $backendApiBaseCurrent -ne $apiBaseUrl) {
+        Set-EnvValue -Path $backendEnvPath -Key "API_BASE_URL" -Value $apiBaseUrl
+        Write-Ok "Set API_BASE_URL to $apiBaseUrl"
+    }
+
+    $frontendApiBaseCurrent = Get-EnvValue -Path $frontendEnvPath -Key "VITE_API_BASE_URL"
+    $frontendLooksLocal = [string]::IsNullOrWhiteSpace($frontendApiBaseCurrent) -or
+        ($frontendApiBaseCurrent -match '^https?://(localhost|127\.0\.0\.1)(:\d+)?/?$')
+    if ($frontendLooksLocal) {
+        if ($frontendApiBaseCurrent -ne $apiBaseUrl) {
+            Set-EnvValue -Path $frontendEnvPath -Key "VITE_API_BASE_URL" -Value $apiBaseUrl
+            Write-Ok "Set VITE_API_BASE_URL to $apiBaseUrl"
+        }
+    }
+    else {
+        Write-WarnMsg "VITE_API_BASE_URL is custom ($frontendApiBaseCurrent). Leaving it unchanged."
+    }
+}
+
 if (-not $SkipInstall) {
     Write-Step "Installing backend dependencies"
     npm install --prefix $scriptDir
@@ -222,5 +392,5 @@ else {
 }
 
 Write-Host "`nSetup complete." -ForegroundColor Cyan
-Write-Host "API: http://localhost:3000" -ForegroundColor Cyan
+Write-Host "API: $apiBaseUrl" -ForegroundColor Cyan
 Write-Host "Frontend: http://localhost:5173 (if dev server started)" -ForegroundColor Cyan

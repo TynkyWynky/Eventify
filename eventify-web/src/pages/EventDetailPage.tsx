@@ -49,6 +49,8 @@ function safeNum(n: unknown, fallback: number) {
 
 function dedupeIds(values: string[]) {
   return Array.from(new Set(values.filter(Boolean)));
+}
+
 /** Haversine (straight-line) distance in km */
 function haversineKm(lat1: number, lng1: number, lat2: number, lng2: number) {
   const toRad = (d: number) => (d * Math.PI) / 180;
@@ -394,11 +396,6 @@ export default function EventDetailPage() {
       setSetlistsError(null);
       setSetlistsLoading(false);
       setHideSetlistsSection(false);
-      Promise.resolve().then(() => {
-        setSetlists([]);
-        setSetlistsError(null);
-        setSetlistsLoading(false);
-      });
       return;
     }
 
@@ -420,15 +417,6 @@ export default function EventDetailPage() {
           statusError.status = res.status;
           throw statusError;
         }
-    Promise.resolve().then(() => {
-      if (controller.signal.aborted) return;
-      setSetlistsLoading(true);
-      setSetlistsError(null);
-    });
-
-    fetch(url.toString(), { signal: controller.signal })
-      .then(async (res) => {
-        if (!res.ok) throw new Error(`Setlists request failed (${res.status})`);
         const data = (await res.json()) as SetlistsResponse;
         if (!data.ok) throw new Error(data.error || "Could not fetch setlists");
         setSetlists((data.items || []).slice(0, 5));
@@ -597,7 +585,7 @@ export default function EventDetailPage() {
       });
 
     return () => controller.abort();
-  }, [event, eventId, user?.id]);
+  }, [event, eventId, user]);
 
   useEffect(() => {
     if (!event) {
@@ -872,12 +860,6 @@ export default function EventDetailPage() {
             <span>{event.city}</span>
             <span className="dotSep">•</span>
             <span>{distanceFromOrigin.toFixed(1)} km</span>
-            {event.source ? (
-              <>
-                <span className="dotSep">•</span>
-                <span>{event.source}</span>
-              </>
-            ) : null}
           </div>
 
           <div className="eventDetailTags">
@@ -1027,21 +1009,6 @@ export default function EventDetailPage() {
                 </div>
               ) : null}
             </>
-
-          {event.source ? (
-            <div className="eventDetailText">
-              <b>Source:</b> {event.source}
-            </div>
-          ) : null}
-
-          <div className="eventDetailText">{event.description}</div>
-
-          {event.sourceUrl ? (
-            <div className="eventDetailText">
-              <a href={event.sourceUrl} target="_blank" rel="noreferrer">
-                Open official event page
-              </a>
-            </div>
           ) : null}
         </div>
 
@@ -1178,8 +1145,6 @@ export default function EventDetailPage() {
         </div>
 
         {event.artistName && !hideSetlistsSection ? (
-          <div className="eventDetailCard">
-        {event.artistName ? (
           <div className="eventDetailCard eventDetailCardSetlists">
             <div className="eventDetailCardTitle">Recent Setlists</div>
             <div className="eventDetailText">
@@ -1187,7 +1152,9 @@ export default function EventDetailPage() {
             </div>
 
             {setlistsLoading ? <div className="sectionHint">Loading setlists…</div> : null}
-            {setlistsError ? <div className="sectionHint">Setlists unavailable: {setlistsError}</div> : null}
+            {setlistsError ? (
+              <div className="sectionHint">Setlists unavailable: {setlistsError}</div>
+            ) : null}
 
             {!setlistsLoading && !setlistsError && setlists.length === 0 ? (
               <div className="sectionHint">No recent setlists found.</div>

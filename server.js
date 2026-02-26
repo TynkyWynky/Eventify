@@ -43,6 +43,20 @@ function toPositiveInt(value, fallback) {
 
 function parseDelimitedList(rawValue) {
   if (!rawValue) return [];
+
+  const seen = new Set();
+  const out = [];
+  for (const raw of String(rawValue).split(/[,\n]/)) {
+    const value = cleanText(raw);
+    if (!value) continue;
+    const key = value.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(value);
+  }
+  return out;
+}
+
 const PORT = process.env.PORT ? Number(process.env.PORT) : 3000;
 const JWT_SECRET = (process.env.JWT_SECRET || "dev_change_me").trim();
 const JWT_EXPIRES_IN = (process.env.JWT_EXPIRES_IN || "7d").trim();
@@ -168,6 +182,156 @@ async function buildUniqueUsername(email) {
   }
 
   return `user_${Math.floor(Math.random() * 1_000_000)}`;
+}
+
+async function ensureDatabaseSchemaCompatibility() {
+  if (!pool) return;
+  const db = requireDb();
+
+  await db.query(`
+    ALTER TABLE users
+    ADD COLUMN IF NOT EXISTS is_organisator BOOLEAN DEFAULT FALSE
+  `);
+
+  await db.query(`
+    DO $$
+    BEGIN
+      IF EXISTS (
+        SELECT 1
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = 'users'
+          AND column_name = 'is_organizer'
+      ) THEN
+        UPDATE users
+        SET is_organisator = COALESCE(is_organisator, is_organizer)
+        WHERE is_organisator IS DISTINCT FROM COALESCE(is_organizer, FALSE);
+      END IF;
+    END $$;
+  `);
+
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS friend_requests (
+      id              SERIAL PRIMARY KEY,
+      from_user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      to_user_id      INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      status          VARCHAR(20) NOT NULL DEFAULT 'pending'
+                      CHECK (status IN ('pending', 'accepted', 'declined', 'cancelled')),
+      created_at      TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+      responded_at    TIMESTAMP WITH TIME ZONE,
+      CONSTRAINT unique_friend_request UNIQUE (from_user_id, to_user_id),
+      CONSTRAINT chk_friend_request_self CHECK (from_user_id <> to_user_id)
+    )
+  `);
+
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS user_friends (
+      user_id         INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      friend_user_id  INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      created_at      TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (user_id, friend_user_id),
+      CONSTRAINT chk_friends_self CHECK (user_id <> friend_user_id)
+    )
+  `);
+
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS event_attendance (
+      id              SERIAL PRIMARY KEY,
+      user_id         INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      event_key       TEXT NOT NULL,
+      is_going        BOOLEAN NOT NULL DEFAULT TRUE,
+      created_at      TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+      updated_at      TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+      CONSTRAINT unique_attendance UNIQUE (user_id, event_key)
+    )
+  `);
+
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS event_invites (
+      id              SERIAL PRIMARY KEY,
+      event_key       TEXT NOT NULL,
+      inviter_id      INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      invitee_id      INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      status          VARCHAR(20) NOT NULL DEFAULT 'pending'
+                      CHECK (status IN ('pending', 'accepted', 'declined', 'cancelled')),
+      created_at      TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+      responded_at    TIMESTAMP WITH TIME ZONE,
+      CONSTRAINT unique_invite UNIQUE (event_key, invitee_id),
+      CONSTRAINT chk_invite_self CHECK (inviter_id <> invitee_id)
+    )
+  `);
+
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS notifications (
+      id              SERIAL PRIMARY KEY,
+      user_id         INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      type            VARCHAR(50) NOT NULL,
+      title           TEXT NOT NULL,
+      message         TEXT NOT NULL,
+      payload         JSONB DEFAULT '{}'::jsonb,
+      is_read         BOOLEAN NOT NULL DEFAULT FALSE,
+      created_at      TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+
+  await db.query(`
+    CREATE INDEX IF NOT EXISTS idx_friend_requests_to_status
+    ON friend_requests(to_user_id, status)
+  `);
+  await db.query(`
+    CREATE INDEX IF NOT EXISTS idx_friend_requests_from_status
+    ON friend_requests(from_user_id, status)
+  `);
+  await db.query(`
+    CREATE INDEX IF NOT EXISTS idx_user_friends_user
+    ON user_friends(user_id)
+  `);
+  await db.query(`
+    CREATE INDEX IF NOT EXISTS idx_event_attendance_event
+    ON event_attendance(event_key, is_going)
+  `);
+  await db.query(`
+    CREATE INDEX IF NOT EXISTS idx_event_attendance_user
+    ON event_attendance(user_id, updated_at DESC)
+  `);
+  await db.query(`
+    CREATE INDEX IF NOT EXISTS idx_event_invites_invitee_status
+    ON event_invites(invitee_id, status)
+  `);
+  await db.query(`
+    CREATE INDEX IF NOT EXISTS idx_notifications_user_read_created
+    ON notifications(user_id, is_read, created_at DESC)
+  `);
+
+  await db.query(`
+    CREATE OR REPLACE FUNCTION update_updated_at_column()
+    RETURNS TRIGGER AS $$
+    BEGIN
+      NEW.updated_at = CURRENT_TIMESTAMP;
+      RETURN NEW;
+    END;
+    $$ LANGUAGE plpgsql
+  `);
+
+  await db.query(`
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1
+        FROM pg_trigger t
+        JOIN pg_class c ON c.oid = t.tgrelid
+        JOIN pg_namespace n ON n.oid = c.relnamespace
+        WHERE t.tgname = 'update_event_attendance_updated_at'
+          AND c.relname = 'event_attendance'
+          AND n.nspname = 'public'
+      ) THEN
+        CREATE TRIGGER update_event_attendance_updated_at
+          BEFORE UPDATE ON event_attendance
+          FOR EACH ROW
+          EXECUTE FUNCTION update_updated_at_column();
+      END IF;
+    END $$;
+  `);
 }
 
 // -----------------------------
@@ -1174,20 +1338,6 @@ app.get("/notifications/stream", async (req, res) => {
 // -----------------------------
 // Event API (existing)
 // -----------------------------
-
-function dedupe(events) {
-  const seen = new Set();
-  const out = [];
-  for (const raw of String(rawValue).split(/[,\n]/)) {
-    const value = cleanText(raw);
-    if (!value) continue;
-    const key = value.toLowerCase();
-    if (seen.has(key)) continue;
-    seen.add(key);
-    out.push(value);
-  }
-  return out;
-}
 
 function cleanText(value) {
   if (value == null) return null;
@@ -2232,20 +2382,6 @@ async function fetchTicketmasterEventById({
       apikey: process.env.TICKETMASTER_API_KEY,
     },
     timeout: 15000,
-    return {
-      source: "ticketmaster",
-      sourceId: String(e.id),
-      title: e.name,
-      start: e.dates?.start?.dateTime || e.dates?.start?.localDate || null,
-      venue: venue?.name || null,
-      city: venue?.city?.name || null,
-      lat: venue?.location?.latitude ? Number(venue.location.latitude) : null,
-      lng: venue?.location?.longitude ? Number(venue.location.longitude) : null,
-      url: e.url || null,
-      imageUrl: pickTicketmasterImage(e?.images),
-      genre,
-      artistName: attraction?.name || null,
-    };
   });
 
   if (!data || !data.id) return null;
@@ -2860,29 +2996,6 @@ app.post("/ai/success-predictor", async (req, res) => {
   }
 });
 
-// -----------------------------
-const PORT = process.env.PORT ? Number(process.env.PORT) : 3000;
-app.listen(PORT, () => {
-  console.log(`API running on http://localhost:${PORT}`);
-  console.log(
-    `Scraper: ${
-      SCRAPE_CONFIG.enabled ? "enabled" : "disabled"
-    }, sources=${SCRAPE_CONFIG.sourceUrls.length}, countryFilters=${SCRAPE_CONFIG.allowedCountries.length}, cityFilters=${SCRAPE_CONFIG.allowedCities.length}`
-  );
-  console.log(
-    `Scrape cache: ttl=${SCRAPE_CACHE_CONFIG.ttlMs}ms, wait=${SCRAPE_CACHE_CONFIG.requestWaitMs}ms`
-  );
-
-  if (SCRAPE_CONFIG.enabled && SCRAPE_CONFIG.sourceUrls.length > 0) {
-    startScrapeRefresh()
-      .then((events) => {
-        console.log(`Scrape cache warmed with ${events.length} events`);
-      })
-      .catch((err) => {
-        console.warn(`Scrape cache warm-up failed: ${String(err?.message || err)}`);
-      });
-  }
-});
 // Health
 // -----------------------------
 app.get("/health", async (_req, res) => {
@@ -2894,8 +3007,6 @@ app.get("/health", async (_req, res) => {
     return res.status(500).json({ ok: false, db: "error", error: String(err) });
   }
 });
-
-app.listen(PORT, () => console.log(`API running on http://localhost:${PORT}`));
 
 // -----------------------------
 // Copilot (NL prompt -> intent -> events -> ranking)
@@ -3357,3 +3468,38 @@ app.post("/copilot", authOptional, async (req, res) => {
     return res.status(500).json({ ok: false, error: err?.message || String(err) });
   }
 });
+
+async function startApiServer() {
+  try {
+    await ensureDatabaseSchemaCompatibility();
+  } catch (err) {
+    console.error(
+      `Failed to ensure database schema compatibility: ${String(err?.message || err)}`
+    );
+    process.exit(1);
+  }
+
+  app.listen(PORT, () => {
+    console.log(`API running on http://localhost:${PORT}`);
+    console.log(
+      `Scraper: ${
+        SCRAPE_CONFIG.enabled ? "enabled" : "disabled"
+      }, sources=${SCRAPE_CONFIG.sourceUrls.length}, countryFilters=${SCRAPE_CONFIG.allowedCountries.length}, cityFilters=${SCRAPE_CONFIG.allowedCities.length}`
+    );
+    console.log(
+      `Scrape cache: ttl=${SCRAPE_CACHE_CONFIG.ttlMs}ms, wait=${SCRAPE_CACHE_CONFIG.requestWaitMs}ms`
+    );
+
+    if (SCRAPE_CONFIG.enabled && SCRAPE_CONFIG.sourceUrls.length > 0) {
+      startScrapeRefresh()
+        .then((events) => {
+          console.log(`Scrape cache warmed with ${events.length} events`);
+        })
+        .catch((err) => {
+          console.warn(`Scrape cache warm-up failed: ${String(err?.message || err)}`);
+        });
+    }
+  });
+}
+
+startApiServer();
