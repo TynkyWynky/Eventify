@@ -171,14 +171,18 @@ body::before {
 /* =========================
    LAYOUT
    ========================= */
-.appShell { min-height: 100%; }
+.appShell {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
 
 .appPage {
   max-width: 72rem;
   margin: 0 auto;
   padding: 0 var(--space-4) var(--space-6);
+  flex: 1;
 }
-
 /* =========================
    NAVBAR
    ========================= */
@@ -3078,4 +3082,204 @@ a.accountFriendAction {
 
 @media (min-width: 640px) {
   .eventsGrid.eventsGridSplit { grid-template-columns: 1fr; }
+}
+
+/* =========================
+   FOOTER
+   ========================= */
+.siteFooter {
+  margin-top: var(--space-6);
+  border-top: 1px solid var(--borderSoft);
+  background:
+    radial-gradient(760px 260px at 18% 0%, rgba(178,106,168,.18), transparent 60%),
+    radial-gradient(760px 260px at 82% 100%, rgba(139,63,127,.14), transparent 60%),
+    rgba(0,0,0,.18);
+  backdrop-filter: blur(10px);
+}
+
+.footerInner {
+  max-width: 72rem;
+  margin: 0 auto;
+  padding: var(--space-6) var(--space-4);
+}
+
+.footerGrid {
+  display: grid;
+  grid-template-columns: 1.6fr 1fr 1fr 1fr;
+  gap: var(--space-6);
+}
+
+.footerLogo {
+  display: inline-block;
+  font-family: var(--fontBrand);
+  font-size: 28px;
+  line-height: 1;
+  letter-spacing: 0.4px;
+  text-decoration: none;
+}
+
+.footerTagline {
+  margin-top: 10px;
+  color: rgba(255,255,255,.72);
+  line-height: 1.45;
+  max-width: 42ch;
+}
+
+.footerMeta {
+  margin-top: 10px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  color: rgba(255,255,255,.58);
+  font-size: 12px;
+}
+
+.footerMetaDot { opacity: .7; }
+
+.footerHeading {
+  font-weight: 950;
+  letter-spacing: .2px;
+  margin-bottom: 10px;
+}
+
+.footerCol { min-width: 0; }
+
+.footerLink {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 0;
+  text-decoration: none;
+  color: rgba(255,255,255,.86);
+}
+
+.footerLink:hover {
+  color: var(--text);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.footerLinkExternal svg { opacity: .9; }
+
+.footerBottom {
+  margin-top: var(--space-6);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--borderSoft);
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.footerFineprint {
+  color: rgba(255,255,255,.58);
+  font-size: 12px;
+  line-height: 1.45;
+  max-width: 76ch;
+}
+
+.footerTinyLinks {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: rgba(255,255,255,.58);
+  font-size: 12px;
+}
+
+.footerTinyLink {
+  text-decoration: none;
+  color: rgba(255,255,255,.78);
+}
+
+.footerTinyLink:hover {
+  color: var(--text);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.footerTinyDot { opacity: .7; }
+
+@media (max-width: 980px) {
+  .footerGrid { grid-template-columns: 1.5fr 1fr 1fr; }
+  .footerGrid > :last-child { grid-column: 1 / -1; }
+}
+
+@media (max-width: 720px) {
+  .footerGrid { grid-template-columns: 1fr 1fr; }
+}
+
+@media (max-width: 560px) {
+  .footerGrid { grid-template-columns: 1fr; }
+}
+
+/* On small screens, leave a bit of space so the floating assistant doesn't sit on top of footer links */
+@media (max-width: 760px) {
+  .footerInner { padding-bottom: calc(var(--space-6) + 76px); }
+}
+
+/* =========================
+   LEGAL PAGES
+   ========================= */
+.legalWrap {
+  max-width: 56rem;
+  margin: var(--space-6) auto 0;
+}
+
+.legalHeader { margin-bottom: var(--space-4); }
+
+.legalTitle {
+  margin: 0 0 8px;
+  font-size: 34px;
+  font-weight: 950;
+  letter-spacing: .2px;
+}
+
+.legalLead {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.5;
+  max-width: 74ch;
+}
+
+.legalCard {
+  border: 1px solid var(--borderSoft);
+  background: rgba(18,18,26,.82);
+  border-radius: var(--radius2);
+  padding: var(--space-6);
+  box-shadow: 0 0 0 1px rgba(255,255,255,.03) inset;
+}
+
+.legalCard a {
+  color: rgba(255,255,255,.92);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.legalCard h2 {
+  margin: 18px 0 8px;
+  font-size: 16px;
+  font-weight: 950;
+}
+
+.legalCard p {
+  margin: 0;
+  color: rgba(255,255,255,.82);
+  line-height: 1.6;
+}
+
+.legalCard p + p { margin-top: 10px; }
+
+.legalList {
+  margin: 8px 0 0;
+  padding-left: 18px;
+  color: rgba(255,255,255,.82);
+  line-height: 1.6;
+}
+
+.legalList li { margin: 6px 0; }
+
+@media (max-width: 560px) {
+  .legalTitle { font-size: 28px; }
+  .legalCard { padding: var(--space-5); }
 }

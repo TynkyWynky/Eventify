@@ -15,6 +15,11 @@ import MyEventsPage from "../pages/MyEventsPage";
 
 import AdminDashboard from "../pages/AdminDashboard";
 
+import PrivacyPage from "../pages/PrivacyPage";
+import TermsPage from "../pages/TermsPage";
+import CookiesPage from "../pages/CookiesPage";
+import LegalNoticePage from "../pages/LegalNoticePage";
+
 export const appRouter = createBrowserRouter([
   {
     path: "/",
@@ -28,6 +33,10 @@ export const appRouter = createBrowserRouter([
 
       // ✅ allow everyone (page handles auth + organizer/user UI)
       { path: "my-events", element: <MyEventsPage /> },
+      { path: "privacy", element: <PrivacyPage /> },
+      { path: "terms", element: <TermsPage /> },
+      { path: "cookies", element: <CookiesPage /> },
+      { path: "legal", element: <LegalNoticePage /> },
 
       {
         element: <RequireAuth />,
