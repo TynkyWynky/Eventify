@@ -2864,3 +2864,218 @@ a.accountFriendAction {
 
   .aiToolbarHint { display: none; }
 }
+
+/* =========================
+   MAP (Leaflet)
+   ========================= */
+.leafletMapWrap {
+  border-radius: var(--radius2);
+  border: 1px solid var(--border);
+  overflow: hidden;
+  background: rgba(0,0,0,.22);
+}
+
+.leafletMap {
+  width: 100%;
+  height: 320px;
+}
+
+/* Dashboard map sizing (extra specificity so it wins over responsive .leafletMap rules) */
+.leafletMap.leafletMapDashboard { height: 520px; }
+
+@media (max-width: 760px) {
+  .leafletMap.leafletMapDashboard { height: 360px; }
+}
+
+/* Dot markers (divIcon) */
+.eventDotIcon,
+.originDotIcon {
+  background: transparent !important;
+  border: none !important;
+}
+
+.eventDot,
+.originDot {
+  display: block;
+  border-radius: 999px;
+  transform: translateZ(0);
+}
+
+.eventDot {
+  width: 12px;
+  height: 12px;
+  background: var(--accent2);
+  box-shadow:
+    0 0 0 2px rgba(0,0,0,.55),
+    0 0 18px rgba(178,106,168,.35);
+  transition: transform .12s ease, box-shadow .12s ease;
+}
+
+.eventDotIcon:hover .eventDot {
+  transform: scale(1.25);
+  box-shadow:
+    0 0 0 2px rgba(0,0,0,.55),
+    0 0 28px rgba(178,106,168,.55);
+}
+
+.originDot {
+  width: 14px;
+  height: 14px;
+  background: rgba(255,255,255,.95);
+  box-shadow:
+    0 0 0 2px rgba(0,0,0,.55),
+    0 0 22px rgba(255,255,255,.18);
+}
+
+/* Tooltip styling (base) + FIX overflow/wrapping */
+.leaflet-tooltip.eventMapTooltip {
+  background: rgba(18,18,26,.92);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 8px 10px;
+  box-shadow: var(--glow);
+
+  /* Tooltip should not block hover/click */
+  pointer-events: none;
+
+  /* IMPORTANT: Leaflet sets nowrap by default */
+  white-space: normal !important;
+
+  /* Keep it readable */
+  max-width: 340px;
+}
+
+.leaflet-tooltip.eventMapTooltip b {
+  font-weight: 900;
+}
+
+.leaflet-tooltip.eventMapTooltip:before {
+  border-top-color: rgba(18,18,26,.92);
+}
+
+/* =========================
+   EVENTS MAP — TOOLTIP WITH IMAGE (fixed width + clamp)
+   ========================= */
+.eventMapTipCard {
+  width: min(340px, 82vw);
+  display: grid;
+  grid-template-columns: 86px 1fr;
+  gap: 10px;
+  align-items: center;
+}
+
+.eventMapTipImg {
+  width: 86px;
+  height: 58px;
+  object-fit: cover;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.eventMapTipText {
+  min-width: 0; /* needed for ellipsis/clamp inside grid */
+}
+
+/* Title: max 2 lines then ... */
+.eventMapTipTitle {
+  font-weight: 900;
+  font-size: 12px;
+  line-height: 1.15;
+  margin-bottom: 4px;
+
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+
+  overflow: hidden;
+  text-overflow: ellipsis;
+
+  /* fallback height in case clamp isn't applied */
+  max-height: calc(1.15em * 2);
+}
+
+/* Meta: 1 line max */
+.eventMapTipMeta {
+  font-size: 11px;
+  opacity: 0.85;
+  line-height: 1.2;
+
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* =========================
+   DASHBOARD — LIST / MAP SWITCHER
+   ========================= */
+.resultsViewBar {
+  margin-top: var(--space-3);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.viewToggle {
+  display: inline-flex;
+  gap: 4px;
+  padding: 4px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: rgba(255,255,255,.06);
+}
+
+.viewToggleBtn {
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  padding: 8px 12px;
+  border-radius: 999px;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.viewToggleBtn:hover {
+  color: var(--text);
+}
+
+.viewToggleBtn.isActive {
+  color: var(--text);
+  background: rgba(178,106,168,.22);
+  box-shadow: 0 0 0 1px rgba(178,106,168,.35) inset;
+}
+
+.eventsMapPanel {
+  margin-top: var(--space-4);
+}
+
+/* Split layout */
+.dashSplit {
+  margin-top: var(--space-4);
+  display: grid;
+  gap: var(--space-4);
+}
+
+@media (min-width: 980px) {
+  .dashSplit {
+    grid-template-columns: minmax(360px, 1fr) minmax(420px, 1fr);
+    align-items: start;
+  }
+
+  .dashSplitMap {
+    position: sticky;
+    top: 86px;
+  }
+}
+
+.eventsGrid.eventsGridSplit {
+  margin-top: 0;
+}
+
+@media (min-width: 640px) {
+  .eventsGrid.eventsGridSplit { grid-template-columns: 1fr; }
+}

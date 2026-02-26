@@ -30,6 +30,7 @@ import {
   setCityOrigin,
   subscribeOriginChanged,
 } from "../data/location/locationStore";
+import EventsMap from "../components/EventsMap";
 
 function clamp(n: number, min: number, max: number) {
   return Math.min(max, Math.max(min, n));
@@ -105,6 +106,10 @@ export default function EventDashboardPage() {
   const selectedStyle = MUSIC_STYLES.includes(styleRaw) ? styleRaw : "All";
   const maxDistanceKm = parseKm(searchParams.get("km"), 20);
 
+  const viewRaw = (searchParams.get("view") ?? "list").trim().toLowerCase();
+  const viewMode: "list" | "map" | "split" =
+    viewRaw === "map" ? "map" : viewRaw === "split" ? "split" : "list";
+
   // shareable location param
   const locRaw = (searchParams.get("loc") ?? "").trim();
 
@@ -137,7 +142,12 @@ export default function EventDashboardPage() {
     setCityOrigin(city.name);
   }, [locRaw]);
 
-  function updateParams(next: { style?: string; km?: number; loc?: string }) {
+  function updateParams(next: {
+    style?: string;
+    km?: number;
+    loc?: string;
+    view?: "list" | "map" | "split";
+  }) {
     const sp = new URLSearchParams(searchParams);
 
     if (next.style !== undefined) {
@@ -157,6 +167,11 @@ export default function EventDashboardPage() {
       if (!clean || clean === "Brussels") sp.delete("loc");
       else if (clean === "My location") sp.set("loc", "me");
       else sp.set("loc", clean);
+    }
+
+    if (next.view !== undefined) {
+      if (!next.view || next.view === "list") sp.delete("view");
+      else sp.set("view", next.view);
     }
 
     setSearchParams(sp, { replace: true });
@@ -592,17 +607,95 @@ export default function EventDashboardPage() {
         </div>
       </div>
 
-      <div className="eventsGrid">
-        {isLoading && events.length === 0 ? (
-          <div className="sectionHint">Loading events list…</div>
-        ) : eventsWithAi.length === 0 ? (
-          <div className="sectionHint">No events match your filters.</div>
-        ) : (
-          eventsWithAi.map((e) => (
-            <EventCard key={e.id} event={e} search={location.search} />
-          ))
-        )}
+      <div className="resultsViewBar">
+        <div className="viewToggle" role="tablist" aria-label="Results view">
+          <button
+            type="button"
+            className={`viewToggleBtn ${viewMode === "list" ? "isActive" : ""}`}
+            onClick={() => updateParams({ view: "list" })}
+          >
+            List
+          </button>
+          <button
+            type="button"
+            className={`viewToggleBtn ${viewMode === "map" ? "isActive" : ""}`}
+            onClick={() => updateParams({ view: "map" })}
+          >
+            Map
+          </button>
+          <button
+            type="button"
+            className={`viewToggleBtn ${viewMode === "split" ? "isActive" : ""}`}
+            onClick={() => updateParams({ view: "split" })}
+          >
+            Split
+          </button>
+        </div>
+
+        {viewMode !== "list" ? (
+          <div className="sectionHint">
+            Hover a dot to see the event name • Click a dot to open the details
+          </div>
+        ) : null}
       </div>
+
+      {viewMode === "map" ? (
+        <div className="eventsMapPanel">
+          {isLoading && events.length === 0 ? (
+            <div className="sectionHint">Loading events on the map…</div>
+          ) : eventsWithAi.length === 0 ? (
+            <div className="sectionHint">No events match your filters.</div>
+          ) : (
+            <EventsMap
+              events={eventsWithAi}
+              origin={{ lat: origin.lat, lng: origin.lng, label: origin.label }}
+              search={location.search}
+              className="leafletMap leafletMapDashboard"
+            />
+          )}
+        </div>
+      ) : viewMode === "split" ? (
+        <div className="dashSplit">
+          <div className="dashSplitList">
+            <div className="eventsGrid eventsGridSplit">
+              {isLoading && events.length === 0 ? (
+                <div className="sectionHint">Loading events list…</div>
+              ) : eventsWithAi.length === 0 ? (
+                <div className="sectionHint">No events match your filters.</div>
+              ) : (
+                eventsWithAi.map((e) => (
+                  <EventCard key={e.id} event={e} search={location.search} />
+                ))
+              )}
+            </div>
+          </div>
+
+          <div className="dashSplitMap">
+            {isLoading && events.length === 0 ? (
+              <div className="sectionHint">Loading events on the map…</div>
+            ) : eventsWithAi.length === 0 ? null : (
+              <EventsMap
+                events={eventsWithAi}
+                origin={{ lat: origin.lat, lng: origin.lng, label: origin.label }}
+                search={location.search}
+                className="leafletMap leafletMapDashboard"
+              />
+            )}
+          </div>
+        </div>
+      ) : (
+        <div className="eventsGrid">
+          {isLoading && events.length === 0 ? (
+            <div className="sectionHint">Loading events list…</div>
+          ) : eventsWithAi.length === 0 ? (
+            <div className="sectionHint">No events match your filters.</div>
+          ) : (
+            eventsWithAi.map((e) => (
+              <EventCard key={e.id} event={e} search={location.search} />
+            ))
+          )}
+        </div>
+      )}
     </div>
   );
 }
