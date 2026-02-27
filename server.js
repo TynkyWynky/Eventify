@@ -332,6 +332,46 @@ async function ensureDatabaseSchemaCompatibility() {
       END IF;
     END $$;
   `);
+
+
+  // Admin moderation: allow disabling remote/scraped events (we can't delete because they can re-appear)
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS event_moderation (
+      event_key TEXT PRIMARY KEY,
+      is_disabled BOOLEAN NOT NULL DEFAULT TRUE,
+      reason TEXT,
+      snapshot JSONB DEFAULT '{}'::jsonb,
+      disabled_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+
+  await db.query(`
+    CREATE INDEX IF NOT EXISTS idx_event_moderation_disabled
+    ON event_moderation(is_disabled)
+  `);
+
+  await db.query(`
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1
+        FROM pg_trigger t
+        JOIN pg_class c ON c.oid = t.tgrelid
+        JOIN pg_namespace n ON n.oid = c.relnamespace
+        WHERE t.tgname = 'update_event_moderation_updated_at'
+          AND c.relname = 'event_moderation'
+          AND n.nspname = 'public'
+      ) THEN
+        CREATE TRIGGER update_event_moderation_updated_at
+          BEFORE UPDATE ON event_moderation
+          FOR EACH ROW
+          EXECUTE FUNCTION update_updated_at_column();
+      END IF;
+    END $$;
+  `);
+
 }
 
 // -----------------------------
@@ -593,6 +633,125 @@ app.patch("/admin/users/:id/active", authRequired, requireRole(["admin"]), async
   }
 });
 
+
+
+/**
+ * GET /admin/events/disabled
+ * Returns disabled event keys stored in DB so admins can re-enable them.
+ * Query params:
+ * - q (optional) : search in event_key / reason / snapshot.title
+ */
+app.get("/admin/events/disabled", authRequired, requireRole(["admin"]), async (req, res) => {
+  try {
+    const q = String(req.query?.q || "").trim();
+    const db = requireDb();
+
+    const like = q ? `%${q}%` : null;
+    const r = await db.query(
+      `
+      SELECT
+        m.event_key,
+        m.reason,
+        m.snapshot,
+        m.disabled_by,
+        m.created_at,
+        m.updated_at,
+        u.id as u_id,
+        u.username as u_username,
+        u.email as u_email,
+        u.first_name as u_first_name,
+        u.last_name as u_last_name
+      FROM event_moderation m
+      LEFT JOIN users u ON u.id = m.disabled_by
+      WHERE m.is_disabled = TRUE
+        AND ($1::text IS NULL
+          OR m.event_key ILIKE $1
+          OR COALESCE(m.reason, '') ILIKE $1
+          OR COALESCE(m.snapshot->>'title', '') ILIKE $1
+        )
+      ORDER BY m.updated_at DESC
+      LIMIT 200
+      `,
+      [like]
+    );
+
+    const items = (r.rows || []).map((row) => {
+      const first = String(row.u_first_name || '').trim();
+      const last = String(row.u_last_name || '').trim();
+      const name = `${first} ${last}`.trim() || String(row.u_username || 'Admin');
+
+      return {
+        eventKey: String(row.event_key),
+        reason: row.reason ? String(row.reason) : null,
+        snapshot: row.snapshot || {},
+        disabledBy: row.u_id
+          ? {
+              id: String(row.u_id),
+              username: String(row.u_username || ''),
+              name,
+              email: normalizeEmail(row.u_email),
+            }
+          : null,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+      };
+    });
+
+    return res.json({ ok: true, items });
+  } catch (err) {
+    const status = err?.status || 500;
+    return res.status(status).json({ ok: false, error: err?.message || String(err) });
+  }
+});
+
+/**
+ * PATCH /admin/events/:eventKey/disabled
+ * Body: { disabled: boolean, reason?: string, snapshot?: object }
+ */
+app.patch("/admin/events/:eventKey/disabled", authRequired, requireRole(["admin"]), async (req, res) => {
+  try {
+    const eventKey = String(req.params.eventKey || '').trim();
+    const disabled = Boolean(req.body?.disabled);
+    const reason = cleanText(req.body?.reason);
+    const snapshot = objectOrEmpty(req.body?.snapshot);
+
+    if (!eventKey) return res.status(400).json({ ok: false, error: 'Missing eventKey' });
+
+    const me = mustInt(req.auth?.sub, 'user id');
+    const db = requireDb();
+
+    const r = await db.query(
+      `
+      INSERT INTO event_moderation (event_key, is_disabled, reason, snapshot, disabled_by)
+      VALUES ($1, $2, $3, $4::jsonb, $5)
+      ON CONFLICT (event_key) DO UPDATE
+      SET is_disabled = EXCLUDED.is_disabled,
+          reason = EXCLUDED.reason,
+          snapshot = EXCLUDED.snapshot,
+          disabled_by = EXCLUDED.disabled_by,
+          updated_at = CURRENT_TIMESTAMP
+      RETURNING event_key, is_disabled, reason, snapshot, created_at, updated_at
+      `,
+      [eventKey, disabled, reason, JSON.stringify(snapshot || {}), me]
+    );
+
+    invalidateModerationCache();
+
+    const row = r.rows[0];
+    return res.json({
+      ok: true,
+      eventKey: String(row.event_key),
+      disabled: Boolean(row.is_disabled),
+      reason: row.reason ? String(row.reason) : null,
+      snapshot: row.snapshot || {},
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    });
+  } catch (err) {
+    const status = err?.status || 500;
+    return res.status(status).json({ ok: false, error: err?.message || String(err) });
+  }
+});
 // -----------------------------
 // Social + Notifications (Friends / Going / Invites / Real-time)
 // -----------------------------
@@ -1718,6 +1877,14 @@ const scrapeCache = {
   lastError: null,
 };
 
+// Cache for admin-moderation (disabled events) so we don't hit DB on every /events call
+const moderationCache = {
+  disabledKeys: new Set(),
+  fetchedAt: 0,
+  ttlMs: 10 * 1000,
+};
+
+
 const SCRAPE_ALLOWED_COUNTRIES_NORMALIZED = SCRAPE_CONFIG.allowedCountries
   .map((value) => normalizeCountryValue(value))
   .filter(Boolean);
@@ -1738,6 +1905,55 @@ function getScrapeCacheAgeMs() {
   const ageMs = Date.now() - scrapeCache.fetchedAt;
   return ageMs >= 0 ? ageMs : 0;
 }
+
+function invalidateModerationCache() {
+  moderationCache.fetchedAt = 0;
+  moderationCache.disabledKeys = new Set();
+}
+
+async function getDisabledEventKeysOptional() {
+  if (!pool) return new Set();
+
+  const now = Date.now();
+  if (moderationCache.fetchedAt && now - moderationCache.fetchedAt < moderationCache.ttlMs) {
+    return moderationCache.disabledKeys;
+  }
+
+  try {
+    const db = requireDb();
+    const r = await db.query("SELECT event_key FROM event_moderation WHERE is_disabled = TRUE");
+    const set = new Set((r.rows || []).map((row) => String(row.event_key)));
+    moderationCache.disabledKeys = set;
+    moderationCache.fetchedAt = now;
+    return set;
+  } catch {
+    // Fail open: if moderation table isn't there or DB is down, don't break event browsing.
+    moderationCache.disabledKeys = new Set();
+    moderationCache.fetchedAt = now;
+    return moderationCache.disabledKeys;
+  }
+}
+
+function filterDisabledApiEvents(events, disabledKeys) {
+  if (!disabledKeys || disabledKeys.size === 0) return { events, filteredOut: 0 };
+
+  let filteredOut = 0;
+  const out = (events || []).filter((e, idx) => {
+    let key = null;
+    try {
+      key = buildEventKeyFromApiEvent(e, idx);
+    } catch {
+      key = null;
+    }
+    if (!key) return true;
+    const blocked = disabledKeys.has(key);
+    if (blocked) filteredOut++;
+    return !blocked;
+  });
+
+  return { events: out, filteredOut };
+}
+
 
 function buildScrapeFetchOptions() {
   return {
@@ -2601,6 +2817,12 @@ app.get("/events", async (req, res) => {
     const combinedEvents = dedupe([...tmEvents, ...scrapedEvents]);
     let events = interleaveBySource(combinedEvents, maxResultsNum);
 
+    // Admin moderation: hide disabled events (they can be re-fetched from external APIs)
+    const disabledKeys = await getDisabledEventKeysOptional();
+    const moderationFiltered = filterDisabledApiEvents(events, disabledKeys);
+    events = moderationFiltered.events;
+    const disabledFilteredOut = moderationFiltered.filteredOut;
+
     const wantSetlists = String(includeSetlists) === "1";
     if (wantSetlists) {
       const artists = [];
@@ -2671,6 +2893,7 @@ app.get("/events", async (req, res) => {
       },
       includeSetlists: wantSetlists,
       sourceCounts: summarizeSources(events),
+      disabledFilteredOut,
       sourceWarnings: sourceErrors.length > 0 ? sourceErrors : undefined,
       count: events.length,
       events,
@@ -2713,6 +2936,12 @@ app.get("/events/enrich", async (req, res) => {
         ok: false,
         error: "Ticketmaster event not found for provided sourceId.",
       });
+    }
+
+    const disabledKeys = await getDisabledEventKeysOptional();
+    const key = buildEventKeyFromApiEvent(event, 0);
+    if (disabledKeys.size > 0 && disabledKeys.has(key)) {
+      return res.status(404).json({ ok: false, error: 'Event is disabled by admin moderation.' });
     }
 
     return res.json({ ok: true, event });
@@ -3332,6 +3561,13 @@ app.post("/copilot", authOptional, async (req, res) => {
       };
     });
 
+
+
+    // Admin moderation: remove disabled events from copilot suggestions
+    const disabledKeysForCopilot = await getDisabledEventKeysOptional();
+    if (disabledKeysForCopilot.size > 0) {
+      candidates = candidates.filter((c) => !disabledKeysForCopilot.has(c.eventKey));
+    }
     // Filter by date if user asked (Friday / weekend / tomorrow / ...)
     if (dateRange) {
       candidates = candidates.filter((c) => {

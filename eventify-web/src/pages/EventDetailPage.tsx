@@ -205,6 +205,7 @@ function getMatchLevel(score: number | null) {
 export default function EventDetailPage() {
   const { eventId } = useParams();
   const { user, token } = useAuth();
+  const isAdmin = user?.role === "admin";
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -934,6 +935,52 @@ export default function EventDetailPage() {
               <a className="btn btnPrimary" href={event.sourceUrl} target="_blank" rel="noreferrer">
                 Tickets
               </a>
+            ) : null}
+
+            {isAdmin && token ? (
+              <button
+                className="btn btnSecondary"
+                type="button"
+                title="Admin: disable this event (it will disappear from the feed)"
+                onClick={async () => {
+                  if (!eventId) return;
+                  const ok = confirm(
+                    "Disable this event? It will be hidden for everyone (because it can be re-fetched from the external API)."
+                  );
+                  if (!ok) return;
+
+                  const reason = window.prompt("Reason (optional)", "") || "";
+
+                  try {
+                    await apiFetch<{ ok: boolean }>(
+                      `/admin/events/${encodeURIComponent(eventId)}/disabled`,
+                      {
+                        method: "PATCH",
+                        token,
+                        body: {
+                          disabled: true,
+                          reason: reason.trim() || null,
+                          snapshot: {
+                            title: event.title,
+                            city: event.city,
+                            startIso: event.startIso || null,
+                            source: event.source || null,
+                            sourceId: event.sourceId || null,
+                            url: event.sourceUrl || null,
+                          },
+                        },
+                      }
+                    );
+
+                    alert("Event disabled.");
+                    navigate(backTo);
+                  } catch (err: unknown) {
+                    alert(err instanceof Error ? err.message : String(err));
+                  }
+                }}
+              >
+                Disable (admin)
+              </button>
             ) : null}
 
             <a className="btn btnSecondary" href={googleMapsUrl} target="_blank" rel="noreferrer">

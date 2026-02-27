@@ -207,6 +207,22 @@ CREATE TABLE notifications (
 CREATE INDEX idx_notifications_user_read_created ON notifications(user_id, is_read, created_at DESC);
 
 -- ============================================
+-- EVENT MODERATION (Disable remote/scraped events without deleting)
+-- ============================================
+CREATE TABLE event_moderation (
+    event_key       TEXT PRIMARY KEY,
+    is_disabled      BOOLEAN NOT NULL DEFAULT TRUE,
+    reason          TEXT,
+    snapshot        JSONB DEFAULT '{}'::jsonb,
+    disabled_by     INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    created_at      TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at      TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX idx_event_moderation_disabled ON event_moderation(is_disabled);
+
+
+-- ============================================
 -- Function to hash password using bcrypt
 -- ============================================
 CREATE OR REPLACE FUNCTION hash_password(plain_password TEXT)
@@ -247,6 +263,11 @@ CREATE TRIGGER update_events_updated_at
 -- Trigger for event_attendance updated_at
 CREATE TRIGGER update_event_attendance_updated_at
     BEFORE UPDATE ON event_attendance
+    FOR EACH ROW
+    EXECUTE FUNCTION update_updated_at_column();
+
+CREATE TRIGGER update_event_moderation_updated_at
+    BEFORE UPDATE ON event_moderation
     FOR EACH ROW
     EXECUTE FUNCTION update_updated_at_column();
 

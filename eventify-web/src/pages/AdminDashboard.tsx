@@ -2,7 +2,13 @@ import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
 import type { Role } from "../auth/authTypes";
-import { apiFetch, type AdminUsersResponse, type AdminUserDto } from "../auth/apiClient";
+import {
+  apiFetch,
+  type AdminUsersResponse,
+  type AdminUserDto,
+  type AdminDisabledEventsResponse,
+  type DisabledEventDto,
+} from "../auth/apiClient";
 
 import {
   listOrganizerEventsAll,
@@ -52,6 +58,11 @@ export default function AdminDashboard() {
   // Organizer events review state
   const [reviewEvents, setReviewEvents] = useState<OrganizerEvent[]>([]);
   const [reviewLoading, setReviewLoading] = useState(false);
+
+  // Disabled (moderated) remote events
+  const [disabledEvents, setDisabledEvents] = useState<DisabledEventDto[]>([]);
+  const [disabledLoading, setDisabledLoading] = useState(false);
+  const [disabledSearch, setDisabledSearch] = useState("");
 
   // UI state (search/filter/sort)
   const [search, setSearch] = useState("");
@@ -121,6 +132,35 @@ export default function AdminDashboard() {
       cancelled = true;
     };
   }, [isAdmin, refreshKey]);
+
+  useEffect(() => {
+    if (!isAdmin) return;
+    if (!token) return;
+
+    const controller = new AbortController();
+
+    (async () => {
+      try {
+        setDisabledLoading(true);
+        const data = await apiFetch<AdminDisabledEventsResponse>("/admin/events/disabled", {
+          token,
+          signal: controller.signal,
+        });
+
+        if (!data.ok) throw new Error("Failed to load disabled events");
+        setDisabledEvents(Array.isArray(data.items) ? data.items : []);
+      } catch (e: unknown) {
+        if (e instanceof DOMException && e.name === "AbortError") return;
+        setDisabledEvents([]);
+        setActionError(e instanceof Error ? e.message : String(e));
+      } finally {
+        if (!controller.signal.aborted) setDisabledLoading(false);
+      }
+    })();
+
+    return () => controller.abort();
+  }, [isAdmin, token, refreshKey]);
+
 
   const safeUsers = useMemo(() => (isAdmin ? users : []), [isAdmin, users]);
 
@@ -214,6 +254,18 @@ export default function AdminDashboard() {
     return c;
   }, [filteredSortedUsers]);
 
+  const filteredDisabledEvents = useMemo(() => {
+    const q = normalize(disabledSearch);
+    if (!q) return disabledEvents.slice();
+
+    return disabledEvents.filter((e) => {
+      const title = typeof e.snapshot?.title === "string" ? String(e.snapshot.title) : "";
+      const hay = [e.eventKey, e.reason || "", title].join(" ").toLowerCase();
+      return hay.includes(q);
+    });
+  }, [disabledEvents, disabledSearch]);
+
+
   async function handleSetRole(userId: string, role: Role) {
     if (!token || !user) return;
 
@@ -261,6 +313,26 @@ export default function AdminDashboard() {
     }
   }
 
+
+
+  async function handleEnableEvent(eventKey: string) {
+    if (!token) return;
+
+    const ok = confirm("Enable this event again? It will show up in the feed.");
+    if (!ok) return;
+
+    try {
+      setActionError(null);
+      await apiFetch("/admin/events/" + encodeURIComponent(eventKey) + "/disabled", {
+        method: "PATCH",
+        token,
+        body: { disabled: false },
+      });
+      setRefreshKey((k) => k + 1);
+    } catch (e: unknown) {
+      setActionError(e instanceof Error ? e.message : String(e));
+    }
+  }
   const allEvents = useMemo(() => (isAdmin ? reviewEvents : []), [isAdmin, reviewEvents]);
   const pending = useMemo(() => allEvents.filter((e) => e.status === "pending"), [allEvents]);
   const approved = useMemo(() => allEvents.filter((e) => e.status === "approved"), [allEvents]);
@@ -563,6 +635,73 @@ export default function AdminDashboard() {
               );
             })
           )}
+        </div>
+      </div>
+
+
+      <div className="adminSection">
+        <div className="sectionTitle">Disabled events (moderation)</div>
+        <div className="sectionHint">
+          These are hidden from the public feed. Use this list to re-enable if you disabled the wrong one.
+        </div>
+
+        <div className="adminControls">
+          <div className="adminControlsSearch">
+            <input
+              className="authInput"
+              value={disabledSearch}
+              onChange={(e) => setDisabledSearch(e.target.value)}
+              placeholder="Search disabled events (key / reason / title)…"
+            />
+          </div>
+        </div>
+
+        <div className="adminOverviewList">
+          {disabledLoading ? (
+            <div className="sectionHint">Loading disabled events…</div>
+          ) : filteredDisabledEvents.length === 0 ? (
+            <div className="sectionHint">No disabled events.</div>
+          ) : (
+            filteredDisabledEvents.map((e) => {
+              const title = typeof e.snapshot?.title === "string" ? String(e.snapshot.title) : "";
+              const city = typeof e.snapshot?.city === "string" ? String(e.snapshot.city) : "";
+              const startIso = typeof e.snapshot?.startIso === "string" ? String(e.snapshot.startIso) : "";
+
+              return (
+                <div key={e.eventKey} className="adminRow">
+                  <div className="adminRowLeft">
+                    <div className="adminRowTitle">
+                      {title ? title : e.eventKey} <span className="adminBadgeMuted">disabled</span>
+                    </div>
+                    <div className="adminRowMeta">
+                      Key: <b>{e.eventKey}</b>
+                      {city ? <> • {city}</> : null}
+                      {startIso ? <> • {formatDateTime(startIso)}</> : null}
+                    </div>
+                    {e.reason ? <div className="adminRowMeta">Reason: {e.reason}</div> : null}
+                    <div className="adminRowMeta">
+                      Disabled: {formatDateTime(e.updatedAt)}
+                      {e.disabledBy ? <> • By: {e.disabledBy.name} ({e.disabledBy.email})</> : null}
+                    </div>
+                  </div>
+
+                  <div className="adminEventActions">
+                    <button
+                      className="btn btnSecondary"
+                      type="button"
+                      onClick={() => handleEnableEvent(e.eventKey)}
+                    >
+                      Enable
+                    </button>
+                  </div>
+                </div>
+              );
+            })
+          )}
+        </div>
+
+        <div className="sectionHint">
+          Showing <b>{filteredDisabledEvents.length}</b> disabled events.
         </div>
       </div>
     </div>

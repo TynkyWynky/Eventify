@@ -127,3 +127,17 @@ export type AdminUsersResponse = {
   ok: boolean;
   users?: AdminUserDto[];
 };
+
+export type DisabledEventDto = {
+  eventKey: string;
+  reason: string | null;
+  snapshot?: Record<string, unknown>;
+  disabledBy: { id: string; username: string; name: string; email: string } | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type AdminDisabledEventsResponse = {
+  ok: boolean;
+  items?: DisabledEventDto[];
+};
