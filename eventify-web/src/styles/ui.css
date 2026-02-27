@@ -319,7 +319,7 @@ body::before {
   position: absolute;
   right: 0;
   top: calc(100% + 10px);
-  width: 320px;
+  width: min(320px, calc(100vw - 24px));
   border-radius: var(--radius2);
   border: 1px solid var(--border);
   background: rgba(11,11,16,.92);
@@ -556,16 +556,24 @@ textarea.input { min-height: 110px; resize: vertical; }
 */
 .heroImageDashboard {
   background-image:
-    radial-gradient(700px 420px at 20% 30%, rgba(178,106,168,.18), transparent 60%),
-    radial-gradient(640px 360px at 80% 65%, rgba(139,63,127,.16), transparent 60%),
-    var(--bannerDashboardImage, none);
+    radial-gradient(900px 520px at 15% 25%, rgba(178,106,168,.38), transparent 62%),
+    radial-gradient(860px 520px at 85% 70%, rgba(139,63,127,.26), transparent 62%),
+    radial-gradient(620px 320px at 50% 10%, rgba(255,255,255,.10), transparent 55%),
+    conic-gradient(from 210deg at 50% 55%, rgba(178,106,168,.14), rgba(0,0,0,0) 35%, rgba(139,63,127,.12), rgba(0,0,0,0) 75%, rgba(178,106,168,.10)),
+    var(--bannerDashboardImage, none),
+    radial-gradient(1200px 700px at 50% 60%, rgba(0,0,0,.35), rgba(0,0,0,.88));
+  background-blend-mode: screen, screen, screen, normal, normal, normal;
 }
 
 .heroImageAuth {
   background-image:
-    radial-gradient(740px 420px at 25% 35%, rgba(178,106,168,.20), transparent 62%),
-    radial-gradient(640px 360px at 78% 70%, rgba(139,63,127,.16), transparent 62%),
-    var(--bannerAuthImage, none);
+    radial-gradient(920px 520px at 20% 30%, rgba(178,106,168,.32), transparent 62%),
+    radial-gradient(880px 520px at 78% 68%, rgba(139,63,127,.22), transparent 62%),
+    radial-gradient(560px 300px at 50% 12%, rgba(255,255,255,.10), transparent 55%),
+    conic-gradient(from 190deg at 50% 55%, rgba(178,106,168,.12), rgba(0,0,0,0) 40%, rgba(139,63,127,.12), rgba(0,0,0,0) 78%, rgba(178,106,168,.10)),
+    var(--bannerAuthImage, none),
+    radial-gradient(1200px 700px at 50% 60%, rgba(0,0,0,.35), rgba(0,0,0,.88));
+  background-blend-mode: screen, screen, screen, normal, normal, normal;
 }
 
 .heroShade {
@@ -781,6 +789,7 @@ textarea.input { min-height: 110px; resize: vertical; }
    DASHBOARD — TRENDING ROW
    ========================= */
 .trendingRow {
+  scroll-snap-type: x proximity;
   margin-top: var(--space-4);
   display: grid;
   grid-auto-flow: column;
@@ -1008,7 +1017,6 @@ textarea.input { min-height: 110px; resize: vertical; }
   color: var(--muted);
   font-size: 12px;
 }
-
 
 /* =========================
    AUTH PAGES
@@ -1418,6 +1426,7 @@ textarea.input { min-height: 110px; resize: vertical; }
   display:flex;
   gap:10px;
   align-items:center;
+  flex-wrap: wrap;
 }
 .eventDetailInviteRow .input{
   flex:1;
@@ -1435,21 +1444,6 @@ textarea.input { min-height: 110px; resize: vertical; }
 
 .eventDetailMissingTitle { font-weight: 900; font-size: 18px; }
 .eventDetailMissingHint { margin-top: 6px; color: var(--muted); }
-
-/* =========================
-   MAP (Leaflet)
-   ========================= */
-.leafletMapWrap {
-  border-radius: var(--radius2);
-  border: 1px solid var(--border);
-  overflow: hidden;
-  background: rgba(0,0,0,.22);
-}
-
-.leafletMap {
-  width: 100%;
-  height: 320px;
-}
 
 /* =========================
    PAGES — ACCOUNT
@@ -1663,9 +1657,10 @@ a.accountFriendAction {
    PAGES — ADMIN DASHBOARD
    ========================= */
 .adminPage {
-  max-width: 1100px;
-  margin: 0 auto;
-  padding: 18px;
+  width: 100%;
+  max-width: none;
+  margin: 0;
+  padding: 0;
 }
 
 .adminHeaderRow {
@@ -1806,9 +1801,10 @@ a.accountFriendAction {
    PAGES — MY EVENTS
    ========================= */
 .myEventsPage {
-  padding: 18px;
-  max-width: 1100px;
-  margin: 0 auto;
+  width: 100%;
+  max-width: none;
+  margin: 0;
+  padding: 0;
 }
 
 .myEventsHeader {
@@ -2161,7 +2157,6 @@ a.accountFriendAction {
    RESPONSIVE — ADMIN
    ========================= */
 @media (max-width: 720px) {
-  .adminPage { padding: 14px; }
 
   .adminHeaderRow {
     flex-direction: column;
@@ -2217,182 +2212,26 @@ a.accountFriendAction {
   .adminControlButton { grid-column: auto; }
 }
 
-/* =========================
-   MOBILE FIX PACK (<= 520px)
-   ========================= */
-@media (max-width: 520px) {
-  .appPage {
-    padding-left: 12px;
-    padding-right: 12px;
-  }
-
-  .navInner {
-    padding: 10px 12px;
-    gap: 10px;
-  }
-
-  .brandTitle {
-    font-size: 20px;
-  }
-
-  .navIconBtn {
-    width: 38px;
-    height: 38px;
-  }
-
-  .navPill {
-    height: 36px;
-    padding: 0 10px;
-    font-size: 13px;
-  }
-
-  .searchBar {
-    padding: 10px 12px;
-    font-size: 13px;
-  }
-
-
-  .heroBannerDashboard {
-    height: 190px;
-  }
-
-  .heroBanner {
-    height: 170px;
-  }
-
-  .heroContent,
-  .heroCenter {
-    padding: 18px;
-  }
-
-  .heroTitle {
-    font-size: 22px;
-  }
-
-  .heroCenter .heroTitle {
-    font-size: 26px;
-  }
-
-  .heroSubtitle {
-    font-size: 13px;
-  }
-
-  .heroFilterBar {
-    width: 100%;
-    display: grid;
-    grid-template-columns: 1fr;
-    gap: 10px;
-    padding: 10px;
-  }
-
-  .heroFilterBar > * {
-    width: 100%;
-    min-width: 0;
-  }
-
-  .selectField,
-  .selectButton {
-    width: 100%;
-    min-width: 0;
-  }
-
-  .sliderGroup {
-    width: 100%;
-    min-width: 0;
-  }
-
-  .dashboardNav {
-    flex-wrap: nowrap;
-    overflow-x: auto;
-    -webkit-overflow-scrolling: touch;
-    padding-bottom: 6px;
-    gap: 8px;
-  }
-
-  .dashboardNavBtn {
-    white-space: nowrap;
-  }
-
-  .organizerCTA {
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 10px;
-  }
-
-  .ctaActions {
-    width: 100%;
-  }
-
-  .ctaButton {
-    width: 100%;
-    justify-content: center;
-  }
-
-  .trendingRow {
-    grid-auto-columns: minmax(220px, 78%);
-    gap: 12px;
-  }
-
-  .eventsGrid {
-    gap: 12px;
-  }
-
-  .eventFooter {
-    padding: 10px;
-  }
-}
-/* =========================
-   FIX HERO FILTER CLIPPING (MOBILE)
-   ========================= */
-@media (max-width: 520px) {
-  .heroBanner,
-  .heroBannerDashboard {
-    height: auto !important;
-    min-height: 210px;
-  }
-
-  .heroContent,
-  .heroCenter {
-    padding: 16px !important;
-    gap: 10px;
-  }
-
-  .heroTitle { font-size: 24px !important; }
-  .heroSubtitle { font-size: 13px; }
-
-  .heroFilterBar {
-    margin-top: 12px;
-    width: 100%;
-    display: grid !important;
-    grid-template-columns: 1fr;
-    gap: 10px;
-    padding: 10px !important;
-  }
-
-  .heroFilterBar > * {
-    width: 100%;
-    min-width: 0;
-  }
-}
-
 .heroImageDashboard {
   background-image:
-    radial-gradient(900px 520px at 15% 25%, rgba(178,106,168,.42), transparent 62%),
-    radial-gradient(860px 520px at 85% 70%, rgba(139,63,127,.30), transparent 62%),
-    radial-gradient(620px 320px at 50% 10%, rgba(255,255,255,.12), transparent 55%),
-    conic-gradient(from 210deg at 50% 55%, rgba(178,106,168,.16), rgba(0,0,0,0) 35%, rgba(139,63,127,.14), rgba(0,0,0,0) 75%, rgba(178,106,168,.12)),
+    radial-gradient(900px 520px at 15% 25%, rgba(178,106,168,.38), transparent 62%),
+    radial-gradient(860px 520px at 85% 70%, rgba(139,63,127,.26), transparent 62%),
+    radial-gradient(620px 320px at 50% 10%, rgba(255,255,255,.10), transparent 55%),
+    conic-gradient(from 210deg at 50% 55%, rgba(178,106,168,.14), rgba(0,0,0,0) 35%, rgba(139,63,127,.12), rgba(0,0,0,0) 75%, rgba(178,106,168,.10)),
+    var(--bannerDashboardImage, none),
     radial-gradient(1200px 700px at 50% 60%, rgba(0,0,0,.35), rgba(0,0,0,.88));
-  background-blend-mode: screen, screen, screen, normal, normal;
+  background-blend-mode: screen, screen, screen, normal, normal, normal;
 }
 
 .heroImageAuth {
   background-image:
-    radial-gradient(920px 520px at 20% 30%, rgba(178,106,168,.36), transparent 62%),
-    radial-gradient(880px 520px at 78% 68%, rgba(139,63,127,.26), transparent 62%),
-    radial-gradient(560px 300px at 50% 12%, rgba(255,255,255,.12), transparent 55%),
-    conic-gradient(from 190deg at 50% 55%, rgba(178,106,168,.15), rgba(0,0,0,0) 40%, rgba(139,63,127,.14), rgba(0,0,0,0) 78%, rgba(178,106,168,.12)),
+    radial-gradient(920px 520px at 20% 30%, rgba(178,106,168,.32), transparent 62%),
+    radial-gradient(880px 520px at 78% 68%, rgba(139,63,127,.22), transparent 62%),
+    radial-gradient(560px 300px at 50% 12%, rgba(255,255,255,.10), transparent 55%),
+    conic-gradient(from 190deg at 50% 55%, rgba(178,106,168,.12), rgba(0,0,0,0) 40%, rgba(139,63,127,.12), rgba(0,0,0,0) 78%, rgba(178,106,168,.10)),
+    var(--bannerAuthImage, none),
     radial-gradient(1200px 700px at 50% 60%, rgba(0,0,0,.35), rgba(0,0,0,.88));
-  background-blend-mode: screen, screen, screen, normal, normal;
+  background-blend-mode: screen, screen, screen, normal, normal, normal;
 }
 
 /* =========================
@@ -2405,43 +2244,47 @@ a.accountFriendAction {
   z-index: 80;
 }
 
-/* Floating button */
+/* Floating button (2D) */
 .copilotFab {
-  width: 58px;
-  height: 58px;
-  border-radius: 999px;
-  border: 1px solid rgba(255, 255, 255, 0.16);
+  width: 54px;
+  height: 54px;
+  border-radius: 16px; /* 2D squircle */
+  border: 1px solid var(--border);
   background:
-    radial-gradient(18px 18px at 28% 28%, rgba(255,255,255,.22), rgba(255,255,255,0) 62%),
-    linear-gradient(135deg, rgba(178,106,168,.98), rgba(139,63,127,.96));
-  color: rgba(255,255,255,.96);
+    linear-gradient(135deg, rgba(178,106,168,.22), rgba(139,63,127,.14)),
+    rgba(18,18,26,.92);
+  color: rgba(255,255,255,.92);
+
   display: grid;
   place-items: center;
   cursor: pointer;
-  box-shadow: 0 18px 60px rgba(0,0,0,.62), 0 0 45px rgba(178,106,168,.18);
-  transition: transform .15s ease, filter .15s ease, box-shadow .15s ease;
+
+  box-shadow: 0 14px 38px rgba(0,0,0,.55);
+  transition: transform .15s ease, background .15s ease, box-shadow .15s ease, border-color .15s ease;
   position: relative;
 }
 
-.copilotFab:hover { transform: translateY(-1px); filter: brightness(1.04); }
+.copilotFab:hover {
+  transform: translateY(-1px);
+  border-color: rgba(178,106,168,.28);
+  background:
+    linear-gradient(135deg, rgba(178,106,168,.28), rgba(139,63,127,.18)),
+    rgba(18,18,26,.94);
+  box-shadow: 0 18px 46px rgba(0,0,0,.60);
+}
 
 .copilotFabOpen {
-  box-shadow: 0 22px 70px rgba(0,0,0,.70), 0 0 0 1px rgba(178,106,168,.35), 0 0 55px rgba(178,106,168,.22);
+  border-color: rgba(178,106,168,.38);
+  box-shadow:
+    0 18px 46px rgba(0,0,0,.62),
+    0 0 0 1px rgba(178,106,168,.22);
 }
 
 .aiFabIcon { display: grid; place-items: center; }
+.aiFabIcon svg { width: 20px; height: 20px; }
 
-.aiFabDot {
-  position: absolute;
-  right: 10px;
-  top: 10px;
-  width: 10px;
-  height: 10px;
-  border-radius: 999px;
-  background: rgba(255,255,255,.95);
-  box-shadow: 0 0 0 3px rgba(178,106,168,.22), 0 0 18px rgba(255,255,255,.30);
-  opacity: .9;
-}
+/* Remove the shiny dot (was giving 3D vibes) */
+.aiFabDot { display: none; }
 
 /* Panel */
 .copilotPanel {
@@ -3283,3 +3126,38 @@ a.accountFriendAction {
   .legalTitle { font-size: 28px; }
   .legalCard { padding: var(--space-5); }
 }
+/* =========================
+   RESPONSIVE — FOOTER
+   ========================= */
+@media (max-width: 900px) {
+  .footerGrid {
+    grid-template-columns: 1fr 1fr;
+    gap: var(--space-5);
+  }
+}
+
+@media (max-width: 560px) {
+  .footerInner { padding: var(--space-5) var(--space-3); }
+
+  .footerGrid {
+    grid-template-columns: 1fr;
+    gap: var(--space-4);
+  }
+
+  .footerBottom {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}
+
+/* =========================
+   RESPONSIVE — APP SAFE AREA
+   ========================= */
+@media (max-width: 520px) {
+  .appPage {
+    padding-bottom: calc(var(--space-5) + 92px);
+  }
+}
+
+/* Scroll snap for horizontal carousels */
+.trendingRow .eventCardLink { scroll-snap-align: start; }
