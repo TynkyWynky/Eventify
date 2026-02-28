@@ -536,7 +536,8 @@ textarea.input { min-height: 110px; resize: vertical; }
   box-shadow: var(--glow);
   overflow: hidden;
   position: relative;
-  height: 240px;
+  min-height: 240px;
+  height: auto;
 }
 
 .heroImage {
@@ -548,12 +549,7 @@ textarea.input { min-height: 110px; resize: vertical; }
   opacity: 0.92;
 }
 
-/*
-  ✅ BANNERS (zet je “juiste banners” via CSS vars in tokens.css)
-  Voorbeeld in tokens.css:
-  --bannerDashboardImage: url("/banners/dashboard.jpg");
-  --bannerAuthImage: url("/banners/auth.jpg");
-*/
+
 .heroImageDashboard {
   background-image:
     radial-gradient(900px 520px at 15% 25%, rgba(178,106,168,.38), transparent 62%),
@@ -701,7 +697,10 @@ textarea.input { min-height: 110px; resize: vertical; }
 /* =========================
    DASHBOARD — ENHANCEMENTS
    ========================= */
-.heroBannerDashboard { height: 260px; }
+.heroBannerDashboard {
+  min-height: 260px;
+  height: auto;
+}
 
 .dashboardTopStrip {
   margin-top: var(--space-3);
@@ -844,15 +843,24 @@ textarea.input { min-height: 110px; resize: vertical; }
 
 .eventImageWrap {
   position: relative;
-  aspect-ratio: 16 / 9;
   overflow: hidden;
+  aspect-ratio: 16 / 9;     /* modern browsers */
+  background: rgba(0,0,0,.18);
 }
 
 .eventImage {
+  position: absolute;       /* KEY: img bepaalt de hoogte niet meer */
+  inset: 0;
   width: 100%;
   height: 100%;
   object-fit: cover;
-  transition: transform .2s ease;
+}
+
+@supports not (aspect-ratio: 16 / 9) {
+  .eventImageWrap {
+    height: 0;
+    padding-top: 56.25%;    /* 9/16 = 0.5625 */
+  }
 }
 
 .eventCard:hover .eventImage { transform: scale(1.03); }
@@ -2056,8 +2064,8 @@ a.accountFriendAction {
    RESPONSIVE — HERO + FILTERBAR
    ========================= */
 @media (max-width: 720px) {
-  .heroBanner { height: 200px; }
-  .heroBannerDashboard { height: 220px; }
+  .heroBanner { min-height: 200px; }
+  .heroBannerDashboard { min-height: 220px; }
 
   .heroContent { padding: var(--space-5); }
   .heroCenter { padding: var(--space-5); }
@@ -2079,10 +2087,33 @@ a.accountFriendAction {
 }
 
 @media (max-width: 520px) {
-  .heroBanner { height: 180px; }
-  .heroBannerDashboard { height: 200px; }
+  .heroBanner { min-height: 180px; }
+  .heroBannerDashboard { min-height: 200px; }
   .heroTitle { font-size: 24px; }
   .heroCenter .heroTitle { font-size: 28px; }
+}
+
+@media (max-width: 720px) {
+  .sectionTitleRow {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 6px;
+  }
+
+  .heroCenter { place-items: start center; }
+
+  .heroCenter > div {
+    width: 100%;
+    max-width: 640px;
+  }
+
+  .heroFilterBar {
+    display: grid;
+    grid-template-columns: 1fr;
+    justify-items: stretch;
+  }
+
+  .heroFilterBar .selectRoot { width: 100%; }
 }
 
 /* =========================
@@ -2212,27 +2243,6 @@ a.accountFriendAction {
   .adminControlButton { grid-column: auto; }
 }
 
-.heroImageDashboard {
-  background-image:
-    radial-gradient(900px 520px at 15% 25%, rgba(178,106,168,.38), transparent 62%),
-    radial-gradient(860px 520px at 85% 70%, rgba(139,63,127,.26), transparent 62%),
-    radial-gradient(620px 320px at 50% 10%, rgba(255,255,255,.10), transparent 55%),
-    conic-gradient(from 210deg at 50% 55%, rgba(178,106,168,.14), rgba(0,0,0,0) 35%, rgba(139,63,127,.12), rgba(0,0,0,0) 75%, rgba(178,106,168,.10)),
-    var(--bannerDashboardImage, none),
-    radial-gradient(1200px 700px at 50% 60%, rgba(0,0,0,.35), rgba(0,0,0,.88));
-  background-blend-mode: screen, screen, screen, normal, normal, normal;
-}
-
-.heroImageAuth {
-  background-image:
-    radial-gradient(920px 520px at 20% 30%, rgba(178,106,168,.32), transparent 62%),
-    radial-gradient(880px 520px at 78% 68%, rgba(139,63,127,.22), transparent 62%),
-    radial-gradient(560px 300px at 50% 12%, rgba(255,255,255,.10), transparent 55%),
-    conic-gradient(from 190deg at 50% 55%, rgba(178,106,168,.12), rgba(0,0,0,0) 40%, rgba(139,63,127,.12), rgba(0,0,0,0) 78%, rgba(178,106,168,.10)),
-    var(--bannerAuthImage, none),
-    radial-gradient(1200px 700px at 50% 60%, rgba(0,0,0,.35), rgba(0,0,0,.88));
-  background-blend-mode: screen, screen, screen, normal, normal, normal;
-}
 
 /* =========================
    WIDGET — VibeFinder (floating assistant)
