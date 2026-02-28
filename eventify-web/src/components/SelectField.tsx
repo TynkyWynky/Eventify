@@ -16,6 +16,10 @@ type MenuPos = {
   maxHeight: number;
 };
 
+function clamp(n: number, min: number, max: number) {
+  return Math.min(max, Math.max(min, n));
+}
+
 export default function SelectField({
   value,
   options,
@@ -45,6 +49,7 @@ export default function SelectField({
 
     const r = btn.getBoundingClientRect();
     const gap = 8;
+    const viewportW = window.innerWidth;
     const viewportH = window.innerHeight;
 
     const spaceBelow = viewportH - r.bottom;
@@ -57,10 +62,11 @@ export default function SelectField({
       (openDown ? spaceBelow : spaceAbove) - gap - 12
     );
 
+    const menuWidth = clamp(r.width, 160, Math.max(160, viewportW - 24));
     const top = openDown ? r.bottom + gap : Math.max(12, r.top - gap - maxHeight);
-    const left = Math.max(12, Math.min(r.left, window.innerWidth - r.width - 12));
+    const left = clamp(r.left, 12, Math.max(12, viewportW - menuWidth - 12));
 
-    setMenuPos({ top, left, width: r.width, maxHeight });
+    setMenuPos({ top, left, width: menuWidth, maxHeight });
   }
 
   function openMenu() {

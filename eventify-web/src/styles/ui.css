@@ -25,6 +25,7 @@ html,
 body,
 #root {
   height: 100%;
+  max-width: 100%;
 }
 
 body {
@@ -33,6 +34,15 @@ body {
   background: var(--bg);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+}
+
+@media (max-width: 760px) {
+  html,
+  body,
+  #root {
+    overflow-x: hidden;
+    overflow-x: clip;
+  }
 }
 
 img,
@@ -509,6 +519,7 @@ textarea.input { min-height: 110px; resize: vertical; }
   display: flex;
   align-items: baseline;
   justify-content: space-between;
+  flex-wrap: wrap;
   gap: var(--space-4);
   margin-top: var(--space-5);
 }
@@ -796,6 +807,7 @@ textarea.input { min-height: 110px; resize: vertical; }
   gap: var(--space-4);
   overflow-x: auto;
   padding-bottom: 8px;
+  min-width: 0;
 }
 
 .trendingRow::-webkit-scrollbar { height: 8px; }
@@ -811,6 +823,7 @@ textarea.input { min-height: 110px; resize: vertical; }
   margin-top: var(--space-4);
   display: grid;
   gap: var(--space-4);
+  min-width: 0;
 }
 
 @media (min-width: 640px) {
@@ -825,6 +838,7 @@ textarea.input { min-height: 110px; resize: vertical; }
   display: block;
   text-decoration: none;
   color: inherit;
+  min-width: 0;
 }
 
 .eventCard {
@@ -832,6 +846,7 @@ textarea.input { min-height: 110px; resize: vertical; }
   border: 1px solid var(--border);
   background: rgba(0,0,0,.18);
   overflow: hidden;
+  min-width: 0;
   transition: transform .15s ease, box-shadow .15s ease, border-color .15s ease;
 }
 
@@ -910,6 +925,10 @@ textarea.input { min-height: 110px; resize: vertical; }
   font-size: 12px;
   color: rgba(255,255,255,.75);
   white-space: nowrap;
+  min-width: 0;
+  max-width: 44%;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* =========================
@@ -2091,6 +2110,20 @@ a.accountFriendAction {
   .heroBannerDashboard { min-height: 200px; }
   .heroTitle { font-size: 24px; }
   .heroCenter .heroTitle { font-size: 28px; }
+
+  .eventFooter {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 6px;
+  }
+
+  .eventFooterRight {
+    max-width: 100%;
+    white-space: normal;
+    overflow: visible;
+    text-overflow: clip;
+    overflow-wrap: anywhere;
+  }
 }
 
 @media (max-width: 720px) {
@@ -2114,6 +2147,21 @@ a.accountFriendAction {
   }
 
   .heroFilterBar .selectRoot { width: 100%; }
+}
+
+/* Strict mobile mode: avoid horizontal dashboard carousels */
+@media (max-width: 760px) {
+  .trendingRow {
+    grid-auto-flow: row;
+    grid-template-columns: 1fr;
+    grid-auto-columns: 1fr;
+    overflow-x: visible;
+    scroll-snap-type: none;
+  }
+
+  .trendingRow .eventCardLink {
+    scroll-snap-align: none;
+  }
 }
 
 /* =========================
@@ -2301,7 +2349,7 @@ a.accountFriendAction {
   position: fixed;
   right: 18px;
   bottom: 90px;
-  width: 420px;
+  width: min(420px, calc(100vw - 24px));
   max-height: min(680px, calc(100vh - 120px));
 
   display: flex;
