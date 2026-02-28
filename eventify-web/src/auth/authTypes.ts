@@ -15,8 +15,10 @@ export type RegisterPayload = {
 
 export type NotificationItem = {
   id: string;
+  type?: string;
   title: string;
   message: string;
+  payload?: Record<string, unknown> | null;
   createdAt: string;
   isRead: boolean;
 };

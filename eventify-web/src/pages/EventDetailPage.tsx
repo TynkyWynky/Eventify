@@ -5,6 +5,8 @@ import { eventsRepo } from "../data/events";
 import { getGenreFallbackImage } from "../data/events/genreImages";
 import { useAuth } from "../auth/AuthContext";
 import { apiFetch } from "../auth/apiClient";
+import { useNotifications } from "../components/NotificationProvider";
+import GroupPlansPanel from "./eventDetail/GroupPlansPanel";
 
 import {
   countGoings,
@@ -49,6 +51,38 @@ function safeNum(n: unknown, fallback: number) {
 
 function dedupeIds(values: string[]) {
   return Array.from(new Set(values.filter(Boolean)));
+}
+
+function parseEventStartDate(event: EventItem): Date | null {
+  if (event.startIso) {
+    const start = new Date(event.startIso);
+    if (!Number.isNaN(start.getTime())) return start;
+  }
+
+  const fallback = new Date(event.dateLabel);
+  if (!Number.isNaN(fallback.getTime())) return fallback;
+  return null;
+}
+
+function toIcsUtcStamp(date: Date) {
+  return date.toISOString().replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z");
+}
+
+function buildGoogleCalendarUrl(input: {
+  title: string;
+  start: Date;
+  end: Date;
+  details: string;
+  location: string;
+}) {
+  const params = new URLSearchParams({
+    action: "TEMPLATE",
+    text: input.title,
+    dates: `${toIcsUtcStamp(input.start)}/${toIcsUtcStamp(input.end)}`,
+    details: input.details,
+    location: input.location,
+  });
+  return `https://calendar.google.com/calendar/render?${params.toString()}`;
 }
 
 /** Haversine (straight-line) distance in km */
@@ -124,6 +158,26 @@ type EventSocialResponse = {
 type FriendsResponse = {
   ok: boolean;
   friends: PublicUser[];
+};
+
+type GroupPlanItem = {
+  id: string;
+  eventKey: string;
+  title: string;
+  note: string;
+  status: "open" | "closed";
+  options: string[];
+  createdAt: string;
+  updatedAt: string;
+  creator: PublicUser;
+  members: Array<{ role: "creator" | "invited"; user: PublicUser; joinedAt: string }>;
+  voteCounts: Record<string, number>;
+  myVote: number | null;
+};
+
+type GroupPlansResponse = {
+  ok: boolean;
+  plans: GroupPlanItem[];
 };
 
 function getApiBaseUrl() {
@@ -205,6 +259,7 @@ function getMatchLevel(score: number | null) {
 export default function EventDetailPage() {
   const { eventId } = useParams();
   const { user, token } = useAuth();
+  const { notify } = useNotifications();
   const isAdmin = user?.role === "admin";
   const navigate = useNavigate();
   const location = useLocation();
@@ -235,6 +290,15 @@ export default function EventDetailPage() {
   const [inviteSending, setInviteSending] = useState(false);
   const [inviteMsg, setInviteMsg] = useState<string | null>(null);
   const [inviteErr, setInviteErr] = useState<string | null>(null);
+  const [plans, setPlans] = useState<GroupPlanItem[]>([]);
+  const [plansLoading, setPlansLoading] = useState(false);
+  const [plansError, setPlansError] = useState<string | null>(null);
+  const [planTitle, setPlanTitle] = useState("");
+  const [planNote, setPlanNote] = useState("");
+  const [planOptionsText, setPlanOptionsText] = useState("Friday 19:30\nSaturday 20:00");
+  const [selectedPlanInviteeIds, setSelectedPlanInviteeIds] = useState<string[]>([]);
+  const [planCreating, setPlanCreating] = useState(false);
+  const [planActionMsg, setPlanActionMsg] = useState<string | null>(null);
 
   const [isFav, setIsFav] = useState(false);
   const [setlists, setSetlists] = useState<SetlistItem[]>([]);
@@ -331,6 +395,24 @@ export default function EventDetailPage() {
     }
   };
 
+  const refreshPlans = async (signal?: AbortSignal) => {
+    if (!eventId || !token) {
+      setPlans([]);
+      setPlansError(null);
+      return;
+    }
+    try {
+      const data = await apiFetch<GroupPlansResponse>(
+        `/events/${encodeURIComponent(eventId)}/plans`,
+        { token, signal }
+      );
+      setPlans(Array.isArray(data.plans) ? data.plans : []);
+    } catch (err: unknown) {
+      if (err instanceof DOMException && err.name === "AbortError") return;
+      setPlansError(err instanceof Error ? err.message : String(err));
+    }
+  };
+
   useEffect(() => {
     if (!eventId) return;
 
@@ -383,6 +465,39 @@ export default function EventDetailPage() {
 
     return () => controller.abort();
   }, [token]);
+
+  useEffect(() => {
+    if (!eventId || !token) {
+      setPlans([]);
+      setPlansLoading(false);
+      setPlansError(null);
+      return;
+    }
+
+    const controller = new AbortController();
+    Promise.resolve().then(() => {
+      if (controller.signal.aborted) return;
+      setPlansLoading(true);
+      setPlansError(null);
+    });
+
+    refreshPlans(controller.signal).finally(() => {
+      if (!controller.signal.aborted) setPlansLoading(false);
+    });
+
+    return () => controller.abort();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [eventId, token]);
+
+  useEffect(() => {
+    const sp = new URLSearchParams(location.search);
+    if (!sp.get("plan")) return;
+    if (plansLoading) return;
+
+    const el = document.getElementById("event-group-plans");
+    if (!el) return;
+    el.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, [location.search, plansLoading]);
 
   // Setlists
   useEffect(() => {
@@ -756,8 +871,9 @@ export default function EventDetailPage() {
         </div>
 
         <div className="eventDetailMissing">
-          <div className="eventDetailMissingTitle">Loading…</div>
-          <div className="eventDetailMissingHint">Fetching event details.</div>
+          <div className="skeleton skeletonLine skeletonLineLg" style={{ height: 18 }} />
+          <div className="skeleton skeletonLine skeletonLineMd" style={{ marginTop: 10 }} />
+          <div className="skeleton skeletonLine skeletonLineLg" style={{ marginTop: 14 }} />
         </div>
       </div>
     );
@@ -829,6 +945,126 @@ export default function EventDetailPage() {
     friendsAllLoading ||
     friendsAll.length === 0 ||
     !inviteeId;
+  const planOptionLines = planOptionsText
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  const calendarStart = parseEventStartDate(event);
+  const calendarEnd = calendarStart
+    ? new Date(calendarStart.getTime() + 2 * 60 * 60 * 1000)
+    : null;
+  const detailUrl = `${window.location.origin}/events/${event.id}${location.search || ""}`;
+  const calendarLocationLine = `${event.venue}, ${event.city}, ${event.country}`;
+  const calendarDescription = [
+    event.description?.trim() || null,
+    `Event page: ${detailUrl}`,
+    event.sourceUrl ? `Tickets: ${event.sourceUrl}` : null,
+  ]
+    .filter(Boolean)
+    .join("\n\n");
+  const googleCalendarUrl =
+    calendarStart && calendarEnd
+      ? buildGoogleCalendarUrl({
+          title: event.title,
+          start: calendarStart,
+          end: calendarEnd,
+          details: calendarDescription,
+          location: calendarLocationLine,
+        })
+      : null;
+
+  const shareEvent = async () => {
+    const shareUrl = detailUrl;
+    const shareText = `${event.title} • ${startLabel} • ${event.city}`;
+
+    try {
+      if (navigator.share) {
+        await navigator.share({
+          title: event.title,
+          text: shareText,
+          url: shareUrl,
+        });
+        return;
+      }
+
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(shareUrl);
+        notify("Event link copied to clipboard.", "success");
+        return;
+      }
+
+      window.prompt("Copy this event link:", shareUrl);
+    } catch (err: unknown) {
+      if (err instanceof DOMException && err.name === "AbortError") return;
+      notify("Could not share this event right now.", "error");
+    }
+  };
+
+  const togglePlanInvitee = (friendId: string) => {
+    setSelectedPlanInviteeIds((prev) =>
+      prev.includes(friendId) ? prev.filter((id) => id !== friendId) : [...prev, friendId]
+    );
+  };
+
+  const createGroupPlan = async () => {
+    if (!eventId || !token || !user) {
+      navigate("/login", { state: { from: location.pathname + location.search } });
+      return;
+    }
+    if (planCreating) return;
+    if (!planTitle.trim()) {
+      setPlanActionMsg("Plan title is required.");
+      return;
+    }
+    if (planOptionLines.length < 2) {
+      setPlanActionMsg("Add at least 2 options (one per line).");
+      return;
+    }
+
+    try {
+      setPlanCreating(true);
+      setPlanActionMsg(null);
+      await apiFetch<{ ok: boolean; plan: GroupPlanItem }>(
+        `/events/${encodeURIComponent(eventId)}/plans`,
+        {
+          method: "POST",
+          token,
+          body: {
+            title: planTitle.trim(),
+            note: planNote.trim(),
+            options: planOptionLines,
+            inviteeIds: selectedPlanInviteeIds.map((id) => Number(id)),
+          },
+        }
+      );
+      setPlanTitle("");
+      setPlanNote("");
+      setPlanOptionsText("Friday 19:30\nSaturday 20:00");
+      setSelectedPlanInviteeIds([]);
+      setPlanActionMsg("Plan created.");
+      await refreshPlans();
+    } catch (err: unknown) {
+      setPlanActionMsg(err instanceof Error ? err.message : String(err));
+    } finally {
+      setPlanCreating(false);
+    }
+  };
+
+  const voteOnPlan = async (planId: string, optionIndex: number) => {
+    if (!token) return;
+    try {
+      setPlanActionMsg(null);
+      await apiFetch<{ ok: boolean; plan: GroupPlanItem }>(`/plans/${encodeURIComponent(planId)}/vote`, {
+        method: "POST",
+        token,
+        body: { optionIndex },
+      });
+      await refreshPlans();
+    } catch (err: unknown) {
+      setPlanActionMsg(err instanceof Error ? err.message : String(err));
+    }
+  };
 
   return (
     <div className="eventDetailPage">
@@ -931,6 +1167,16 @@ export default function EventDetailPage() {
               {isFav ? "Saved ★" : "Save"}
             </button>
 
+            {googleCalendarUrl ? (
+              <a className="btn btnSecondary" href={googleCalendarUrl} target="_blank" rel="noreferrer">
+                Google Calendar
+              </a>
+            ) : null}
+
+            <button className="btn btnSecondary" type="button" onClick={shareEvent}>
+              Share
+            </button>
+
             {event.sourceUrl ? (
               <a className="btn btnPrimary" href={event.sourceUrl} target="_blank" rel="noreferrer">
                 Tickets
@@ -972,10 +1218,10 @@ export default function EventDetailPage() {
                       }
                     );
 
-                    alert("Event disabled.");
+                    notify("Event disabled.", "success");
                     navigate(backTo);
                   } catch (err: unknown) {
-                    alert(err instanceof Error ? err.message : String(err));
+                    notify(err instanceof Error ? err.message : String(err), "error");
                   }
                 }}
               >
@@ -1168,6 +1414,25 @@ export default function EventDetailPage() {
               {inviteErr ? <div className="sectionHint">Invite error: {inviteErr}</div> : null}
             </>
           )}
+          <GroupPlansPanel
+            isLoggedIn={Boolean(user)}
+            friendsAll={friendsAll}
+            plans={plans}
+            plansLoading={plansLoading}
+            plansError={plansError}
+            planActionMsg={planActionMsg}
+            planTitle={planTitle}
+            planNote={planNote}
+            planOptionsText={planOptionsText}
+            selectedPlanInviteeIds={selectedPlanInviteeIds}
+            planCreating={planCreating}
+            onPlanTitleChange={setPlanTitle}
+            onPlanNoteChange={setPlanNote}
+            onPlanOptionsTextChange={setPlanOptionsText}
+            onToggleInvitee={togglePlanInvitee}
+            onCreate={createGroupPlan}
+            onVote={voteOnPlan}
+          />
         </div>
 
         <div className="eventDetailCard eventDetailCardLocation">

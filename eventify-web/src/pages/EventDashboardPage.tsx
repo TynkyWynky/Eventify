@@ -67,6 +67,8 @@ function EventCard({ event, search }: { event: EventItem; search: string }) {
             className="eventImage"
             src={event.imageUrl}
             alt={event.title}
+            loading="lazy"
+            decoding="async"
             onError={(e) => {
               const next = getGenreFallbackImage(event.tags[0]);
               if (e.currentTarget.src === next) return;
@@ -91,6 +93,18 @@ function EventCard({ event, search }: { event: EventItem; search: string }) {
         </div>
       </article>
     </Link>
+  );
+}
+
+function EventCardSkeleton() {
+  return (
+    <div className="skeletonCard">
+      <div className="skeleton skeletonMedia" />
+      <div className="skeletonBody">
+        <div className="skeleton skeletonLine skeletonLineLg" />
+        <div className="skeleton skeletonLine skeletonLineMd" />
+      </div>
+    </div>
   );
 }
 
@@ -178,6 +192,7 @@ export default function EventDashboardPage() {
   }
 
   const [events, setEvents] = useState<EventItem[]>([]);
+  const [mapEvents, setMapEvents] = useState<EventItem[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -218,6 +233,32 @@ export default function EventDashboardPage() {
 
     return () => controller.abort();
   }, [maxDistanceKm, q, selectedStyle, reloadTick, origin.lat, origin.lng]);
+
+  // map events: keep style/query/origin, but do not apply max distance filter
+  useEffect(() => {
+    const controller = new AbortController();
+
+    eventsRepo
+      .list(
+        {
+          style: selectedStyle,
+          query: q,
+          originLat: origin.lat,
+          originLng: origin.lng,
+        },
+        { signal: controller.signal }
+      )
+      .then(setMapEvents)
+      .catch((err: unknown) => {
+        if (err instanceof DOMException && err.name === "AbortError") return;
+        console.warn(
+          "Dashboard map events unavailable:",
+          err instanceof Error ? err.message : String(err)
+        );
+      });
+
+    return () => controller.abort();
+  }, [q, selectedStyle, reloadTick, origin.lat, origin.lng]);
 
   // signals for personalization
   const [signalsTick, setSignalsTick] = useState(0);
@@ -589,7 +630,7 @@ export default function EventDashboardPage() {
 
       <div className="trendingRow">
         {isLoading && events.length === 0 ? (
-          <div className="sectionHint">Loading trending…</div>
+          Array.from({ length: 3 }).map((_, idx) => <EventCardSkeleton key={`trend-sk-${idx}`} />)
         ) : trendingEvents.length === 0 ? (
           <div className="sectionHint">No trending events for this filter.</div>
         ) : (
@@ -641,13 +682,13 @@ export default function EventDashboardPage() {
 
       {viewMode === "map" ? (
         <div className="eventsMapPanel">
-          {isLoading && events.length === 0 ? (
+          {isLoading && mapEvents.length === 0 ? (
             <div className="sectionHint">Loading events on the map…</div>
-          ) : eventsWithAi.length === 0 ? (
+          ) : mapEvents.length === 0 ? (
             <div className="sectionHint">No events match your filters.</div>
           ) : (
             <EventsMap
-              events={eventsWithAi}
+              events={mapEvents}
               origin={{ lat: origin.lat, lng: origin.lng, label: origin.label }}
               search={location.search}
               className="leafletMap leafletMapDashboard"
@@ -659,7 +700,7 @@ export default function EventDashboardPage() {
           <div className="dashSplitList">
             <div className="eventsGrid eventsGridSplit">
               {isLoading && events.length === 0 ? (
-                <div className="sectionHint">Loading events list…</div>
+                Array.from({ length: 3 }).map((_, idx) => <EventCardSkeleton key={`split-sk-${idx}`} />)
               ) : eventsWithAi.length === 0 ? (
                 <div className="sectionHint">No events match your filters.</div>
               ) : (
@@ -671,11 +712,11 @@ export default function EventDashboardPage() {
           </div>
 
           <div className="dashSplitMap">
-            {isLoading && events.length === 0 ? (
+            {isLoading && mapEvents.length === 0 ? (
               <div className="sectionHint">Loading events on the map…</div>
-            ) : eventsWithAi.length === 0 ? null : (
+            ) : mapEvents.length === 0 ? null : (
               <EventsMap
-                events={eventsWithAi}
+                events={mapEvents}
                 origin={{ lat: origin.lat, lng: origin.lng, label: origin.label }}
                 search={location.search}
                 className="leafletMap leafletMapDashboard"
@@ -686,7 +727,7 @@ export default function EventDashboardPage() {
       ) : (
         <div className="eventsGrid">
           {isLoading && events.length === 0 ? (
-            <div className="sectionHint">Loading events list…</div>
+            Array.from({ length: 6 }).map((_, idx) => <EventCardSkeleton key={`list-sk-${idx}`} />)
           ) : eventsWithAi.length === 0 ? (
             <div className="sectionHint">No events match your filters.</div>
           ) : (

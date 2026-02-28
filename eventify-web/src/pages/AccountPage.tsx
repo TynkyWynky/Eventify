@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useLocation } from "react-router-dom";
 import type { EventItem } from "../events/eventsStore";
 import { eventsRepo } from "../data/events";
 import { useAuth } from "../auth/AuthContext";
@@ -179,8 +179,10 @@ function labelGenre(genre: string) {
 
 export default function AccountPage() {
   const { user, token } = useAuth();
+  const location = useLocation();
   const userId = user?.id ?? null;
   const canManage = user?.role === "organizer" || user?.role === "admin";
+  const [focusedSection, setFocusedSection] = useState<string | null>(null);
 
   // ----------------------------
   // Favorites (local as before)
@@ -639,6 +641,24 @@ export default function AccountPage() {
     return () => controller.abort();
   }, [favoriteEvents, goingEvents, likedEvents, preferredTags, userId]);
 
+  useEffect(() => {
+    const sp = new URLSearchParams(location.search);
+    const focus = (sp.get("focus") || "").trim().toLowerCase();
+
+    const valid = new Set(["favorites", "going", "friends", "requests", "invites"]);
+    if (!valid.has(focus)) return;
+
+    const id = `account-${focus}`;
+    const el = document.getElementById(id);
+    if (!el) return;
+
+    setFocusedSection(focus);
+    el.scrollIntoView({ behavior: "smooth", block: "start" });
+
+    const timeoutId = window.setTimeout(() => setFocusedSection(null), 2400);
+    return () => window.clearTimeout(timeoutId);
+  }, [location.search]);
+
   if (!user) return null;
 
   return (
@@ -665,7 +685,10 @@ export default function AccountPage() {
       </div>
 
       <div className="accountGrid">
-        <section className="accountSection">
+        <section
+          id="account-favorites"
+          className={`accountSection ${focusedSection === "favorites" ? "accountSectionFocus" : ""}`}
+        >
           <div className="accountSectionHeader">
             <div className="accountSectionTitle">Favorites</div>
             <div className="accountSectionHint">Saved events • {favCount}</div>
@@ -683,7 +706,10 @@ export default function AccountPage() {
           </div>
         </section>
 
-        <section className="accountSection">
+        <section
+          id="account-going"
+          className={`accountSection ${focusedSection === "going" ? "accountSectionFocus" : ""}`}
+        >
           <div className="accountSectionHeader">
             <div className="accountSectionTitle">Going</div>
             <div className="accountSectionHint">Events you plan to attend • {goingCount}</div>
@@ -774,14 +800,22 @@ export default function AccountPage() {
         {/* ===========================
             FRIENDS / REQUESTS / INVITES
             =========================== */}
-        <section className="accountSection accountSectionFull">
+        <section
+          id="account-friends"
+          className={`accountSection accountSectionFull ${
+            focusedSection === "friends" ? "accountSectionFocus" : ""
+          }`}
+        >
           <div className="accountSectionHeader">
             <div className="accountSectionTitle">Friends</div>
             <div className="accountSectionHint">Add friends, accept requests, handle invites</div>
           </div>
 
           {/* Search */}
-          <div className="accountList">
+          <div
+            id="account-requests"
+            className={`accountList ${focusedSection === "requests" ? "accountSectionFocus" : ""}`}
+          >
             <div className="accountSectionHint">
               Search users (min 2 chars):{" "}
               <input
@@ -820,7 +854,10 @@ export default function AccountPage() {
           </div>
 
           {/* Incoming requests */}
-          <div className="accountList">
+          <div
+            id="account-invites"
+            className={`accountList ${focusedSection === "invites" ? "accountSectionFocus" : ""}`}
+          >
             <div className="accountSectionHeader">
               <div className="accountSectionTitle">Requests</div>
               <div className="accountSectionHint">Incoming & outgoing</div>

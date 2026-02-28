@@ -37,16 +37,21 @@ function mapNotification(raw: unknown): NotificationItem {
   if (!isRecord(raw)) {
     return {
       id: `n_${Math.random().toString(16).slice(2)}`,
+      type: "system",
       title: "Notification",
       message: "",
+      payload: null,
       createdAt: new Date().toISOString(),
       isRead: false,
     };
   }
 
   const id = readString(raw, "id") ?? `n_${Math.random().toString(16).slice(2)}`;
+  const type = readString(raw, "type") ?? "system";
   const title = readString(raw, "title") ?? "Notification";
   const message = readString(raw, "message") ?? "";
+  const payloadRaw = raw.payload;
+  const payload = isRecord(payloadRaw) ? payloadRaw : null;
   const createdAt =
     readString(raw, "createdAt") ??
     readString(raw, "created_at") ??
@@ -57,7 +62,7 @@ function mapNotification(raw: unknown): NotificationItem {
     readBool(raw, "is_read") ??
     false;
 
-  return { id, title, message, createdAt, isRead };
+  return { id, type, title, message, payload, createdAt, isRead };
 }
 
 function loadInitial(): {
@@ -258,8 +263,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setNotifications((prev) => [
       {
         id: `n_${Math.random().toString(16).slice(2)}`,
+        type: n.type || "system",
         title: n.title,
         message: n.message,
+        payload: n.payload || null,
         createdAt: new Date().toISOString(),
         isRead: false,
       },

@@ -7,6 +7,9 @@
    ========================= */
 
 @import "./tokens.css";
+@import "./event-detail.css";
+@import "./toast.css";
+@import "./skeleton.css";
 
 @tailwind base;
 @tailwind components;
@@ -192,6 +195,10 @@ body::before {
   margin: 0 auto;
   padding: 0 var(--space-4) var(--space-6);
   flex: 1;
+}
+
+.appPageWide {
+  max-width: 84rem;
 }
 /* =========================
    NAVBAR
@@ -1056,12 +1063,15 @@ textarea.input { min-height: 110px; resize: vertical; }
 
 .authCard {
   width: 100%;
-  max-width: 420px;
-  border-radius: var(--radius2);
-  border: 1px solid var(--border);
-  background: var(--panel);
+  max-width: 560px;
+  border-radius: 24px;
+  border: 1px solid rgba(255,255,255,.14);
+  background:
+    radial-gradient(520px 240px at 0% 0%, rgba(178,106,168,.12), transparent 60%),
+    radial-gradient(520px 240px at 100% 100%, rgba(139,63,127,.10), transparent 60%),
+    var(--panel);
   box-shadow: var(--glow);
-  padding: var(--space-6);
+  padding: clamp(20px, 3vw, 30px);
 }
 
 .authTitle { font-size: 20px; font-weight: 900; }
@@ -1079,7 +1089,7 @@ textarea.input { min-height: 110px; resize: vertical; }
   border-radius: var(--radius);
   border: 1px solid var(--border);
   background: var(--panel2);
-  padding: 10px 14px;
+  padding: 12px 14px;
   font-size: 14px;
   color: var(--text);
   outline: none;
@@ -1355,6 +1365,7 @@ textarea.input { min-height: 110px; resize: vertical; }
 .eventDetailActions {
   display: flex;
   flex-wrap: wrap;
+  align-items: stretch;
   gap: 10px;
   margin-top: 10px;
 }
@@ -1518,11 +1529,13 @@ textarea.input { min-height: 110px; resize: vertical; }
 }
 
 .accountSection {
-  border-radius: var(--radius2);
-  border: 1px solid var(--border);
-  background: rgba(0,0,0,.18);
+  border-radius: 22px;
+  border: 1px solid rgba(255,255,255,.14);
+  background:
+    radial-gradient(540px 220px at 10% 0%, rgba(178,106,168,.08), transparent 65%),
+    rgba(0,0,0,.20);
   box-shadow: var(--glow);
-  padding: 14px;
+  padding: 18px;
 }
 
 .accountSectionHeader {
@@ -1541,17 +1554,17 @@ textarea.input { min-height: 110px; resize: vertical; }
   display: flex;
   align-items: center;
   gap: 12px;
-  border-radius: var(--radius);
-  border: 1px solid var(--border);
+  border-radius: 16px;
+  border: 1px solid rgba(255,255,255,.12);
   background: rgba(255,255,255,.04);
-  padding: 10px;
+  padding: 12px;
   text-decoration: none;
   color: var(--text);
 }
 
 .accountEventRow:hover { border-color: var(--borderHover); }
 
-.accountEventThumb { width: 56px; height: 40px; border-radius: 10px; object-fit: cover; }
+.accountEventThumb { width: 64px; height: 46px; border-radius: 12px; object-fit: cover; }
 .accountEventInfo { flex: 1; min-width: 0; }
 .accountEventTitle { font-weight: 900; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .accountEventMeta { margin-top: 3px; color: var(--muted); font-size: 12px; }
@@ -1574,10 +1587,10 @@ textarea.input { min-height: 110px; resize: vertical; }
   display: flex;
   align-items: center;
   gap: 12px;
-  border-radius: var(--radius);
-  border: 1px solid var(--border);
+  border-radius: 16px;
+  border: 1px solid rgba(255,255,255,.12);
   background: rgba(255,255,255,.04);
-  padding: 10px;
+  padding: 12px;
 }
 
 .accountFriendRow:hover { border-color: var(--borderHover); }
@@ -1666,11 +1679,13 @@ a.accountFriendAction {
 }
 
 .settingsCard {
-  border-radius: var(--radius2);
-  border: 1px solid var(--border);
-  background: rgba(0,0,0,.18);
+  border-radius: 22px;
+  border: 1px solid rgba(255,255,255,.14);
+  background:
+    radial-gradient(540px 220px at 10% 0%, rgba(178,106,168,.08), transparent 65%),
+    rgba(0,0,0,.20);
   box-shadow: var(--glow);
-  padding: 14px;
+  padding: 18px;
 }
 
 .settingsCardTitle { font-weight: 900; font-size: 16px; }
@@ -2076,7 +2091,10 @@ a.accountFriendAction {
   .navPill { height: 38px; padding: 0 12px; }
   .navIconBtn { width: 40px; height: 40px; }
 
-  .authCard { padding: var(--space-4); }
+  .authCard {
+    border-radius: 20px;
+    padding: var(--space-5);
+  }
 }
 
 /* =========================
@@ -2202,7 +2220,16 @@ a.accountFriendAction {
   .eventDetailActions .btn,
   .eventDetailActions .btnPrimary,
   .eventDetailActions .btnSecondary {
-    flex: 1 1 auto;
+    flex: 1 1 calc(50% - 10px);
+    min-height: 44px;
+  }
+}
+
+@media (max-width: 520px) {
+  .eventDetailActions .btn,
+  .eventDetailActions .btnPrimary,
+  .eventDetailActions .btnSecondary {
+    flex: 1 1 100%;
   }
 
   .eventDetailCard { padding: var(--space-4); }

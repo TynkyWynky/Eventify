@@ -2,11 +2,13 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Link,
   NavLink,
+  type To,
   useLocation,
   useNavigate,
   useSearchParams,
 } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
+import type { NotificationItem } from "../auth/authTypes";
 
 function BellIcon() {
   return (
@@ -114,6 +116,52 @@ export default function TopNavigationBar() {
     return () => window.clearTimeout(id);
   }, [commitQuery, qFromUrl, query]);
 
+  const resolveNotificationTarget = useCallback((n: NotificationItem): To | null => {
+    const payload = n.payload && typeof n.payload === "object" ? n.payload : null;
+    const eventKey = payload && typeof payload.eventKey === "string" ? payload.eventKey : null;
+    const planId = payload && typeof payload.planId === "string" ? payload.planId : null;
+
+    if (n.type === "event_invite" || n.type === "invite_response") {
+      return "/account?focus=invites";
+    }
+
+    if (n.type === "friend_request" || n.type === "friend_accept") {
+      return "/account?focus=requests";
+    }
+
+    if (n.type === "group_plan_invite") {
+      if (eventKey && planId) return `/events/${eventKey}?plan=${encodeURIComponent(planId)}`;
+      if (eventKey) return `/events/${eventKey}`;
+      return "/account?focus=invites";
+    }
+
+    if (n.type === "friend_going" && eventKey) {
+      return `/events/${eventKey}`;
+    }
+
+    if (eventKey) {
+      return `/events/${eventKey}`;
+    }
+
+    if (n.type === "friend_going") {
+      return "/account?focus=going";
+    }
+
+    return null;
+  }, []);
+
+  const handleNotificationClick = useCallback(
+    (n: NotificationItem) => {
+      markAsRead(n.id);
+      setNotifOpen(false);
+
+      const target = resolveNotificationTarget(n);
+      if (!target) return;
+      navigate(target);
+    },
+    [markAsRead, navigate, resolveNotificationTarget]
+  );
+
   return (
     <header className="navBar">
       <div className="navInner">
@@ -190,7 +238,7 @@ export default function TopNavigationBar() {
                             className={`popoverItem ${
                               n.isRead ? "" : "popoverItemUnread"
                             }`}
-                            onClick={() => markAsRead(n.id)}
+                            onClick={() => handleNotificationClick(n)}
                           >
                             <div className="popoverItemTitle">{n.title}</div>
                             <div className="popoverItemText">{n.message}</div>

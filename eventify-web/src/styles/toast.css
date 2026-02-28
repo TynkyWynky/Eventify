@@ -1,0 +1,41 @@
+.notificationViewport {
+  position: fixed;
+  right: 14px;
+  bottom: 14px;
+  z-index: 120;
+  display: grid;
+  gap: 8px;
+  max-width: min(420px, calc(100vw - 24px));
+}
+
+.notificationItem {
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(11, 11, 16, 0.94);
+  color: rgba(255, 255, 255, 0.95);
+  text-align: left;
+  padding: 10px 12px;
+  font-size: 13px;
+  box-shadow: 0 12px 34px rgba(0, 0, 0, 0.45);
+  cursor: pointer;
+}
+
+.notificationSuccess {
+  border-color: rgba(105, 214, 149, 0.5);
+}
+
+.notificationError {
+  border-color: rgba(245, 110, 110, 0.5);
+}
+
+.notificationInfo {
+  border-color: rgba(178, 106, 168, 0.5);
+}
+
+@media (max-width: 520px) {
+  .notificationViewport {
+    right: 10px;
+    left: 10px;
+    max-width: none;
+  }
+}

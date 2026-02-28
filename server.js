@@ -275,6 +275,43 @@ async function ensureDatabaseSchemaCompatibility() {
   `);
 
   await db.query(`
+    CREATE TABLE IF NOT EXISTS event_group_plans (
+      id              SERIAL PRIMARY KEY,
+      event_key       TEXT NOT NULL,
+      creator_id      INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      title           TEXT NOT NULL,
+      note            TEXT,
+      options         JSONB NOT NULL DEFAULT '[]'::jsonb,
+      status          VARCHAR(20) NOT NULL DEFAULT 'open'
+                      CHECK (status IN ('open', 'closed')),
+      created_at      TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+      updated_at      TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS event_group_plan_members (
+      plan_id         INTEGER NOT NULL REFERENCES event_group_plans(id) ON DELETE CASCADE,
+      user_id         INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      role            VARCHAR(20) NOT NULL DEFAULT 'invited'
+                      CHECK (role IN ('creator', 'invited')),
+      created_at      TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (plan_id, user_id)
+    )
+  `);
+
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS event_group_plan_votes (
+      plan_id         INTEGER NOT NULL REFERENCES event_group_plans(id) ON DELETE CASCADE,
+      user_id         INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      option_index    INTEGER NOT NULL,
+      created_at      TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+      updated_at      TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (plan_id, user_id)
+    )
+  `);
+
+  await db.query(`
     CREATE INDEX IF NOT EXISTS idx_friend_requests_to_status
     ON friend_requests(to_user_id, status)
   `);
@@ -302,6 +339,18 @@ async function ensureDatabaseSchemaCompatibility() {
     CREATE INDEX IF NOT EXISTS idx_notifications_user_read_created
     ON notifications(user_id, is_read, created_at DESC)
   `);
+  await db.query(`
+    CREATE INDEX IF NOT EXISTS idx_group_plans_event_created
+    ON event_group_plans(event_key, created_at DESC)
+  `);
+  await db.query(`
+    CREATE INDEX IF NOT EXISTS idx_group_plan_members_user
+    ON event_group_plan_members(user_id, created_at DESC)
+  `);
+  await db.query(`
+    CREATE INDEX IF NOT EXISTS idx_group_plan_votes_plan
+    ON event_group_plan_votes(plan_id, option_index)
+  `);
 
   await db.query(`
     CREATE OR REPLACE FUNCTION update_updated_at_column()
@@ -327,6 +376,46 @@ async function ensureDatabaseSchemaCompatibility() {
       ) THEN
         CREATE TRIGGER update_event_attendance_updated_at
           BEFORE UPDATE ON event_attendance
+          FOR EACH ROW
+          EXECUTE FUNCTION update_updated_at_column();
+      END IF;
+    END $$;
+  `);
+
+  await db.query(`
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1
+        FROM pg_trigger t
+        JOIN pg_class c ON c.oid = t.tgrelid
+        JOIN pg_namespace n ON n.oid = c.relnamespace
+        WHERE t.tgname = 'update_event_group_plans_updated_at'
+          AND c.relname = 'event_group_plans'
+          AND n.nspname = 'public'
+      ) THEN
+        CREATE TRIGGER update_event_group_plans_updated_at
+          BEFORE UPDATE ON event_group_plans
+          FOR EACH ROW
+          EXECUTE FUNCTION update_updated_at_column();
+      END IF;
+    END $$;
+  `);
+
+  await db.query(`
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1
+        FROM pg_trigger t
+        JOIN pg_class c ON c.oid = t.tgrelid
+        JOIN pg_namespace n ON n.oid = c.relnamespace
+        WHERE t.tgname = 'update_event_group_plan_votes_updated_at'
+          AND c.relname = 'event_group_plan_votes'
+          AND n.nspname = 'public'
+      ) THEN
+        CREATE TRIGGER update_event_group_plan_votes_updated_at
+          BEFORE UPDATE ON event_group_plan_votes
           FOR EACH ROW
           EXECUTE FUNCTION update_updated_at_column();
       END IF;
@@ -857,6 +946,124 @@ function userSummaryRow(row) {
   };
 }
 
+function normalizePlanOptions(value) {
+  if (!Array.isArray(value)) return [];
+  const out = [];
+  for (const raw of value) {
+    const clean = safeText(raw, "").trim();
+    if (!clean) continue;
+    if (out.includes(clean)) continue;
+    out.push(clean);
+    if (out.length >= 6) break;
+  }
+  return out;
+}
+
+async function loadEventPlansForUser({ db, eventKey, userId }) {
+  const planRows = await db.query(
+    `
+    SELECT p.id, p.event_key, p.title, p.note, p.options, p.status, p.creator_id,
+           p.created_at, p.updated_at,
+           u.id AS creator_user_id, u.username AS creator_username, u.email AS creator_email,
+           u.first_name AS creator_first_name, u.last_name AS creator_last_name
+    FROM event_group_plans p
+    JOIN event_group_plan_members m ON m.plan_id = p.id
+    JOIN users u ON u.id = p.creator_id
+    WHERE p.event_key = $1
+      AND m.user_id = $2
+    ORDER BY p.created_at DESC
+    `,
+    [eventKey, userId]
+  );
+
+  if (planRows.rowCount === 0) return [];
+  const planIds = planRows.rows.map((row) => Number(row.id));
+
+  const memberRows = await db.query(
+    `
+    SELECT m.plan_id, m.user_id, m.role, m.created_at,
+           u.id AS member_user_id, u.username AS member_username, u.email AS member_email,
+           u.first_name AS member_first_name, u.last_name AS member_last_name
+    FROM event_group_plan_members m
+    JOIN users u ON u.id = m.user_id
+    WHERE m.plan_id = ANY($1::int[])
+    ORDER BY m.created_at ASC
+    `,
+    [planIds]
+  );
+
+  const voteRows = await db.query(
+    `
+    SELECT plan_id, option_index, COUNT(*)::int AS votes
+    FROM event_group_plan_votes
+    WHERE plan_id = ANY($1::int[])
+    GROUP BY plan_id, option_index
+    `,
+    [planIds]
+  );
+
+  const myVotesRows = await db.query(
+    `
+    SELECT plan_id, option_index
+    FROM event_group_plan_votes
+    WHERE plan_id = ANY($1::int[]) AND user_id = $2
+    `,
+    [planIds, userId]
+  );
+
+  const membersByPlan = new Map();
+  for (const row of memberRows.rows) {
+    const planId = Number(row.plan_id);
+    const list = membersByPlan.get(planId) || [];
+    list.push({
+      role: row.role,
+      joinedAt: row.created_at,
+      user: userSummaryRow({
+        id: row.member_user_id,
+        username: row.member_username,
+        email: row.member_email,
+        first_name: row.member_first_name,
+        last_name: row.member_last_name,
+      }),
+    });
+    membersByPlan.set(planId, list);
+  }
+
+  const voteCountsByPlan = new Map();
+  for (const row of voteRows.rows) {
+    const planId = Number(row.plan_id);
+    const item = voteCountsByPlan.get(planId) || {};
+    item[String(Number(row.option_index))] = Number(row.votes) || 0;
+    voteCountsByPlan.set(planId, item);
+  }
+
+  const myVoteByPlan = new Map();
+  for (const row of myVotesRows.rows) {
+    myVoteByPlan.set(Number(row.plan_id), Number(row.option_index));
+  }
+
+  return planRows.rows.map((row) => ({
+    id: String(row.id),
+    eventKey: String(row.event_key),
+    title: safeText(row.title, "Group plan"),
+    note: row.note ? String(row.note) : "",
+    status: row.status,
+    options: Array.isArray(row.options) ? row.options.map((x) => String(x)) : [],
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    creator: userSummaryRow({
+      id: row.creator_user_id,
+      username: row.creator_username,
+      email: row.creator_email,
+      first_name: row.creator_first_name,
+      last_name: row.creator_last_name,
+    }),
+    members: membersByPlan.get(Number(row.id)) || [],
+    voteCounts: voteCountsByPlan.get(Number(row.id)) || {},
+    myVote: myVoteByPlan.has(Number(row.id)) ? myVoteByPlan.get(Number(row.id)) : null,
+  }));
+}
+
 // --- Users search
 app.get("/users/search", authRequired, async (req, res) => {
   try {
@@ -1211,6 +1418,145 @@ app.get("/events/:eventKey/social", authOptional, async (req, res) => {
     }
 
     return res.json({ ok: true, eventKey, goingCount, myGoing, friendsGoing, myInvite });
+  } catch (err) {
+    return res.status(err?.status || 500).json({ ok: false, error: err?.message || String(err) });
+  }
+});
+
+// --- Group plans for event (member scope)
+app.get("/events/:eventKey/plans", authRequired, async (req, res) => {
+  try {
+    const me = mustInt(req.auth?.sub, "user id");
+    const eventKey = String(req.params.eventKey || "").trim();
+    if (!eventKey) return res.status(400).json({ ok: false, error: "Missing eventKey" });
+
+    const db = requireDb();
+    const plans = await loadEventPlansForUser({ db, eventKey, userId: me });
+    return res.json({ ok: true, plans });
+  } catch (err) {
+    return res.status(err?.status || 500).json({ ok: false, error: err?.message || String(err) });
+  }
+});
+
+app.post("/events/:eventKey/plans", authRequired, async (req, res) => {
+  try {
+    const me = mustInt(req.auth?.sub, "user id");
+    const eventKey = String(req.params.eventKey || "").trim();
+    if (!eventKey) return res.status(400).json({ ok: false, error: "Missing eventKey" });
+
+    const title = safeText(req.body?.title, "").trim();
+    const note = safeText(req.body?.note, "").trim();
+    const options = normalizePlanOptions(req.body?.options);
+    const inviteeIdsRaw = Array.isArray(req.body?.inviteeIds) ? req.body.inviteeIds : [];
+    const inviteeIds = Array.from(
+      new Set(
+        inviteeIdsRaw
+          .map((x) => Number(x))
+          .filter((x) => Number.isInteger(x) && x > 0 && x !== me)
+      )
+    );
+
+    if (!title) return res.status(400).json({ ok: false, error: "Title is required." });
+    if (options.length < 2) {
+      return res.status(400).json({ ok: false, error: "At least 2 plan options are required." });
+    }
+
+    const db = requireDb();
+    for (const friendId of inviteeIds) {
+      if (!(await areFriends(db, me, friendId))) {
+        return res.status(403).json({ ok: false, error: "You can only invite friends." });
+      }
+    }
+
+    const created = await db.query(
+      `
+      INSERT INTO event_group_plans (event_key, creator_id, title, note, options, status)
+      VALUES ($1, $2, $3, $4, $5::jsonb, 'open')
+      RETURNING id
+      `,
+      [eventKey, me, title, note || null, JSON.stringify(options)]
+    );
+
+    const planId = Number(created.rows[0].id);
+    await db.query(
+      `
+      INSERT INTO event_group_plan_members (plan_id, user_id, role)
+      VALUES ($1, $2, 'creator')
+      ON CONFLICT (plan_id, user_id) DO NOTHING
+      `,
+      [planId, me]
+    );
+
+    for (const friendId of inviteeIds) {
+      await db.query(
+        `
+        INSERT INTO event_group_plan_members (plan_id, user_id, role)
+        VALUES ($1, $2, 'invited')
+        ON CONFLICT (plan_id, user_id) DO NOTHING
+        `,
+        [planId, friendId]
+      );
+
+      await createNotification({
+        userId: friendId,
+        type: "group_plan_invite",
+        title: "Group plan invite",
+        message: `You were invited to the plan "${title}".`,
+        payload: { planId: String(planId), eventKey, title, note: note || null },
+      });
+    }
+
+    const plans = await loadEventPlansForUser({ db, eventKey, userId: me });
+    const plan = plans.find((p) => p.id === String(planId)) || null;
+    return res.status(201).json({ ok: true, plan });
+  } catch (err) {
+    return res.status(err?.status || 500).json({ ok: false, error: err?.message || String(err) });
+  }
+});
+
+app.post("/plans/:planId/vote", authRequired, async (req, res) => {
+  try {
+    const me = mustInt(req.auth?.sub, "user id");
+    const planId = mustInt(req.params.planId, "planId");
+    const optionIndex = Number(req.body?.optionIndex);
+    if (!Number.isInteger(optionIndex) || optionIndex < 0) {
+      return res.status(400).json({ ok: false, error: "Invalid optionIndex." });
+    }
+
+    const db = requireDb();
+    const scope = await db.query(
+      `
+      SELECT p.event_key, p.options
+      FROM event_group_plans p
+      JOIN event_group_plan_members m ON m.plan_id = p.id
+      WHERE p.id = $1 AND m.user_id = $2
+      LIMIT 1
+      `,
+      [planId, me]
+    );
+    if (scope.rowCount === 0) {
+      return res.status(404).json({ ok: false, error: "Plan not found." });
+    }
+
+    const options = Array.isArray(scope.rows[0].options) ? scope.rows[0].options : [];
+    if (optionIndex >= options.length) {
+      return res.status(400).json({ ok: false, error: "Option index out of range." });
+    }
+
+    await db.query(
+      `
+      INSERT INTO event_group_plan_votes (plan_id, user_id, option_index)
+      VALUES ($1, $2, $3)
+      ON CONFLICT (plan_id, user_id)
+      DO UPDATE SET option_index = $3, updated_at = CURRENT_TIMESTAMP
+      `,
+      [planId, me, optionIndex]
+    );
+
+    const eventKey = String(scope.rows[0].event_key || "");
+    const plans = await loadEventPlansForUser({ db, eventKey, userId: me });
+    const plan = plans.find((p) => p.id === String(planId)) || null;
+    return res.json({ ok: true, plan });
   } catch (err) {
     return res.status(err?.status || 500).json({ ok: false, error: err?.message || String(err) });
   }

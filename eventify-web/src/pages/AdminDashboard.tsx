@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
 import type { Role } from "../auth/authTypes";
+import { useNotifications } from "../components/NotificationProvider";
 import {
   apiFetch,
   type AdminUsersResponse,
@@ -47,6 +48,7 @@ type SortDir = "asc" | "desc";
 
 export default function AdminDashboard() {
   const { user, token } = useAuth();
+  const { notify } = useNotifications();
   const isAdmin = user?.role === "admin";
 
   const [refreshKey, setRefreshKey] = useState(0);
@@ -270,7 +272,7 @@ export default function AdminDashboard() {
     if (!token || !user) return;
 
     if (userId === user.id && role !== "admin") {
-      alert("You cannot remove your own admin role.");
+      notify("You cannot remove your own admin role.", "error");
       return;
     }
 
@@ -291,7 +293,7 @@ export default function AdminDashboard() {
     if (!token || !user) return;
 
     if (userId === user.id && !isActive) {
-      alert("You cannot disable your own account.");
+      notify("You cannot disable your own account.", "error");
       return;
     }
 
