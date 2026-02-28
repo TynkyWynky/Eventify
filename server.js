@@ -3008,6 +3008,107 @@ function objectOrEmpty(value) {
   return value && typeof value === "object" && !Array.isArray(value) ? value : {};
 }
 
+function normalizeSuggestText(value = "") {
+  return String(value)
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function levenshteinDistance(a = "", b = "") {
+  if (a === b) return 0;
+  if (!a.length) return b.length;
+  if (!b.length) return a.length;
+
+  const dp = Array.from({ length: b.length + 1 }, (_, i) => i);
+  for (let i = 1; i <= a.length; i += 1) {
+    let prev = i - 1;
+    dp[0] = i;
+    for (let j = 1; j <= b.length; j += 1) {
+      const tmp = dp[j];
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      dp[j] = Math.min(dp[j] + 1, dp[j - 1] + 1, prev + cost);
+      prev = tmp;
+    }
+  }
+  return dp[b.length];
+}
+
+function isSuggestMatch(query, candidate) {
+  if (!query) return true;
+  const q = normalizeSuggestText(query);
+  const c = normalizeSuggestText(candidate);
+  if (!q || !c) return false;
+  if (c.includes(q)) return true;
+
+  const qWords = q.split(" ").filter(Boolean);
+  const cWords = c.split(" ").filter(Boolean);
+  return qWords.every((qWord) =>
+    cWords.some((cWord) => {
+      if (cWord.startsWith(qWord)) return true;
+      const maxDistance = qWord.length <= 4 ? 1 : 2;
+      return (
+        levenshteinDistance(qWord, cWord.slice(0, qWord.length)) <= maxDistance
+      );
+    })
+  );
+}
+
+function buildEventSuggestions(events, query, limit = 10) {
+  const byLabel = new Map();
+  const q = cleanText(query) || "";
+
+  const add = (raw, kind, boost = 0) => {
+    const label = cleanText(raw);
+    if (!label || label.length < 2) return;
+    if (!isSuggestMatch(q, label)) return;
+
+    const key = normalizeSuggestText(label);
+    const current = byLabel.get(key) || {
+      label,
+      score: 0,
+      kinds: new Set(),
+    };
+
+    current.kinds.add(kind);
+    let score = boost;
+    if (kind === "artist") score += 5;
+    else if (kind === "title") score += 4;
+    else if (kind === "venue") score += 3;
+    else if (kind === "city") score += 2;
+    else score += 1;
+
+    const normLabel = normalizeSuggestText(label);
+    const normQ = normalizeSuggestText(q);
+    if (normQ && normLabel.startsWith(normQ)) score += 3;
+    if (normQ && normLabel.includes(normQ)) score += 2;
+
+    current.score += score;
+    byLabel.set(key, current);
+  };
+
+  for (const event of Array.isArray(events) ? events : []) {
+    add(event?.artistName, "artist", 1);
+    add(event?.title, "title");
+    add(event?.venue, "venue");
+    add(event?.city, "city");
+    add(event?.genre, "genre");
+    add(event?.category, "category");
+
+    if (Array.isArray(event?.tags)) {
+      for (const tag of event.tags) add(tag, "tag");
+    }
+  }
+
+  return [...byLabel.values()]
+    .sort((a, b) => b.score - a.score || a.label.localeCompare(b.label))
+    .slice(0, Math.max(1, Math.min(20, Number(limit) || 10)))
+    .map((item) => item.label);
+}
+
 async function resolveEventsForAi({ events, query = {} } = {}) {
   if (Array.isArray(events) && events.length > 0) {
     return dedupe(events).slice(0, 300);
@@ -3243,6 +3344,50 @@ app.get("/events", async (req, res) => {
       sourceWarnings: sourceErrors.length > 0 ? sourceErrors : undefined,
       count: events.length,
       events,
+    });
+  } catch (err) {
+    return res.status(500).json({ ok: false, error: String(err) });
+  }
+});
+
+/**
+ * GET /events/suggestions
+ * Query params:
+ * - q (required-ish, short text)
+ * - lat, lng, radiusKm (optional)
+ * - limit (optional, max 20)
+ */
+app.get("/events/suggestions", async (req, res) => {
+  try {
+    const q = cleanText(req.query?.q || "");
+    if (!q || q.length < 1) {
+      return res.json({ ok: true, suggestions: [] });
+    }
+
+    const lat = Number(req.query?.lat);
+    const lng = Number(req.query?.lng);
+    const radiusKm = Number(req.query?.radiusKm);
+    const limit = Math.max(1, Math.min(20, Number(req.query?.limit) || 10));
+
+    const events = await resolveEventsForAi({
+      query: {
+        keyword: q,
+        lat: Number.isFinite(lat) ? lat : 50.8503,
+        lng: Number.isFinite(lng) ? lng : 4.3517,
+        radiusKm: Number.isFinite(radiusKm) ? radiusKm : 1000,
+        classificationName: "music",
+        size: 80,
+        maxResults: 180,
+        includeScraped: 1,
+      },
+    });
+
+    const suggestions = buildEventSuggestions(events, q, limit);
+    return res.json({
+      ok: true,
+      q,
+      count: suggestions.length,
+      suggestions,
     });
   } catch (err) {
     return res.status(500).json({ ok: false, error: String(err) });

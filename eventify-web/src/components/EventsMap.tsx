@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   MapContainer,
@@ -38,6 +38,30 @@ function FitBounds({ bounds }: { bounds: L.LatLngBounds | null }) {
     if (!bounds) return;
     map.fitBounds(bounds, { padding: [40, 40], maxZoom: 15 });
   }, [bounds, map]);
+
+  return null;
+}
+
+function MapActions({
+  bounds,
+  focus,
+  fitRequest,
+}: {
+  bounds: L.LatLngBounds | null;
+  focus: { lat: number; lng: number } | null;
+  fitRequest: number;
+}) {
+  const map = useMap();
+
+  useEffect(() => {
+    if (!focus) return;
+    map.flyTo([focus.lat, focus.lng], Math.max(map.getZoom(), 12), { duration: 0.4 });
+  }, [focus, map]);
+
+  useEffect(() => {
+    if (!bounds) return;
+    map.fitBounds(bounds, { padding: [40, 40], maxZoom: 15 });
+  }, [bounds, fitRequest, map]);
 
   return null;
 }
@@ -92,6 +116,31 @@ export default function EventsMap({
     return L.latLngBounds(points.map((p) => L.latLng(p[0], p[1])));
   }, [mappable, origin.lat, origin.lng]);
 
+  const cityFocusOptions = useMemo(() => {
+    const grouped = new Map<string, { sumLat: number; sumLng: number; count: number }>();
+
+    for (const item of mappable) {
+      const prev = grouped.get(item.city) ?? { sumLat: 0, sumLng: 0, count: 0 };
+      prev.sumLat += item.lat;
+      prev.sumLng += item.lng;
+      prev.count += 1;
+      grouped.set(item.city, prev);
+    }
+
+    return [...grouped.entries()]
+      .map(([city, value]) => ({
+        city,
+        count: value.count,
+        lat: value.sumLat / value.count,
+        lng: value.sumLng / value.count,
+      }))
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 6);
+  }, [mappable]);
+
+  const [focus, setFocus] = useState<{ lat: number; lng: number } | null>(null);
+  const [fitRequest, setFitRequest] = useState(0);
+
   const fallbackCenter: [number, number] = useMemo(() => {
     if (isFiniteNumber(origin.lat) && isFiniteNumber(origin.lng)) {
       return [origin.lat, origin.lng];
@@ -102,6 +151,29 @@ export default function EventsMap({
 
   return (
     <div className="leafletMapWrap">
+      <div className="mapActionBar">
+        <button
+          type="button"
+          className="mapActionBtn mapActionBtnPrimary"
+          onClick={() => {
+            setFocus(null);
+            setFitRequest((x) => x + 1);
+          }}
+        >
+          Fit all
+        </button>
+        {cityFocusOptions.map((item) => (
+          <button
+            key={item.city}
+            type="button"
+            className="mapActionBtn"
+            onClick={() => setFocus({ lat: item.lat, lng: item.lng })}
+            title={`Zoom to ${item.city}`}
+          >
+            {item.city} ({item.count})
+          </button>
+        ))}
+      </div>
       <MapContainer
         center={fallbackCenter}
         zoom={12}
@@ -114,6 +186,7 @@ export default function EventsMap({
         />
 
         <FitBounds bounds={bounds} />
+        <MapActions bounds={bounds} focus={focus} fitRequest={fitRequest} />
 
         {isFiniteNumber(origin.lat) && isFiniteNumber(origin.lng) ? (
           <Marker position={[origin.lat, origin.lng]} icon={originDotIcon}>

@@ -4,6 +4,7 @@ import SelectField from "../components/SelectField";
 import { MUSIC_STYLES, type EventItem } from "../events/eventsStore";
 import { eventsRepo } from "../data/events";
 import { getGenreFallbackImage } from "../data/events/genreImages";
+import { getRecentlyViewedEvents, type RecentlyViewedEvent } from "../data/events/recentlyViewedEventsStore";
 import {
   subscribeOrganizerEventsChanged,
 } from "../data/events/organizerEventsStore";
@@ -47,7 +48,36 @@ function dedupeIds(values: string[]) {
   return Array.from(new Set(values.filter(Boolean)));
 }
 
-function EventCard({ event, search }: { event: EventItem; search: string }) {
+function toCardEvent(item: RecentlyViewedEvent): EventItem {
+  return {
+    id: item.id,
+    title: item.title,
+    venue: item.venue,
+    city: item.city,
+    dateLabel: item.dateLabel,
+    distanceKm: Number.isFinite(item.distanceKm) ? item.distanceKm : 0,
+    imageUrl: item.imageUrl,
+    tags: item.tags.length > 0 ? item.tags : ["All"],
+    trending: item.trending,
+    artistName: item.artistName,
+    addressLine: "",
+    postalCode: "",
+    country: "Belgium",
+    latitude: 0,
+    longitude: 0,
+    description: "",
+  };
+}
+
+function EventCard({
+  event,
+  search,
+  goingCount = 0,
+}: {
+  event: EventItem;
+  search: string;
+  goingCount?: number;
+}) {
   const reasonList = Array.isArray(event.aiRecommendation?.reasons)
     ? event.aiRecommendation?.reasons
     : [];
@@ -90,6 +120,12 @@ function EventCard({ event, search }: { event: EventItem; search: string }) {
             ) : null}
           </div>
           <div className="eventFooterRight">{event.dateLabel}</div>
+        </div>
+        <div className="eventSocialRow">
+          {event.trending ? <span className="eventSocialPill eventSocialTrend">Trending</span> : null}
+          <span className="eventSocialPill">
+            {goingCount} {goingCount === 1 ? "person going" : "people going"}
+          </span>
         </div>
       </article>
     </Link>
@@ -195,6 +231,25 @@ export default function EventDashboardPage() {
   const [mapEvents, setMapEvents] = useState<EventItem[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [isOffline, setIsOffline] = useState(
+    typeof navigator !== "undefined" ? !navigator.onLine : false
+  );
+
+  useEffect(() => {
+    const onOnline = () => setIsOffline(false);
+    const onOffline = () => setIsOffline(true);
+    window.addEventListener("online", onOnline);
+    window.addEventListener("offline", onOffline);
+    return () => {
+      window.removeEventListener("online", onOnline);
+      window.removeEventListener("offline", onOffline);
+    };
+  }, []);
+
+  const recentlyViewed = useMemo(() => {
+    if (!isOffline) return [];
+    return getRecentlyViewedEvents(8);
+  }, [isOffline]);
 
   const [reloadTick, setReloadTick] = useState(0);
   useEffect(() => {
@@ -262,6 +317,11 @@ export default function EventDashboardPage() {
 
   // signals for personalization
   const [signalsTick, setSignalsTick] = useState(0);
+  const [metricsTick, setMetricsTick] = useState(0);
+  useEffect(() => {
+    return subscribeMetricsChanged(() => setMetricsTick((t) => t + 1));
+  }, []);
+
   useEffect(() => {
     if (!userId) return;
 
@@ -483,6 +543,11 @@ export default function EventDashboardPage() {
     }));
   }, [aiRecommendedEvents, events]);
 
+  const goingCountById = useMemo(() => {
+    void metricsTick;
+    return countGoingsForEvents(eventsWithAi.map((event) => event.id));
+  }, [eventsWithAi, metricsTick]);
+
   const recommendedEvents = useMemo(() => {
     if (aiRecommendedEvents.length > 0) return aiRecommendedEvents;
     return fallbackRecommendedEvents;
@@ -594,6 +659,30 @@ export default function EventDashboardPage() {
       </section>
 
       {/* RECOMMENDED (only when useful) */}
+      {isOffline && recentlyViewed.length > 0 ? (
+        <>
+          <div className="sectionTitleRow">
+            <div>
+              <div className="sectionTitle">Offline quick access</div>
+              <div className="sectionHint">
+                You're offline. Open your recently viewed events.
+              </div>
+            </div>
+          </div>
+
+          <div className="trendingRow">
+            {recentlyViewed.map((e) => (
+              <EventCard
+                key={`recent-${e.id}`}
+                event={toCardEvent(e)}
+                search={location.search}
+                goingCount={0}
+              />
+            ))}
+          </div>
+        </>
+      ) : null}
+
       {showRecommended ? (
         <>
           <div id="dash-recommended" className="sectionTitleRow">
@@ -613,7 +702,12 @@ export default function EventDashboardPage() {
 
           <div className="trendingRow">
             {recommendedEvents.map((e) => (
-              <EventCard key={e.id} event={e} search={location.search} />
+              <EventCard
+                key={e.id}
+                event={e}
+                search={location.search}
+                goingCount={goingCountById[e.id] ?? 0}
+              />
             ))}
           </div>
         </>
@@ -635,7 +729,12 @@ export default function EventDashboardPage() {
           <div className="sectionHint">No trending events for this filter.</div>
         ) : (
           trendingEvents.map((e) => (
-            <EventCard key={e.id} event={e} search={location.search} />
+            <EventCard
+              key={e.id}
+              event={e}
+              search={location.search}
+              goingCount={goingCountById[e.id] ?? 0}
+            />
           ))
         )}
       </div>
@@ -705,7 +804,12 @@ export default function EventDashboardPage() {
                 <div className="sectionHint">No events match your filters.</div>
               ) : (
                 eventsWithAi.map((e) => (
-                  <EventCard key={e.id} event={e} search={location.search} />
+                  <EventCard
+                    key={e.id}
+                    event={e}
+                    search={location.search}
+                    goingCount={goingCountById[e.id] ?? 0}
+                  />
                 ))
               )}
             </div>
@@ -732,7 +836,12 @@ export default function EventDashboardPage() {
             <div className="sectionHint">No events match your filters.</div>
           ) : (
             eventsWithAi.map((e) => (
-              <EventCard key={e.id} event={e} search={location.search} />
+              <EventCard
+                key={e.id}
+                event={e}
+                search={location.search}
+                goingCount={goingCountById[e.id] ?? 0}
+              />
             ))
           )}
         </div>

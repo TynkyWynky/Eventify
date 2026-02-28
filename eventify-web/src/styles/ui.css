@@ -232,16 +232,36 @@ body::before {
 }
 
 .navSearchWrap { flex: 1; }
+.navSearchWrap { position: relative; }
 
 .searchBar {
   width: 100%;
   border-radius: var(--radius);
   border: 1px solid var(--border);
   background: var(--panel);
-  padding: 10px 14px;
+  padding: 10px 90px 10px 14px;
   font-size: 14px;
   color: var(--text);
   outline: none;
+}
+
+.searchCommitBtn {
+  position: absolute;
+  top: 50%;
+  right: 8px;
+  transform: translateY(-50%);
+  border-radius: 10px;
+  border: 1px solid rgba(178,106,168,.45);
+  background: rgba(178,106,168,.18);
+  color: rgba(255,255,255,.95);
+  padding: 6px 10px;
+  font-size: 12px;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.searchCommitBtn:hover {
+  border-color: rgba(178,106,168,.7);
 }
 
 .searchBar:focus {
@@ -249,10 +269,109 @@ body::before {
   box-shadow: var(--glow);
 }
 
+.searchSuggest {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  right: 0;
+  z-index: 120;
+  border-radius: var(--radius2);
+  border: 1px solid var(--border);
+  background: rgba(11,11,16,.94);
+  backdrop-filter: blur(12px);
+  box-shadow: var(--glow);
+  padding: 6px;
+  display: grid;
+  gap: 4px;
+}
+
+.searchSuggestHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 4px 6px 6px;
+}
+
+.searchSuggestHeaderTitle {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 900;
+  text-transform: uppercase;
+  letter-spacing: .07em;
+}
+
+.searchSuggestClear {
+  border: 1px solid var(--border);
+  background: rgba(255,255,255,.04);
+  color: rgba(255,255,255,.88);
+  border-radius: 999px;
+  padding: 4px 8px;
+  font-size: 11px;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.searchSuggestClear:hover {
+  border-color: var(--borderHover);
+}
+
+.searchSuggestItem {
+  width: 100%;
+  border-radius: var(--radius);
+  border: 1px solid transparent;
+  background: rgba(255,255,255,.03);
+  color: var(--text);
+  text-align: left;
+  padding: 8px 10px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.searchSuggestItem:hover {
+  border-color: var(--borderHover);
+  background: rgba(255,255,255,.06);
+}
+
+.searchSuggestLabel {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 800;
+  font-size: 13px;
+}
+
+.searchSuggestMeta {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+  flex: 0 0 auto;
+}
+
 .navActions {
   display: flex;
   align-items: center;
   gap: var(--space-2);
+}
+
+.navInstallBtn {
+  height: 40px;
+  border-radius: var(--radius);
+  border: 1px solid rgba(178,106,168,.45);
+  background: rgba(178,106,168,.18);
+  color: rgba(255,255,255,.96);
+  font-weight: 900;
+  padding: 0 12px;
+  cursor: pointer;
+}
+
+.navInstallBtn:hover {
+  border-color: rgba(178,106,168,.7);
+  box-shadow: var(--glow);
 }
 
 /* =========================
@@ -936,6 +1055,28 @@ textarea.input { min-height: 110px; resize: vertical; }
   max-width: 44%;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.eventSocialRow {
+  padding: 0 12px 12px;
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.eventSocialPill {
+  border-radius: 999px;
+  border: 1px solid rgba(255,255,255,.14);
+  background: rgba(255,255,255,.06);
+  color: rgba(255,255,255,.84);
+  font-size: 11px;
+  font-weight: 900;
+  padding: 4px 8px;
+}
+
+.eventSocialTrend {
+  border-color: rgba(255, 182, 80, 0.4);
+  color: rgba(255, 208, 140, 0.95);
 }
 
 /* =========================
@@ -2801,10 +2942,56 @@ a.accountFriendAction {
    MAP (Leaflet)
    ========================= */
 .leafletMapWrap {
+  position: relative;
   border-radius: var(--radius2);
   border: 1px solid var(--border);
   overflow: hidden;
   background: rgba(0,0,0,.22);
+}
+
+.mapActionBar {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  z-index: 450;
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  max-width: calc(100% - 20px);
+}
+
+.mapActionBtn {
+  border-radius: 999px;
+  border: 1px solid rgba(255,255,255,.14);
+  background: rgba(11,11,16,.86);
+  color: rgba(255,255,255,.92);
+  font-size: 12px;
+  font-weight: 900;
+  padding: 6px 10px;
+  cursor: pointer;
+  backdrop-filter: blur(8px);
+}
+
+.mapActionBtn:hover {
+  border-color: rgba(255,255,255,.24);
+}
+
+.mapActionBtnPrimary {
+  border-color: rgba(178,106,168,.42);
+  background: rgba(178,106,168,.22);
+}
+
+@media (max-width: 520px) {
+  .mapActionBar {
+    top: 8px;
+    left: 8px;
+    max-width: calc(100% - 16px);
+  }
+
+  .mapActionBtn {
+    font-size: 11px;
+    padding: 5px 8px;
+  }
 }
 
 .leafletMap {

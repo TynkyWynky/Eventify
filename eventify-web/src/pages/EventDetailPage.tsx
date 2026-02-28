@@ -3,6 +3,7 @@ import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import type { EventItem } from "../events/eventsStore";
 import { eventsRepo } from "../data/events";
 import { getGenreFallbackImage } from "../data/events/genreImages";
+import { rememberViewedEvent } from "../data/events/recentlyViewedEventsStore";
 import { useAuth } from "../auth/AuthContext";
 import { apiFetch } from "../auth/apiClient";
 import { useNotifications } from "../components/NotificationProvider";
@@ -295,7 +296,11 @@ export default function EventDetailPage() {
   const [plansError, setPlansError] = useState<string | null>(null);
   const [planTitle, setPlanTitle] = useState("");
   const [planNote, setPlanNote] = useState("");
-  const [planOptionsText, setPlanOptionsText] = useState("Friday 19:30\nSaturday 20:00");
+  const [planOptionDraft, setPlanOptionDraft] = useState("");
+  const [planOptions, setPlanOptions] = useState<string[]>([
+    "Friday 19:30",
+    "Saturday 20:00",
+  ]);
   const [selectedPlanInviteeIds, setSelectedPlanInviteeIds] = useState<string[]>([]);
   const [planCreating, setPlanCreating] = useState(false);
   const [planActionMsg, setPlanActionMsg] = useState<string | null>(null);
@@ -350,6 +355,11 @@ export default function EventDetailPage() {
 
     return () => controller.abort();
   }, [eventId]);
+
+  useEffect(() => {
+    if (!event) return;
+    rememberViewedEvent(event);
+  }, [event]);
 
   // Views metrics (local)
   useEffect(() => {
@@ -945,8 +955,7 @@ export default function EventDetailPage() {
     friendsAllLoading ||
     friendsAll.length === 0 ||
     !inviteeId;
-  const planOptionLines = planOptionsText
-    .split(/\r?\n/)
+  const planOptionLines = planOptions
     .map((line) => line.trim())
     .filter(Boolean);
 
@@ -1007,6 +1016,20 @@ export default function EventDetailPage() {
     );
   };
 
+  const addPlanOption = () => {
+    const clean = planOptionDraft.trim();
+    if (!clean) return;
+    setPlanOptions((prev) => {
+      if (prev.some((option) => option.toLowerCase() === clean.toLowerCase())) return prev;
+      return [...prev, clean];
+    });
+    setPlanOptionDraft("");
+  };
+
+  const removePlanOption = (index: number) => {
+    setPlanOptions((prev) => prev.filter((_, idx) => idx !== index));
+  };
+
   const createGroupPlan = async () => {
     if (!eventId || !token || !user) {
       navigate("/login", { state: { from: location.pathname + location.search } });
@@ -1018,7 +1041,7 @@ export default function EventDetailPage() {
       return;
     }
     if (planOptionLines.length < 2) {
-      setPlanActionMsg("Add at least 2 options (one per line).");
+      setPlanActionMsg("Add at least 2 options.");
       return;
     }
 
@@ -1040,7 +1063,8 @@ export default function EventDetailPage() {
       );
       setPlanTitle("");
       setPlanNote("");
-      setPlanOptionsText("Friday 19:30\nSaturday 20:00");
+      setPlanOptionDraft("");
+      setPlanOptions(["Friday 19:30", "Saturday 20:00"]);
       setSelectedPlanInviteeIds([]);
       setPlanActionMsg("Plan created.");
       await refreshPlans();
@@ -1423,12 +1447,15 @@ export default function EventDetailPage() {
             planActionMsg={planActionMsg}
             planTitle={planTitle}
             planNote={planNote}
-            planOptionsText={planOptionsText}
+            planOptionDraft={planOptionDraft}
+            planOptions={planOptions}
             selectedPlanInviteeIds={selectedPlanInviteeIds}
             planCreating={planCreating}
             onPlanTitleChange={setPlanTitle}
             onPlanNoteChange={setPlanNote}
-            onPlanOptionsTextChange={setPlanOptionsText}
+            onPlanOptionDraftChange={setPlanOptionDraft}
+            onAddPlanOption={addPlanOption}
+            onRemovePlanOption={removePlanOption}
             onToggleInvitee={togglePlanInvitee}
             onCreate={createGroupPlan}
             onVote={voteOnPlan}

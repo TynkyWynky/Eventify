@@ -10,6 +10,46 @@
   margin-top: 8px;
 }
 
+.groupPlanOptionComposer {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+}
+
+.groupPlanSelectedOptions {
+  display: grid;
+  gap: 6px;
+}
+
+.groupPlanSelectedOption {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.05);
+  padding: 8px 10px;
+  color: rgba(255, 255, 255, 0.92);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.groupPlanRemoveOption {
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(0, 0, 0, 0.2);
+  color: rgba(255, 255, 255, 0.84);
+  border-radius: 999px;
+  padding: 4px 8px;
+  font-size: 11px;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.groupPlanRemoveOption:hover {
+  border-color: rgba(255, 255, 255, 0.28);
+}
+
 .groupPlanFriends {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -90,6 +130,10 @@
 }
 
 @media (max-width: 520px) {
+  .groupPlanOptionComposer {
+    grid-template-columns: 1fr;
+  }
+
   .groupPlanFriends {
     grid-template-columns: 1fr;
   }

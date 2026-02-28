@@ -7,6 +7,17 @@ import { NotificationProvider } from "../components/NotificationProvider";
 import "leaflet/dist/leaflet.css";
 import "../styles/ui.css";
 
+if (import.meta.env.PROD && "serviceWorker" in navigator) {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("/sw.js").catch((err: unknown) => {
+      console.warn(
+        "Service worker registration failed:",
+        err instanceof Error ? err.message : String(err)
+      );
+    });
+  });
+}
+
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
     <NotificationProvider>

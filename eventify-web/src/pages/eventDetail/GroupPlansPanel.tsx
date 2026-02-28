@@ -29,12 +29,15 @@ type GroupPlansPanelProps = {
   planActionMsg: string | null;
   planTitle: string;
   planNote: string;
-  planOptionsText: string;
+  planOptionDraft: string;
+  planOptions: string[];
   selectedPlanInviteeIds: string[];
   planCreating: boolean;
   onPlanTitleChange: (value: string) => void;
   onPlanNoteChange: (value: string) => void;
-  onPlanOptionsTextChange: (value: string) => void;
+  onPlanOptionDraftChange: (value: string) => void;
+  onAddPlanOption: () => void;
+  onRemovePlanOption: (index: number) => void;
   onToggleInvitee: (friendId: string) => void;
   onCreate: () => void;
   onVote: (planId: string, optionIndex: number) => void;
@@ -49,12 +52,15 @@ export default function GroupPlansPanel({
   planActionMsg,
   planTitle,
   planNote,
-  planOptionsText,
+  planOptionDraft,
+  planOptions,
   selectedPlanInviteeIds,
   planCreating,
   onPlanTitleChange,
   onPlanNoteChange,
-  onPlanOptionsTextChange,
+  onPlanOptionDraftChange,
+  onAddPlanOption,
+  onRemovePlanOption,
   onToggleInvitee,
   onCreate,
   onVote,
@@ -83,12 +89,43 @@ export default function GroupPlansPanel({
               value={planNote}
               onChange={(e) => onPlanNoteChange(e.target.value)}
             />
-            <textarea
-              className="input"
-              placeholder={"Option per line (min 2)\nFriday 19:30\nSaturday 20:00"}
-              value={planOptionsText}
-              onChange={(e) => onPlanOptionsTextChange(e.target.value)}
-            />
+
+            <div className="groupPlanOptionComposer">
+              <input
+                className="input"
+                placeholder="Add option (e.g. Friday 19:30)"
+                value={planOptionDraft}
+                onChange={(e) => onPlanOptionDraftChange(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    onAddPlanOption();
+                  }
+                }}
+              />
+              <button className="btn btnSecondary" type="button" onClick={onAddPlanOption}>
+                Add option
+              </button>
+            </div>
+
+            <div className="groupPlanSelectedOptions">
+              {planOptions.map((option, idx) => (
+                <div key={`${option}-${idx}`} className="groupPlanSelectedOption">
+                  <span>{option}</span>
+                  <button
+                    type="button"
+                    className="groupPlanRemoveOption"
+                    onClick={() => onRemovePlanOption(idx)}
+                    aria-label={`Remove option ${option}`}
+                  >
+                    Remove
+                  </button>
+                </div>
+              ))}
+            </div>
+            <div className="sectionHint">
+              Add at least 2 options so friends can vote.
+            </div>
 
             {friendsAll.length > 0 ? (
               <div className="groupPlanFriends">
