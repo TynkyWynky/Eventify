@@ -72,11 +72,9 @@ function toCardEvent(item: RecentlyViewedEvent): EventItem {
 function EventCard({
   event,
   search,
-  goingCount = 0,
 }: {
   event: EventItem;
   search: string;
-  goingCount?: number;
 }) {
   const reasonList = Array.isArray(event.aiRecommendation?.reasons)
     ? event.aiRecommendation?.reasons
@@ -121,12 +119,11 @@ function EventCard({
           </div>
           <div className="eventFooterRight">{event.dateLabel}</div>
         </div>
-        <div className="eventSocialRow">
-          {event.trending ? <span className="eventSocialPill eventSocialTrend">Trending</span> : null}
-          <span className="eventSocialPill">
-            {goingCount} {goingCount === 1 ? "person going" : "people going"}
-          </span>
-        </div>
+        {event.trending ? (
+          <div className="eventSocialRow">
+            <span className="eventSocialPill eventSocialTrend">Trending</span>
+          </div>
+        ) : null}
       </article>
     </Link>
   );
@@ -317,10 +314,6 @@ export default function EventDashboardPage() {
 
   // signals for personalization
   const [signalsTick, setSignalsTick] = useState(0);
-  const [metricsTick, setMetricsTick] = useState(0);
-  useEffect(() => {
-    return subscribeMetricsChanged(() => setMetricsTick((t) => t + 1));
-  }, []);
 
   useEffect(() => {
     if (!userId) return;
@@ -543,11 +536,6 @@ export default function EventDashboardPage() {
     }));
   }, [aiRecommendedEvents, events]);
 
-  const goingCountById = useMemo(() => {
-    void metricsTick;
-    return countGoingsForEvents(eventsWithAi.map((event) => event.id));
-  }, [eventsWithAi, metricsTick]);
-
   const recommendedEvents = useMemo(() => {
     if (aiRecommendedEvents.length > 0) return aiRecommendedEvents;
     return fallbackRecommendedEvents;
@@ -676,7 +664,6 @@ export default function EventDashboardPage() {
                 key={`recent-${e.id}`}
                 event={toCardEvent(e)}
                 search={location.search}
-                goingCount={0}
               />
             ))}
           </div>
@@ -706,7 +693,6 @@ export default function EventDashboardPage() {
                 key={e.id}
                 event={e}
                 search={location.search}
-                goingCount={goingCountById[e.id] ?? 0}
               />
             ))}
           </div>
@@ -733,7 +719,6 @@ export default function EventDashboardPage() {
               key={e.id}
               event={e}
               search={location.search}
-              goingCount={goingCountById[e.id] ?? 0}
             />
           ))
         )}
@@ -808,7 +793,6 @@ export default function EventDashboardPage() {
                     key={e.id}
                     event={e}
                     search={location.search}
-                    goingCount={goingCountById[e.id] ?? 0}
                   />
                 ))
               )}
@@ -840,7 +824,6 @@ export default function EventDashboardPage() {
                 key={e.id}
                 event={e}
                 search={location.search}
-                goingCount={goingCountById[e.id] ?? 0}
               />
             ))
           )}
