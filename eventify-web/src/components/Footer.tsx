@@ -66,9 +66,9 @@ export default function Footer() {
                 <Link className="footerLink" to="/register">Sign up</Link>
               </>
             )}</li>
-            <li>{user?.role === "admin" ? (
-              <Link className="footerLink" to="/admin">Admin</Link>
-            ) : null}</li>             
+            {user?.role === "admin" ? (
+              <li> <Link className="footerLink" to="/admin">Admin</Link> </li>
+            ) : null}             
           </nav>
 
           <nav className="footerCol" aria-label="Legal">

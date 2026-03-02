@@ -1643,6 +1643,23 @@ textarea.input { min-height: 110px; resize: vertical; }
   margin-bottom: 12px;
 }
 
+.eventDetailCardHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.eventDetailCardToggle {
+  min-height: 34px;
+  padding: 8px 12px;
+  font-size: 12px;
+}
+
+.eventDetailCardBody {
+  margin-top: 12px;
+}
+
 .eventDetailText {
   margin-top: 8px;
   color: rgba(255,255,255,.88);
@@ -2485,6 +2502,11 @@ a.accountFriendAction {
   .eventDetailActions .btnSecondary {
     flex: 1 1 calc(50% - 10px);
     min-height: 44px;
+  }
+
+  .eventDetailCardHeader {
+    flex-wrap: wrap;
+    align-items: flex-start;
   }
 }
 
