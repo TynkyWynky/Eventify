@@ -35,6 +35,7 @@ export type AuthState = {
 
   markAllAsRead: () => void;
   markAsRead: (id: string) => void;
+  setCurrentUser: (nextUser: User) => void;
 
   pushNotification: (
     n: Omit<NotificationItem, "id" | "createdAt" | "isRead">

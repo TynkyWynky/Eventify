@@ -3,98 +3,12 @@ import {
   Link,
   NavLink,
   type To,
-  useLocation,
   useNavigate,
-  useSearchParams,
 } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
 import type { NotificationItem } from "../auth/authTypes";
-import { getOrigin, subscribeOriginChanged } from "../data/location/locationStore";
-
-const RECENT_SEARCHES_KEY = "eventify_recent_searches_v1";
-const MAX_RECENT_SEARCHES = 8;
-
-type InstallPromptEvent = Event & {
-  prompt: () => Promise<void>;
-  userChoice: Promise<{ outcome: "accepted" | "dismissed"; platform: string }>;
-};
-
-function normalizeSearchText(value: string) {
-  return value
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .replace(/[^a-z0-9\s]/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-function readRecentSearches() {
-  try {
-    const parsed = JSON.parse(localStorage.getItem(RECENT_SEARCHES_KEY) || "[]");
-    if (!Array.isArray(parsed)) return [];
-    return parsed.filter((v) => typeof v === "string").slice(0, MAX_RECENT_SEARCHES);
-  } catch {
-    return [];
-  }
-}
-
-function writeRecentSearches(values: string[]) {
-  localStorage.setItem(RECENT_SEARCHES_KEY, JSON.stringify(values.slice(0, MAX_RECENT_SEARCHES)));
-}
-
-function clearRecentSearches() {
-  localStorage.removeItem(RECENT_SEARCHES_KEY);
-  return [] as string[];
-}
-
-function rememberRecentSearch(term: string) {
-  const clean = term.trim();
-  if (!clean) return readRecentSearches();
-  const deduped = readRecentSearches().filter(
-    (item) => normalizeSearchText(item) !== normalizeSearchText(clean)
-  );
-  deduped.unshift(clean);
-  const next = deduped.slice(0, MAX_RECENT_SEARCHES);
-  writeRecentSearches(next);
-  return next;
-}
-
-function levenshtein(a: string, b: string) {
-  if (a === b) return 0;
-  if (!a.length) return b.length;
-  if (!b.length) return a.length;
-  const dp: number[] = Array.from({ length: b.length + 1 }, (_, i) => i);
-  for (let i = 1; i <= a.length; i += 1) {
-    let prev = i - 1;
-    dp[0] = i;
-    for (let j = 1; j <= b.length; j += 1) {
-      const tmp = dp[j];
-      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
-      dp[j] = Math.min(dp[j] + 1, dp[j - 1] + 1, prev + cost);
-      prev = tmp;
-    }
-  }
-  return dp[b.length];
-}
-
-function isFuzzyMatch(query: string, candidate: string) {
-  const q = normalizeSearchText(query);
-  const c = normalizeSearchText(candidate);
-  if (!q || !c) return false;
-  if (c.includes(q)) return true;
-
-  const qWords = q.split(" ").filter(Boolean);
-  const cWords = c.split(" ").filter(Boolean);
-
-  return qWords.every((qWord) =>
-    cWords.some((cWord) => {
-      if (cWord.startsWith(qWord)) return true;
-      const maxDistance = qWord.length <= 4 ? 1 : 2;
-      return levenshtein(qWord, cWord.slice(0, qWord.length)) <= maxDistance;
-    })
-  );
-}
+import { useInstallPrompt } from "../hooks/useInstallPrompt";
+import { useNavSearch } from "../hooks/useNavSearch";
 
 function BellIcon() {
   return (
@@ -126,6 +40,21 @@ export default function TopNavigationBar() {
   const { user, notifications, unreadCount, markAllAsRead, markAsRead, logout } =
     useAuth();
 
+  const {
+    query,
+    setQuery,
+    isSearchOpen,
+    setSearchOpen,
+    recentSearches,
+    searchSuggestions,
+    submitSearch,
+    clearQuery,
+    applySuggestion,
+    clearHistory,
+  } = useNavSearch();
+
+  const { isInstallReady, isStandalone, promptInstall } = useInstallPrompt();
+
   const [isNotifOpen, setNotifOpen] = useState(false);
   const [isProfileOpen, setProfileOpen] = useState(false);
 
@@ -133,26 +62,10 @@ export default function TopNavigationBar() {
   const profileWrapRef = useRef<HTMLDivElement | null>(null);
   const searchWrapRef = useRef<HTMLDivElement | null>(null);
 
-  const latest = useMemo(() => notifications.slice(0, 6), [notifications]);
-
-  // ✅ URL-driven search (q=...)
-  const [searchParams, setSearchParams] = useSearchParams();
-  const location = useLocation();
   const navigate = useNavigate();
 
-  const qFromUrl = searchParams.get("q") ?? "";
-  const [query, setQuery] = useState(qFromUrl);
-  const [isSearchOpen, setSearchOpen] = useState(false);
-  const [recentSearches, setRecentSearches] = useState<string[]>(() => readRecentSearches());
-  const [serverSuggestions, setServerSuggestions] = useState<string[]>([]);
-  const [installPromptEvent, setInstallPromptEvent] = useState<InstallPromptEvent | null>(null);
-  const [isInstallReady, setInstallReady] = useState(false);
-  const [isStandalone, setStandalone] = useState(() =>
-    window.matchMedia("(display-mode: standalone)").matches
-  );
-  const [origin, setOrigin] = useState(() => getOrigin());
+  const latest = useMemo(() => notifications.slice(0, 6), [notifications]);
 
-  // Close popovers when clicking outside
   useEffect(() => {
     function onPointerDown(e: PointerEvent) {
       const target = e.target as Node | null;
@@ -174,138 +87,9 @@ export default function TopNavigationBar() {
       }
     }
 
-    // capture=true zodat het ook werkt als ergens stopPropagation gebeurt
     document.addEventListener("pointerdown", onPointerDown, true);
     return () => document.removeEventListener("pointerdown", onPointerDown, true);
-  }, [isNotifOpen, isProfileOpen, isSearchOpen]);
-
-  // Sync input when URL changes (back/forward, clicks, etc.)
-  useEffect(() => {
-    setQuery(qFromUrl);
-  }, [qFromUrl]);
-
-  useEffect(() => {
-    return subscribeOriginChanged(() => setOrigin(getOrigin()));
-  }, []);
-
-  useEffect(() => {
-    const q = query.trim();
-    if (!q) {
-      setServerSuggestions([]);
-      return;
-    }
-
-    const controller = new AbortController();
-    const base = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.trim() || "http://localhost:3000";
-    const url = new URL("/events/suggestions", base.endsWith("/") ? base : `${base}/`);
-    url.searchParams.set("q", q);
-    url.searchParams.set("lat", String(origin.lat));
-    url.searchParams.set("lng", String(origin.lng));
-    url.searchParams.set("radiusKm", "1000");
-    url.searchParams.set("limit", "10");
-
-    const id = window.setTimeout(() => {
-      fetch(url.toString(), { signal: controller.signal })
-        .then(async (res) => {
-          if (!res.ok) throw new Error(`Suggestions request failed (${res.status})`);
-          const payload = (await res.json()) as { ok?: boolean; suggestions?: string[] };
-          const list = Array.isArray(payload.suggestions) ? payload.suggestions : [];
-          setServerSuggestions(list.slice(0, 10));
-        })
-        .catch((err: unknown) => {
-          if (err instanceof DOMException && err.name === "AbortError") return;
-          setServerSuggestions([]);
-        });
-    }, 220);
-
-    return () => {
-      window.clearTimeout(id);
-      controller.abort();
-    };
-  }, [origin.lat, origin.lng, query]);
-
-  useEffect(() => {
-    const onPrompt = (event: Event) => {
-      event.preventDefault();
-      setInstallPromptEvent(event as InstallPromptEvent);
-      setInstallReady(true);
-    };
-    const onInstalled = () => {
-      setInstallPromptEvent(null);
-      setInstallReady(false);
-      setStandalone(true);
-    };
-    window.addEventListener("beforeinstallprompt", onPrompt);
-    window.addEventListener("appinstalled", onInstalled);
-    return () => {
-      window.removeEventListener("beforeinstallprompt", onPrompt);
-      window.removeEventListener("appinstalled", onInstalled);
-    };
-  }, []);
-
-  const commitQuery = useCallback(
-    (nextValue: string, opts?: { persistHistory?: boolean }) => {
-      const trimmed = nextValue.trim();
-      if (trimmed && opts?.persistHistory) {
-        setRecentSearches(rememberRecentSearch(trimmed));
-      }
-
-      const next = new URLSearchParams(searchParams);
-      if (trimmed) next.set("q", trimmed);
-      else next.delete("q");
-
-      const nextSearch = next.toString();
-      const searchStr = nextSearch ? `?${nextSearch}` : "";
-
-      // If user is not on dashboard and they start searching, send them to dashboard
-      if (location.pathname !== "/" && trimmed) {
-        navigate({ pathname: "/", search: searchStr }, { replace: true });
-        return;
-      }
-
-      setSearchParams(next, { replace: true });
-    },
-    [location.pathname, navigate, searchParams, setSearchParams]
-  );
-
-  const searchSuggestions = useMemo(() => {
-    const qNorm = normalizeSearchText(query);
-    if (!qNorm) {
-      return recentSearches.map((item) => ({ label: item, source: "recent" as const })).slice(0, 8);
-    }
-
-    const fromRecent = recentSearches
-      .filter((item) => isFuzzyMatch(qNorm, item))
-      .map((item) => ({ label: item, source: "recent" as const }));
-
-    const seen = new Set(fromRecent.map((item) => normalizeSearchText(item.label)));
-    const fromCatalog = serverSuggestions
-      .filter((item) => !seen.has(normalizeSearchText(item)) && isFuzzyMatch(qNorm, item))
-      .slice(0, 8)
-      .map((item) => ({ label: item, source: "catalog" as const }));
-
-    return [...fromRecent, ...fromCatalog].slice(0, 8);
-  }, [query, recentSearches, serverSuggestions]);
-
-  const handleInstallClick = useCallback(async () => {
-    if (!installPromptEvent) return;
-    await installPromptEvent.prompt();
-    const choice = await installPromptEvent.userChoice;
-    if (choice.outcome === "accepted") {
-      setInstallReady(false);
-    }
-  }, [installPromptEvent]);
-
-  // Debounce: avoid updating URL on every single keystroke instantly
-  useEffect(() => {
-    if (query.trim() === qFromUrl) return;
-
-    const id = window.setTimeout(() => {
-      commitQuery(query, { persistHistory: false });
-    }, 300);
-
-    return () => window.clearTimeout(id);
-  }, [commitQuery, qFromUrl, query]);
+  }, [isNotifOpen, isProfileOpen, isSearchOpen, setSearchOpen]);
 
   const resolveNotificationTarget = useCallback((n: NotificationItem): To | null => {
     const payload = n.payload && typeof n.payload === "object" ? n.payload : null;
@@ -370,23 +154,17 @@ export default function TopNavigationBar() {
             onKeyDown={(e) => {
               if (e.key === "Enter") {
                 e.preventDefault();
-                commitQuery(query, { persistHistory: true });
-                setSearchOpen(false);
+                submitSearch();
               }
               if (e.key === "Escape") {
-                setQuery("");
-                commitQuery("", { persistHistory: false });
-                setSearchOpen(false);
+                clearQuery();
               }
             }}
           />
           <button
             type="button"
             className="searchCommitBtn"
-            onClick={() => {
-              commitQuery(query, { persistHistory: true });
-              setSearchOpen(false);
-            }}
+            onClick={submitSearch}
             aria-label="Search"
           >
             Search
@@ -396,11 +174,7 @@ export default function TopNavigationBar() {
               <div className="searchSuggestHeader">
                 <div className="searchSuggestHeaderTitle">Suggestions</div>
                 {recentSearches.length > 0 ? (
-                  <button
-                    type="button"
-                    className="searchSuggestClear"
-                    onClick={() => setRecentSearches(clearRecentSearches())}
-                  >
+                  <button type="button" className="searchSuggestClear" onClick={clearHistory}>
                     Clear history
                   </button>
                 ) : null}
@@ -409,11 +183,7 @@ export default function TopNavigationBar() {
                 <button
                   key={`${item.source}-${item.label}`}
                   className="searchSuggestItem"
-                  onClick={() => {
-                    setQuery(item.label);
-                    commitQuery(item.label, { persistHistory: false });
-                    setSearchOpen(false);
-                  }}
+                  onClick={() => applySuggestion(item.label)}
                 >
                   <span className="searchSuggestLabel">{item.label}</span>
                   <span className="searchSuggestMeta">
@@ -427,7 +197,7 @@ export default function TopNavigationBar() {
 
         <div className="navActions">
           {!isStandalone && isInstallReady ? (
-            <button type="button" className="navInstallBtn" onClick={handleInstallClick}>
+            <button type="button" className="navInstallBtn" onClick={promptInstall}>
               Install app
             </button>
           ) : null}
@@ -442,7 +212,6 @@ export default function TopNavigationBar() {
             </>
           ) : (
             <>
-              {/* Notifications */}
               <div className="navPopoverWrap" ref={notifWrapRef}>
                 <button
                   className="navIconBtn"
@@ -453,9 +222,7 @@ export default function TopNavigationBar() {
                   aria-label="Notifications"
                 >
                   <BellIcon />
-                  {unreadCount > 0 && (
-                    <span className="navBadge">{unreadCount}</span>
-                  )}
+                  {unreadCount > 0 && <span className="navBadge">{unreadCount}</span>}
                 </button>
 
                 {isNotifOpen && (
@@ -477,9 +244,7 @@ export default function TopNavigationBar() {
                         latest.map((n) => (
                           <button
                             key={n.id}
-                            className={`popoverItem ${
-                              n.isRead ? "" : "popoverItemUnread"
-                            }`}
+                            className={`popoverItem ${n.isRead ? "" : "popoverItemUnread"}`}
                             onClick={() => handleNotificationClick(n)}
                           >
                             <div className="popoverItemTitle">{n.title}</div>
@@ -492,7 +257,6 @@ export default function TopNavigationBar() {
                 )}
               </div>
 
-              {/* Profile */}
               <div className="navPopoverWrap" ref={profileWrapRef}>
                 <button
                   className="navIconBtn"
@@ -515,11 +279,7 @@ export default function TopNavigationBar() {
                     </div>
 
                     <div className="popoverList">
-                      <Link
-                        className="popoverLink"
-                        to="/account"
-                        onClick={() => setProfileOpen(false)}
-                      >
+                      <Link className="popoverLink" to="/account" onClick={() => setProfileOpen(false)}>
                         Account
                       </Link>
 
@@ -534,11 +294,7 @@ export default function TopNavigationBar() {
                       )}
 
                       {user.role === "admin" && (
-                        <Link
-                          className="popoverLink"
-                          to="/admin"
-                          onClick={() => setProfileOpen(false)}
-                        >
+                        <Link className="popoverLink" to="/admin" onClick={() => setProfileOpen(false)}>
                           Admin Dashboard
                         </Link>
                       )}

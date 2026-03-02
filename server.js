@@ -104,6 +104,13 @@ function normalizeEmail(email) {
   return String(email || "").trim().toLowerCase();
 }
 
+function splitNameParts(name) {
+  const cleaned = String(name || "").trim().replace(/\s+/g, " ");
+  if (!cleaned) return { firstName: "", lastName: "" };
+  const [firstName, ...rest] = cleaned.split(" ");
+  return { firstName, lastName: rest.join(" ") };
+}
+
 function safeText(v, fallback = "") {
   return typeof v === "string" ? v : fallback;
 }
@@ -604,6 +611,57 @@ app.get("/auth/me", authRequired, async (req, res) => {
     const user = userRowToUser(row);
     return res.json({ ok: true, user });
   } catch (err) {
+    const status = err?.status || 500;
+    return res.status(status).json({ ok: false, error: err?.message || String(err) });
+  }
+});
+
+/**
+ * PATCH /auth/me
+ * body: { name, email }
+ */
+app.patch("/auth/me", authRequired, async (req, res) => {
+  try {
+    const userId = req?.auth?.sub;
+    if (!userId) return res.status(401).json({ ok: false, error: "Invalid token" });
+
+    const name = safeText(req.body?.name, "").trim();
+    const email = normalizeEmail(req.body?.email);
+
+    if (!name || name.length < 2) {
+      return res.status(400).json({ ok: false, error: "Name must be at least 2 characters." });
+    }
+
+    if (!email) return res.status(400).json({ ok: false, error: "Email is required." });
+    if (!/^\S+@\S+\.\S+$/.test(email)) {
+      return res.status(400).json({ ok: false, error: "Invalid email." });
+    }
+
+    const { firstName, lastName } = splitNameParts(name);
+    const db = requireDb();
+    const updated = await db.query(
+      `
+      UPDATE users
+      SET email = $2,
+          first_name = $3,
+          last_name = $4,
+          updated_at = CURRENT_TIMESTAMP
+      WHERE id = $1
+      RETURNING id, username, email, first_name, last_name, is_admin, is_organisator, is_active
+      `,
+      [userId, email, firstName, lastName]
+    );
+
+    if (updated.rowCount === 0) return res.status(404).json({ ok: false, error: "User not found" });
+    if (!updated.rows[0].is_active) {
+      return res.status(401).json({ ok: false, error: "User disabled" });
+    }
+
+    return res.json({ ok: true, user: userRowToUser(updated.rows[0]) });
+  } catch (err) {
+    if (err && err.code === "23505") {
+      return res.status(409).json({ ok: false, error: "An account with this email already exists." });
+    }
     const status = err?.status || 500;
     return res.status(status).json({ ok: false, error: err?.message || String(err) });
   }
