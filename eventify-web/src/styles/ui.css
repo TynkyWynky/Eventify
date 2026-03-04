@@ -2457,12 +2457,14 @@ a.accountFriendAction {
   }
 
   .navInner {
+    width: 100%;
     display: grid;
     grid-template-columns: 1fr auto;
     grid-template-areas:
       "brand actions"
       "search search";
     gap: 10px 12px;
+    padding: 10px 12px;
   }
 
   .brandTitle { grid-area: brand; }
@@ -2496,6 +2498,12 @@ a.accountFriendAction {
 }
 
 @media (max-width: 520px) {
+  .navInner {
+    width: 100%;
+    padding: 8px 10px;
+    gap: 8px 10px;
+  }
+
   .brandTitle { font-size: 20px; }
 
   .navActions {
