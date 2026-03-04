@@ -5344,6 +5344,14 @@ app.post("/ai/success-predictor", async (req, res) => {
 
 // Health
 // -----------------------------
+app.get("/", (_req, res) => {
+  return res.json({
+    ok: true,
+    service: "eventify-api",
+    message: "API is running. Use /health or /events endpoints.",
+  });
+});
+
 app.get("/health", async (_req, res) => {
   try {
     if (!pool) return res.json({ ok: true, db: "not_configured" });
