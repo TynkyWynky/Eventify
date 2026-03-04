@@ -183,6 +183,7 @@ function normalizeOrigin(rawOrigin) {
 
 const configuredCorsOrigins = parseDelimitedList(process.env.CORS_ORIGINS).map(normalizeOrigin);
 const allowLocalhostAnyPort = toBool(process.env.CORS_ALLOW_LOCALHOST_ANY_PORT, false);
+const allowAllCorsOrigins = toBool(process.env.CORS_ALLOW_ALL, false);
 const allowVercelAppOrigins = toBool(
   process.env.CORS_ALLOW_VERCEL_APP,
   IS_PROD && String(process.env.VERCEL || "").trim() === "1"
@@ -232,6 +233,7 @@ app.use(
   cors({
     origin(origin, callback) {
       if (!origin) return callback(null, true);
+      if (allowAllCorsOrigins) return callback(null, true);
       const normalized = normalizeOrigin(origin);
       if (allowedCorsOrigins.has(normalized)) return callback(null, true);
       if (allowLocalhostAnyPort && isLoopbackOrigin(origin)) return callback(null, true);

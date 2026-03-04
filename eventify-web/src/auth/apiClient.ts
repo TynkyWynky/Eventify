@@ -5,15 +5,27 @@ function shouldUpgradeHttpBase(baseUrl: string): boolean {
   return !/^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?(\/|$)/i.test(baseUrl);
 }
 
+function shouldAppendApiPath(baseUrl: string): boolean {
+  if (!/^[a-z]+:\/\//i.test(baseUrl)) return false;
+  try {
+    const parsed = new URL(baseUrl);
+    return parsed.pathname === "/" || parsed.pathname === "";
+  } catch {
+    return false;
+  }
+}
+
 function resolveApiBaseUrl(): string {
   const envBase = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.trim();
   const fallbackBase = import.meta.env.DEV ? "http://localhost:3000" : "/api";
   if (!envBase) return fallbackBase;
 
+  let resolvedBase = envBase;
+
   if (!import.meta.env.DEV) {
     // Protect production builds from accidental localhost env values on Vercel.
     try {
-      const parsed = new URL(envBase, window.location.origin);
+      const parsed = new URL(resolvedBase, window.location.origin);
       if (parsed.hostname === "localhost" || parsed.hostname === "127.0.0.1") {
         return "/api";
       }
@@ -22,11 +34,16 @@ function resolveApiBaseUrl(): string {
     }
   }
 
-  if (shouldUpgradeHttpBase(envBase)) {
-    return envBase.replace(/^http:\/\//i, "https://");
+  if (shouldUpgradeHttpBase(resolvedBase)) {
+    resolvedBase = resolvedBase.replace(/^http:\/\//i, "https://");
   }
 
-  return envBase;
+  // Common Vercel misconfig: using https://<backend>.vercel.app without /api.
+  if (shouldAppendApiPath(resolvedBase)) {
+    resolvedBase = `${resolvedBase.replace(/\/+$/, "")}/api`;
+  }
+
+  return resolvedBase;
 }
 
 export const API_BASE_URL = resolveApiBaseUrl().replace(/\/+$/, "");
