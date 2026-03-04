@@ -271,18 +271,10 @@ body::before {
 }
 
 .appPage {
-  max-width: 72rem;
+  max-width: 84rem;
   margin: 0 auto;
   padding: 0 var(--space-4) var(--space-6);
   flex: 1;
-}
-
-.appPageWide {
-  max-width: 84rem;
-}
-
-.appPageXWide {
-  max-width: 98rem;
 }
 /* =========================
    NAVBAR
@@ -297,7 +289,7 @@ body::before {
 }
 
 .navInner {
-  max-width: 72rem;
+  max-width: 84rem;
   margin: 0 auto;
   padding: var(--space-3) var(--space-4);
 
@@ -3487,7 +3479,7 @@ a.accountFriendAction {
 }
 
 .footerInner {
-  max-width: 72rem;
+  max-width: 84rem;
   margin: 0 auto;
   padding: var(--space-6) var(--space-4);
 }
