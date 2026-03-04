@@ -301,7 +301,7 @@ export async function listPublicOrganizerEvents(opts?: {
     // Ensure public-only in case server returns more
     const approvedOnly = items.filter((e) => e.status === "approved");
     return applyOriginDistanceAndTrending(approvedOnly, origin);
-  } catch (err) {
+  } catch (err: unknown) {
     if (errorLooksLikeMissingPublicApi(err)) {
       markOrganizerPublicApiMissing();
     }
@@ -316,7 +316,6 @@ export async function getPublicOrganizerEventById(
   opts?: { originLat?: number; originLng?: number }
 ): Promise<EventItem | undefined> {
   const origin = toOrigin(opts);
-
   if (!shouldTryOrganizerPublicApi()) {
     const local = loadAllLocal().find((e) => e.id === eventId && e.status === "approved");
     if (!local) return undefined;
