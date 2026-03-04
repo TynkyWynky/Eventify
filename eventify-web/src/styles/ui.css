@@ -2717,9 +2717,96 @@ a.accountFriendAction {
   .adminHeaderRow {
     flex-direction: column;
     align-items: flex-start;
+    margin-top: var(--space-4);
+    gap: 12px;
   }
 
-  .adminHeaderActions { width: 100%; }
+  .adminHeaderActions {
+    width: 100%;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+  }
+
+  .adminHeaderActions .btn {
+    width: 100%;
+    min-height: 40px;
+  }
+
+  .adminSection {
+    margin-top: var(--space-4);
+  }
+
+  .adminStatsGrid {
+    margin-top: 10px;
+    gap: 10px;
+  }
+
+  .adminStatCard {
+    padding: 12px;
+    border-radius: 16px;
+  }
+
+  .adminRow {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+    padding: 12px;
+    border-radius: 16px;
+  }
+
+  .adminRowTitle {
+    font-size: 18px;
+    line-height: 1.15;
+  }
+
+  .adminRowMeta {
+    margin-top: 4px;
+    white-space: normal;
+    overflow-wrap: anywhere;
+    line-height: 1.35;
+  }
+
+  .adminEventActions {
+    width: 100%;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+  }
+
+  .adminEventActions .adminStatusPill {
+    grid-column: 1 / -1;
+    justify-self: start;
+  }
+
+  .adminEventActions .btn {
+    width: 100%;
+    min-height: 38px;
+    justify-content: center;
+    padding: 8px 10px;
+  }
+
+  .adminControlsSearch {
+    margin: 8px 0 10px;
+  }
+
+  .adminControlsGrid {
+    gap: 8px;
+  }
+}
+
+@media (max-width: 520px) {
+  .adminStatsGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .adminHeaderActions {
+    grid-template-columns: 1fr;
+  }
+
+  .adminEventActions {
+    grid-template-columns: 1fr;
+  }
 }
 
 /* =========================
