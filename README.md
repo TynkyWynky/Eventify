@@ -71,6 +71,34 @@ De backend kan nu events uit extra websites scrapen en samenvoegen met Ticketmas
 - `SCRAPE_EVENTBRITE_DETAIL_LOOKUP=true`
 - `SCRAPE_EVENTBRITE_DETAIL_ENRICH_LIMIT=8`
 - `SCRAPE_EVENTBRITE_DETAIL_TIMEOUT_MS=10000`
+- `PRICE_ENRICH_ENABLED=true`
+- `PRICE_ENRICH_MAX_PER_REQUEST=12`
+- `PRICE_ENRICH_TICKETMASTER_MAX_PER_REQUEST=6`
+- `PRICE_ENRICH_CONCURRENCY=4`
+- `PRICE_ENRICH_TIMEOUT_MS=4500`
+- `PRICE_ENRICH_USER_AGENT=Mozilla/5.0`
+- `PRICE_ENRICH_BACKGROUND_ENABLED=true`
+- `PRICE_ENRICH_BACKGROUND_DELAY_MS=2000`
+- `PRICE_ENRICH_BACKGROUND_MAX_QUEUE=250`
+- `PRICE_ENRICH_CACHE_TTL_MS=21600000`
+- `PRICE_ENRICH_BLOCK_TTL_MS=600000`
+- `PRICE_ENRICH_TICKETMASTER_PROXY_BASE_URL=` (optioneel, bv. `https://r.jina.ai/http://`)
+- `PRICE_ENRICH_TICKETMASTER_PROXY_TIMEOUT_MS=10000`
+
+Prijsverrijking gebeurt on-demand in `GET /events` voor events zonder prijsdata
+(max-per-request + concurrency cap + host block cache). De response bevat ook
+`priceCoverage` statistieken:
+- `total`
+- `withAnyPrice`
+- `enrichedThisRequest`
+- `unknownPrice`
+- `blockedHostSkips`
+
+Let op voor Ticketmaster:
+- Discovery API geeft in BE vaak geen `priceRanges`
+- Price-enrichment probeert daarom eerst Ticketmaster web-JSON (`/api/ticketselection/{eventId}` afgeleid uit de event-URL)
+- Directe Ticketmaster eventpagina's returnen vaak `401/403` voor bots
+- Daarom is er een optionele proxy fallback (`PRICE_ENRICH_TICKETMASTER_PROXY_BASE_URL`)
 
 ### Snelle test
 
@@ -117,6 +145,27 @@ Nieuwe backend endpoints voor explainable AI-functionaliteit:
     - `bestPromotionDay`
     - `targetAudienceAgeRange`
   - Gebaseerd op vergelijkbare historische events + timing/prijs/locatie
+
+### Chatbot + Ollama (fast mode)
+
+`POST /chatbot` gebruikt een snelle Ollama-only chatflow (zonder de trage copilot-ranking pipeline).
+`POST /copilot` blijft bestaan voor compatibiliteit en volgt dezelfde Ollama-only fast mode zolang `CHATBOT_OLLAMA_ONLY=true`.
+
+Eigenschappen:
+- Directe antwoordgeneratie via Ollama (`/api/generate`)
+- Korte timeout + korte reply-limiet voor snellere UX
+- In-memory reply cache voor herhaalde prompts
+
+Env:
+- `OLLAMA_ENABLED=true|false`
+- `OLLAMA_BASE_URL=http://127.0.0.1:11434`
+- `OLLAMA_MODEL=llama3.1:8b`
+- `OLLAMA_TIMEOUT_MS=5500`
+- `OLLAMA_MAX_MESSAGE_CHARS=1200`
+- `CHATBOT_OLLAMA_ONLY=true`
+- `CHATBOT_OLLAMA_TIMEOUT_MS=12000`
+- `CHATBOT_OLLAMA_CACHE_TTL_MS=120000`
+- `CHATBOT_OLLAMA_MAX_REPLY_CHARS=1400`
 
 ### Voorbeeld payloads
 

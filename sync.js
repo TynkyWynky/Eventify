@@ -45,8 +45,27 @@ function toBool(value, fallback = false) {
 }
 
 function toNumberOrNull(value) {
+  if (value == null || value === "") return null;
+  if (typeof value === "boolean") return null;
   const n = Number(value);
   return Number.isFinite(n) ? n : null;
+}
+
+function normalizeCurrencyCode(value, fallback = "USD") {
+  const text = cleanText(value);
+  if (!text) return fallback;
+  if (text === "€") return "EUR";
+  const normalized = text.toUpperCase();
+  if (normalized === "EURO") return "EUR";
+  if (/^[A-Z]{3}$/.test(normalized)) return normalized;
+  return fallback;
+}
+
+function coercePriceTier(value) {
+  const text = cleanText(value)?.toLowerCase();
+  if (!text) return null;
+  if (["free", "low", "mid", "high", "premium"].includes(text)) return text;
+  return null;
 }
 
 function parseDateTime(value) {
@@ -213,6 +232,12 @@ function mapApiEventToDb(apiEvent) {
       : parsedPriceMax;
   const apiIsFree = toBool(apiEvent.isFree, false);
   const isFree = resolvedCost != null ? resolvedCost === 0 : apiIsFree;
+  const hasAnyPrice =
+    resolvedCost != null || parsedPriceMin != null || parsedPriceMax != null || isFree;
+  const priceTier = coercePriceTier(apiEvent.priceTier);
+  const priceSource =
+    cleanText(apiEvent.priceSource || apiEvent?.metadata?.priceSource) ||
+    (hasAnyPrice ? "api" : "unknown");
 
   const sourceMetadata =
     apiEvent && typeof apiEvent === "object"
@@ -246,7 +271,11 @@ function mapApiEventToDb(apiEvent) {
     virtual_link: cleanText(apiEvent.virtualLink),
     is_free: isFree,
     cost: resolvedCost != null ? resolvedCost : isFree ? 0 : null,
-    currency: cleanText(apiEvent.currency) || "USD",
+    price_min: parsedPriceMin != null ? parsedPriceMin : resolvedCost,
+    price_max: parsedPriceMax != null ? parsedPriceMax : resolvedCost,
+    currency: normalizeCurrencyCode(apiEvent.currency, "USD"),
+    price_tier: priceTier,
+    price_source: priceSource,
     ticket_url: ticketUrl,
     organizer_id: CONFIG.SYNC_USER_ID,
     category,
@@ -272,7 +301,11 @@ async function ensureSourceColumns() {
       ADD COLUMN IF NOT EXISTS source VARCHAR(50),
       ADD COLUMN IF NOT EXISTS source_id VARCHAR(255),
       ADD COLUMN IF NOT EXISTS source_url VARCHAR(500),
-      ADD COLUMN IF NOT EXISTS source_metadata JSONB
+      ADD COLUMN IF NOT EXISTS source_metadata JSONB,
+      ADD COLUMN IF NOT EXISTS price_min DECIMAL(10, 2),
+      ADD COLUMN IF NOT EXISTS price_max DECIMAL(10, 2),
+      ADD COLUMN IF NOT EXISTS price_tier VARCHAR(16),
+      ADD COLUMN IF NOT EXISTS price_source VARCHAR(32)
     `);
 
     const constraintResult = await client.query(`
@@ -306,13 +339,13 @@ async function upsertEvent(eventData) {
         title, description, start_datetime, end_datetime, timezone,
         venue_name, address, city, state, country, postal_code,
         latitude, longitude, is_virtual, virtual_link,
-        is_free, cost, currency, ticket_url,
+        is_free, cost, price_min, price_max, currency, price_tier, price_source, ticket_url,
         organizer_id, category, tags, status, capacity,
         cover_image_url, source, source_id, source_url,
         source_metadata, published_at
       ) VALUES (
         $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15,
-        $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30
+        $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34
       )
       ON CONFLICT (source, source_id) 
       DO UPDATE SET
@@ -333,7 +366,11 @@ async function upsertEvent(eventData) {
         virtual_link = EXCLUDED.virtual_link,
         is_free = EXCLUDED.is_free,
         cost = EXCLUDED.cost,
+        price_min = EXCLUDED.price_min,
+        price_max = EXCLUDED.price_max,
         currency = EXCLUDED.currency,
+        price_tier = EXCLUDED.price_tier,
+        price_source = EXCLUDED.price_source,
         ticket_url = EXCLUDED.ticket_url,
         category = EXCLUDED.category,
         tags = EXCLUDED.tags,
@@ -364,7 +401,11 @@ async function upsertEvent(eventData) {
       eventData.virtual_link,
       eventData.is_free,
       eventData.cost,
+      eventData.price_min,
+      eventData.price_max,
       eventData.currency,
+      eventData.price_tier,
+      eventData.price_source,
       eventData.ticket_url,
       eventData.organizer_id,
       eventData.category,

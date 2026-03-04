@@ -11,7 +11,6 @@ import { useAuth } from "../auth/AuthContext";
 import type { NotificationItem } from "../auth/authTypes";
 import { getOrigin, subscribeOriginChanged } from "../data/location/locationStore";
 
-const RECENT_SEARCHES_KEY = "eventify_recent_searches_v1";
 const MAX_RECENT_SEARCHES = 8;
 
 type InstallPromptEvent = Event & {
@@ -29,35 +28,18 @@ function normalizeSearchText(value: string) {
     .trim();
 }
 
-function readRecentSearches() {
-  try {
-    const parsed = JSON.parse(localStorage.getItem(RECENT_SEARCHES_KEY) || "[]");
-    if (!Array.isArray(parsed)) return [];
-    return parsed.filter((v) => typeof v === "string").slice(0, MAX_RECENT_SEARCHES);
-  } catch {
-    return [];
-  }
-}
-
-function writeRecentSearches(values: string[]) {
-  localStorage.setItem(RECENT_SEARCHES_KEY, JSON.stringify(values.slice(0, MAX_RECENT_SEARCHES)));
-}
-
 function clearRecentSearches() {
-  localStorage.removeItem(RECENT_SEARCHES_KEY);
   return [] as string[];
 }
 
-function rememberRecentSearch(term: string) {
+function rememberRecentSearch(term: string, current: string[]) {
   const clean = term.trim();
-  if (!clean) return readRecentSearches();
-  const deduped = readRecentSearches().filter(
+  if (!clean) return current.slice(0, MAX_RECENT_SEARCHES);
+  const deduped = current.filter(
     (item) => normalizeSearchText(item) !== normalizeSearchText(clean)
   );
   deduped.unshift(clean);
-  const next = deduped.slice(0, MAX_RECENT_SEARCHES);
-  writeRecentSearches(next);
-  return next;
+  return deduped.slice(0, MAX_RECENT_SEARCHES);
 }
 
 function levenshtein(a: string, b: string) {
@@ -143,7 +125,7 @@ export default function TopNavigationBar() {
   const qFromUrl = searchParams.get("q") ?? "";
   const [query, setQuery] = useState(qFromUrl);
   const [isSearchOpen, setSearchOpen] = useState(false);
-  const [recentSearches, setRecentSearches] = useState<string[]>(() => readRecentSearches());
+  const [recentSearches, setRecentSearches] = useState<string[]>([]);
   const [serverSuggestions, setServerSuggestions] = useState<string[]>([]);
   const [installPromptEvent, setInstallPromptEvent] = useState<InstallPromptEvent | null>(null);
   const [isInstallReady, setInstallReady] = useState(false);
@@ -247,7 +229,7 @@ export default function TopNavigationBar() {
     (nextValue: string, opts?: { persistHistory?: boolean }) => {
       const trimmed = nextValue.trim();
       if (trimmed && opts?.persistHistory) {
-        setRecentSearches(rememberRecentSearch(trimmed));
+        setRecentSearches(rememberRecentSearch(trimmed, recentSearches));
       }
 
       const next = new URLSearchParams(searchParams);
@@ -265,7 +247,7 @@ export default function TopNavigationBar() {
 
       setSearchParams(next, { replace: true });
     },
-    [location.pathname, navigate, searchParams, setSearchParams]
+    [location.pathname, navigate, recentSearches, searchParams, setSearchParams]
   );
 
   const searchSuggestions = useMemo(() => {

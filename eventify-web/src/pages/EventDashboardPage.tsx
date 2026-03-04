@@ -69,14 +69,38 @@ function toCardEvent(item: RecentlyViewedEvent): EventItem {
   };
 }
 
+function formatCompactPrice(event: EventItem) {
+  const explicit = (event.priceLabel || "").trim();
+  if (explicit && explicit.toLowerCase() !== "price unknown") return explicit;
+  if (event.isFree) return "Free";
+  const min = typeof event.priceMin === "number" ? event.priceMin : null;
+  const max = typeof event.priceMax === "number" ? event.priceMax : null;
+  const cost = typeof event.cost === "number" ? event.cost : null;
+  const currency = (event.currency || "").trim().toUpperCase();
+  const amount = (value: number) => {
+    const rounded = Number.isInteger(value)
+      ? String(Math.round(value))
+      : value.toFixed(2).replace(/\.00$/, "");
+    return !currency || currency === "EUR" ? `€${rounded}` : `${currency} ${rounded}`;
+  };
+
+  if (min != null && max != null) {
+    const a = Math.min(min, max);
+    const b = Math.max(min, max);
+    return Math.abs(a - b) < 0.01 ? amount(a) : `${amount(a)}–${amount(b)}`;
+  }
+  if (cost != null) return amount(cost);
+  if (min != null) return amount(min);
+  if (max != null) return amount(max);
+  return null;
+}
+
 function EventCard({
   event,
   search,
-  goingCount = 0,
 }: {
   event: EventItem;
   search: string;
-  goingCount?: number;
 }) {
   const reasonList = Array.isArray(event.aiRecommendation?.reasons)
     ? event.aiRecommendation?.reasons
@@ -88,6 +112,7 @@ function EventCard({
     event.venue,
     `${event.distanceKm.toFixed(1)} km`,
   ].filter(Boolean);
+  const priceBadge = formatCompactPrice(event);
 
   return (
     <Link to={`/events/${event.id}${search}`} className="eventCardLink">
@@ -123,9 +148,7 @@ function EventCard({
         </div>
         <div className="eventSocialRow">
           {event.trending ? <span className="eventSocialPill eventSocialTrend">Trending</span> : null}
-          <span className="eventSocialPill">
-            {goingCount} {goingCount === 1 ? "person going" : "people going"}
-          </span>
+          {priceBadge ? <span className="eventSocialPill eventSocialPrice">{priceBadge}</span> : null}
         </div>
       </article>
     </Link>
@@ -317,10 +340,6 @@ export default function EventDashboardPage() {
 
   // signals for personalization
   const [signalsTick, setSignalsTick] = useState(0);
-  const [metricsTick, setMetricsTick] = useState(0);
-  useEffect(() => {
-    return subscribeMetricsChanged(() => setMetricsTick((t) => t + 1));
-  }, []);
 
   useEffect(() => {
     if (!userId) return;
@@ -543,11 +562,6 @@ export default function EventDashboardPage() {
     }));
   }, [aiRecommendedEvents, events]);
 
-  const goingCountById = useMemo(() => {
-    void metricsTick;
-    return countGoingsForEvents(eventsWithAi.map((event) => event.id));
-  }, [eventsWithAi, metricsTick]);
-
   const recommendedEvents = useMemo(() => {
     if (aiRecommendedEvents.length > 0) return aiRecommendedEvents;
     return fallbackRecommendedEvents;
@@ -676,7 +690,6 @@ export default function EventDashboardPage() {
                 key={`recent-${e.id}`}
                 event={toCardEvent(e)}
                 search={location.search}
-                goingCount={0}
               />
             ))}
           </div>
@@ -706,7 +719,6 @@ export default function EventDashboardPage() {
                 key={e.id}
                 event={e}
                 search={location.search}
-                goingCount={goingCountById[e.id] ?? 0}
               />
             ))}
           </div>
@@ -733,7 +745,6 @@ export default function EventDashboardPage() {
               key={e.id}
               event={e}
               search={location.search}
-              goingCount={goingCountById[e.id] ?? 0}
             />
           ))
         )}
@@ -808,7 +819,6 @@ export default function EventDashboardPage() {
                     key={e.id}
                     event={e}
                     search={location.search}
-                    goingCount={goingCountById[e.id] ?? 0}
                   />
                 ))
               )}
@@ -840,7 +850,6 @@ export default function EventDashboardPage() {
                 key={e.id}
                 event={e}
                 search={location.search}
-                goingCount={goingCountById[e.id] ?? 0}
               />
             ))
           )}

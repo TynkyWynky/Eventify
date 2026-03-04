@@ -226,7 +226,6 @@ export default function AccountPage() {
   const [inviteEventCache, setInviteEventCache] = useState<Record<string, EventItem | null>>({});
 
   const favCount = useMemo(() => favoriteEvents.length, [favoriteEvents]);
-  const goingCount = useMemo(() => goingEvents.length, [goingEvents]);
 
   const preferredTags = useMemo(() => {
     const counts = new Map<string, number>();
@@ -712,7 +711,7 @@ export default function AccountPage() {
         >
           <div className="accountSectionHeader">
             <div className="accountSectionTitle">Going</div>
-            <div className="accountSectionHint">Events you plan to attend • {goingCount}</div>
+            <div className="accountSectionHint">Events you plan to attend</div>
           </div>
 
           <div className="accountList">

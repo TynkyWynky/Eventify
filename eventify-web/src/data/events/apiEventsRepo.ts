@@ -27,9 +27,14 @@ type ApiEvent = {
   priceMax?: number | null;
   currency?: string | null;
   isFree?: boolean | null;
+  priceTier?: string | null;
+  priceLabel?: string | null;
+  priceConfidence?: string | null;
+  priceSource?: string | null;
   metadata?: {
     priceMin?: number | null;
     priceMax?: number | null;
+    priceSource?: string | null;
   } | null;
 };
 
@@ -94,14 +99,71 @@ function safeNum(v: unknown, fallback: number) {
 }
 
 function toNumberOrNull(v: unknown) {
+  if (v == null || v === "") return null;
+  if (typeof v === "boolean") return null;
   const n = typeof v === "number" ? v : Number(v);
   return Number.isFinite(n) ? n : null;
+}
+
+function normalizeCurrencyCode(value: unknown) {
+  const text = typeof value === "string" ? value.trim().toUpperCase() : "";
+  if (!text) return undefined;
+  if (text === "€" || text === "EURO") return "EUR";
+  if (/^[A-Z]{3}$/.test(text)) return text;
+  return undefined;
+}
+
+function normalizePriceTier(value: unknown) {
+  const text = typeof value === "string" ? value.trim().toLowerCase() : "";
+  if (["free", "low", "mid", "high", "premium"].includes(text)) {
+    return text as "free" | "low" | "mid" | "high" | "premium";
+  }
+  return null;
+}
+
+function formatPriceAmount(value: number | null | undefined, currency?: string) {
+  if (typeof value !== "number" || !Number.isFinite(value)) return null;
+  const rounded = Number.isInteger(value)
+    ? String(Math.round(value))
+    : value.toFixed(2).replace(/\.00$/, "");
+  if (!currency || currency === "EUR") return `€${rounded}`;
+  return `${currency} ${rounded}`;
+}
+
+function formatPriceLabel(opts: {
+  priceMin?: number | null;
+  priceMax?: number | null;
+  cost?: number | null;
+  currency?: string;
+  isFree?: boolean;
+}) {
+  if (opts.isFree === true) return "Free";
+  const min = typeof opts.priceMin === "number" ? opts.priceMin : null;
+  const max = typeof opts.priceMax === "number" ? opts.priceMax : null;
+  const cost = typeof opts.cost === "number" ? opts.cost : null;
+  if (min != null && max != null) {
+    const a = Math.min(min, max);
+    const b = Math.max(min, max);
+    if (Math.abs(a - b) < 0.01) return formatPriceAmount(a, opts.currency) || "Price unknown";
+    const left = formatPriceAmount(a, opts.currency);
+    const right = formatPriceAmount(b, opts.currency);
+    if (left && right) return `${left}–${right}`;
+  }
+  if (cost != null) return formatPriceAmount(cost, opts.currency) || "Price unknown";
+  if (min != null) return formatPriceAmount(min, opts.currency) || "Price unknown";
+  if (max != null) return formatPriceAmount(max, opts.currency) || "Price unknown";
+  return "Price unknown";
 }
 
 function toEnvNum(raw: string | undefined, fallback: number) {
   if (!raw) return fallback;
   const n = Number(raw);
   return Number.isFinite(n) ? n : fallback;
+}
+
+function toFiniteOrNull(value: unknown) {
+  const n = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(n) ? n : null;
 }
 
 function hashText(input: string) {
@@ -230,6 +292,15 @@ const DEFAULT_FETCH_SIZE = Math.max(
   Math.floor(toEnvNum(import.meta.env.VITE_EVENTS_FETCH_SIZE, 60))
 );
 
+function resolveOrigin(params?: EventsListParams) {
+  const originLat = toFiniteOrNull(params?.originLat);
+  const originLng = toFiniteOrNull(params?.originLng);
+  return {
+    lat: originLat ?? DEFAULT_LAT,
+    lng: originLng ?? DEFAULT_LNG,
+  };
+}
+
 const remoteById = new Map<string, EventItem>();
 
 function remember(items: EventItem[]) {
@@ -297,7 +368,7 @@ function mapApiEventToItem(
   const cost = toNumberOrNull(apiEvent.cost);
   const normalizedPriceMin = priceMin ?? cost;
   const normalizedPriceMax = priceMax ?? cost;
-  const currency = apiEvent.currency?.trim() || undefined;
+  const currency = normalizeCurrencyCode(apiEvent.currency);
   const hasPaidPrice =
     (typeof normalizedPriceMin === "number" && normalizedPriceMin > 0) ||
     (typeof normalizedPriceMax === "number" && normalizedPriceMax > 0) ||
@@ -305,6 +376,24 @@ function mapApiEventToItem(
   const hasZeroPriceSignal =
     normalizedPriceMin === 0 || normalizedPriceMax === 0 || cost === 0;
   const isFree = !hasPaidPrice && (apiEvent.isFree === true || hasZeroPriceSignal);
+  const priceTier = normalizePriceTier(apiEvent.priceTier);
+  const priceLabel =
+    (typeof apiEvent.priceLabel === "string" && apiEvent.priceLabel.trim()) ||
+    formatPriceLabel({
+      priceMin: normalizedPriceMin,
+      priceMax: normalizedPriceMax,
+      cost,
+      currency,
+      isFree,
+    });
+  const priceConfidence =
+    typeof apiEvent.priceConfidence === "string" && apiEvent.priceConfidence.trim()
+      ? apiEvent.priceConfidence.trim()
+      : null;
+  const priceSource =
+    (typeof apiEvent.priceSource === "string" && apiEvent.priceSource.trim()) ||
+    (typeof apiEvent.metadata?.priceSource === "string" && apiEvent.metadata.priceSource.trim()) ||
+    null;
 
   const rawTags = (apiEvent.tags || [])
     .map((tag) => (typeof tag === "string" ? tag.trim() : ""))
@@ -336,6 +425,10 @@ function mapApiEventToItem(
     isFree,
     priceMin: normalizedPriceMin,
     priceMax: normalizedPriceMax,
+    priceTier,
+    priceLabel,
+    priceConfidence,
+    priceSource,
     rawGenre: apiEvent.genre?.trim() || undefined,
     rawCategory: apiEvent.category?.trim() || undefined,
     rawTags: rawTags.length > 0 ? rawTags : undefined,
@@ -349,6 +442,7 @@ async function fetchRemoteEvents(
   const base = API_BASE_URL.endsWith("/") ? API_BASE_URL : `${API_BASE_URL}/`;
   const url = new URL("events", base);
 
+  const origin = resolveOrigin(params);
   const radiusKm =
     typeof params?.maxDistanceKm === "number"
       ? Math.max(1, Math.round(params.maxDistanceKm))
@@ -359,8 +453,8 @@ async function fetchRemoteEvents(
   const keyword = [query, style].filter(Boolean).join(" ").trim();
 
   const size = opts?.sizeOverride ?? DEFAULT_FETCH_SIZE;
-  url.searchParams.set("lat", String(DEFAULT_LAT));
-  url.searchParams.set("lng", String(DEFAULT_LNG));
+  url.searchParams.set("lat", String(origin.lat));
+  url.searchParams.set("lng", String(origin.lng));
   url.searchParams.set("radiusKm", String(radiusKm));
   url.searchParams.set("size", String(size));
   url.searchParams.set("maxResults", String(size));
@@ -380,8 +474,8 @@ async function fetchRemoteEvents(
 
   const items = (payload.events || []).map((e, i) =>
     mapApiEventToItem(e, i, {
-      originLat: DEFAULT_LAT,
-      originLng: DEFAULT_LNG,
+      originLat: origin.lat,
+      originLng: origin.lng,
       forcedStyle: style || undefined,
     })
   );
@@ -392,9 +486,10 @@ async function fetchRemoteEvents(
 
 export const apiEventsRepo: EventsRepo = {
   async list(params, opts) {
+    const origin = resolveOrigin(params);
     const organizerEvents = await listPublicOrganizerEvents({
-      originLat: DEFAULT_LAT,
-      originLng: DEFAULT_LNG,
+      originLat: origin.lat,
+      originLng: origin.lng,
     });
 
     const remoteEvents = await fetchRemoteEvents(params, { signal: opts?.signal });
@@ -404,9 +499,10 @@ export const apiEventsRepo: EventsRepo = {
   },
 
   async getById(eventId, opts) {
+    const origin = resolveOrigin();
     const organizerEvent = await getPublicOrganizerEventById(eventId, {
-      originLat: DEFAULT_LAT,
-      originLng: DEFAULT_LNG,
+      originLat: origin.lat,
+      originLng: origin.lng,
     });
     if (organizerEvent) return { ...organizerEvent };
 
@@ -414,7 +510,7 @@ export const apiEventsRepo: EventsRepo = {
     if (cached) return { ...cached };
 
     const remoteEvents = await fetchRemoteEvents(
-      { maxDistanceKm: 100 },
+      { maxDistanceKm: 100, originLat: origin.lat, originLng: origin.lng },
       { signal: opts?.signal, sizeOverride: 100 }
     );
 

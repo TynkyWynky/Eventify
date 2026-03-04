@@ -201,6 +201,38 @@ function formatStartIso(startIso?: string | null) {
   });
 }
 
+function formatPriceRangeLabel(event: EventItem) {
+  if (event.isFree === true) return "Free";
+
+  const toNum = (value: unknown) => {
+    if (value == null || value === "") return null;
+    if (typeof value === "boolean") return null;
+    const n = typeof value === "number" ? value : Number(value);
+    return Number.isFinite(n) ? n : null;
+  };
+
+  const min = toNum(event.priceMin);
+  const max = toNum(event.priceMax);
+  const cost = toNum(event.cost);
+  const currency = String(event.currency || "").trim().toUpperCase();
+  const fmtAmount = (value: number) => {
+    const rounded = Number.isInteger(value)
+      ? String(Math.round(value))
+      : value.toFixed(2).replace(/\.00$/, "");
+    return !currency || currency === "EUR" ? `€${rounded}` : `${currency} ${rounded}`;
+  };
+
+  if (min != null && max != null) {
+    const a = Math.min(min, max);
+    const b = Math.max(min, max);
+    return Math.abs(a - b) < 0.01 ? fmtAmount(a) : `${fmtAmount(a)}–${fmtAmount(b)}`;
+  }
+  if (cost != null) return fmtAmount(cost);
+  if (min != null) return fmtAmount(min);
+  if (max != null) return fmtAmount(max);
+  return "Price unknown";
+}
+
 function normalizeComparable(text: string) {
   return text
     .trim()
@@ -275,7 +307,6 @@ export default function EventDetailPage() {
   const [views, setViews] = useState(0);
 
   // ✅ SERVER social state
-  const [goingCount, setGoingCount] = useState(0);
   const [isGoing, setIsGoing] = useState(false);
   const [friendsGoing, setFriendsGoing] = useState<PublicUser[]>([]);
   const [socialLoading, setSocialLoading] = useState(false);
@@ -396,7 +427,6 @@ export default function EventDetailPage() {
         signal,
       });
       if (!data?.ok) throw new Error("Could not load social info");
-      setGoingCount(Number(data.goingCount) || 0);
       setIsGoing(Boolean(data.myGoing));
       setFriendsGoing(Array.isArray(data.friendsGoing) ? data.friendsGoing : []);
     } catch (err: unknown) {
@@ -926,6 +956,7 @@ export default function EventDetailPage() {
   const fullAddress = `${event.addressLine}, ${event.postalCode} ${event.city}, ${event.country}`;
   const googleMapsUrl = `https://www.google.com/maps?q=${event.latitude},${event.longitude}`;
   const startLabel = formatStartIso(event.startIso) || event.dateLabel;
+  const priceRangeLabel = formatPriceRangeLabel(event);
   const cleanDescription = sanitizeDetailDescription(event.description, {
     artistName: event.artistName,
     startLabel,
@@ -1099,8 +1130,7 @@ export default function EventDetailPage() {
 
         <div className="eventDetailTopRight">
           <span className="eventDetailMiniMeta">
-            {event.venue} • {distanceFromOrigin.toFixed(1)} km from {origin.label} • {views} views •{" "}
-            {goingCount} going
+            {event.venue} • {distanceFromOrigin.toFixed(1)} km from {origin.label} • {views} views
           </span>
         </div>
       </div>
@@ -1273,6 +1303,9 @@ export default function EventDetailPage() {
           <div className="eventDetailText">
             <b>Starts:</b> {startLabel}
           </div>
+          <div className="eventDetailText">
+            <b>Price:</b> {priceRangeLabel}
+          </div>
           {cleanDescription ? (
             <div className="eventDetailText">{cleanDescription}</div>
           ) : null}
@@ -1344,7 +1377,7 @@ export default function EventDetailPage() {
           ) : (
             <>
               <div className="eventDetailText">
-                <b>{friendsGoing.length}</b> friend{friendsGoing.length === 1 ? "" : "s"} going:
+                <b>Friends going:</b>
               </div>
 
               <div className="friendsGoingList">

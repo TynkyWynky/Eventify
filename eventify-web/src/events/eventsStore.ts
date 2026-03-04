@@ -59,6 +59,10 @@ export type EventItem = {
   isFree?: boolean;
   priceMin?: number | null;
   priceMax?: number | null;
+  priceTier?: "free" | "low" | "mid" | "high" | "premium" | null;
+  priceLabel?: string | null;
+  priceConfidence?: string | null;
+  priceSource?: string | null;
   rawGenre?: string;
   rawCategory?: string;
   rawTags?: string[];
