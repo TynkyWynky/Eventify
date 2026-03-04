@@ -44,6 +44,8 @@ function toArray(value) {
 }
 
 function toFiniteNumber(value) {
+  if (value == null || value === "") return null;
+  if (typeof value === "boolean") return null;
   const n = Number(value);
   return Number.isFinite(n) ? n : null;
 }
@@ -130,7 +132,7 @@ function extractPriceNumbers(value) {
 function looksLikeFreePriceText(value) {
   const text = cleanText(value);
   if (!text) return false;
-  return /\b(free|gratis|gratuit(?:e)?|kostenlos|vrij(?:e)?\s*(?:toegang|entry|admission)?|no\s*charge)\b/i.test(
+  return /\b(free\s+(entry|admission|event|concert|show|ticket|tickets)|entry\s+free|admission\s+free|gratis\s+(toegang|concert|event)|gratuit(?:e)?\s+(entree|acces|concert|evenement)|kostenlos(?:e)?\s+(eintritt|ticket)|vrije?\s+toegang|no\s*charge)\b/i.test(
     text
   );
 }
@@ -1536,8 +1538,503 @@ async function fetchScrapedEvents({
   return dedupeEvents(allEvents, maxEvents);
 }
 
+function hasPriceSignal(price) {
+  if (!price || typeof price !== "object") return false;
+  const values = [price.cost, price.priceMin, price.priceMax]
+    .map((value) => toFiniteNumber(value))
+    .filter((value) => value != null);
+  if (values.length > 0) return true;
+  return price.isFree === true;
+}
+
+function normalizeCurrencyCode(value) {
+  const text = cleanText(value);
+  if (!text) return null;
+  if (text === "€") return "EUR";
+  const normalized = text.toUpperCase();
+  if (/^[A-Z]{3}$/.test(normalized)) return normalized;
+  if (normalized === "EURO" || normalized === "EUR") return "EUR";
+  return null;
+}
+
+function normalizePriceResult(price, source) {
+  const priceMin = toFiniteNumber(price?.priceMin);
+  const priceMax = toFiniteNumber(price?.priceMax);
+  const cost = toFiniteNumber(price?.cost);
+  const hasPositive =
+    (priceMin != null && priceMin > 0) ||
+    (priceMax != null && priceMax > 0) ||
+    (cost != null && cost > 0);
+  const hasZero =
+    priceMin === 0 || priceMax === 0 || cost === 0 || price?.isFree === true;
+
+  const normalized = {
+    cost:
+      cost != null
+        ? cost
+        : priceMin != null
+        ? priceMin
+        : priceMax != null
+        ? priceMax
+        : hasZero
+        ? 0
+        : null,
+    priceMin:
+      priceMin != null
+        ? priceMin
+        : cost != null
+        ? cost
+        : hasZero
+        ? 0
+        : null,
+    priceMax:
+      priceMax != null
+        ? priceMax
+        : cost != null
+        ? cost
+        : hasZero
+        ? 0
+        : null,
+    currency: normalizeCurrencyCode(price?.currency),
+    ticketUrl: cleanText(price?.ticketUrl),
+    isFree: hasPositive ? false : hasZero,
+    priceSource: source,
+  };
+
+  if (
+    normalized.priceMin != null &&
+    normalized.priceMax != null &&
+    normalized.priceMin > normalized.priceMax
+  ) {
+    const swap = normalized.priceMin;
+    normalized.priceMin = normalized.priceMax;
+    normalized.priceMax = swap;
+  }
+
+  return normalized;
+}
+
+function parseInlineJsonPrice(html, pageUrl) {
+  const $ = cheerio.load(html);
+  const positives = [];
+  let sawZero = false;
+  let sawFree = false;
+  let currency = null;
+
+  const capture = (value) => {
+    const numbers = extractPriceNumbers(value);
+    for (const amount of numbers) {
+      if (amount > 0) positives.push(amount);
+      else if (amount === 0) sawZero = true;
+    }
+    if (looksLikeFreePriceText(value)) sawFree = true;
+  };
+
+  $("script").each((_, element) => {
+    const raw = $(element).html() || $(element).text() || "";
+    if (!raw || raw.length > 450000) return;
+    if (!/\b(price|lowPrice|highPrice|priceCurrency|minPrice|maxPrice)\b/i.test(raw)) {
+      return;
+    }
+
+    const currencyMatches = raw.match(
+      /"priceCurrency"\s*:\s*"([A-Za-z]{3}|€)"|"currency"\s*:\s*"([A-Za-z]{3}|€)"/gi
+    );
+    if (currencyMatches && currencyMatches.length > 0 && !currency) {
+      const token = currencyMatches[0].match(/([A-Za-z]{3}|€)/);
+      currency = normalizeCurrencyCode(token?.[1]);
+    }
+
+    const regexes = [
+      /"(?:price|lowPrice|minPrice|amount|value)"\s*:\s*"([^"]+)"/gi,
+      /"(?:price|lowPrice|minPrice|amount|value)"\s*:\s*([0-9][0-9.,]*)/gi,
+      /"(?:highPrice|maxPrice|listPrice)"\s*:\s*"([^"]+)"/gi,
+      /"(?:highPrice|maxPrice|listPrice)"\s*:\s*([0-9][0-9.,]*)/gi,
+    ];
+
+    for (const regex of regexes) {
+      let match = null;
+      while ((match = regex.exec(raw))) {
+        if (!match[1]) continue;
+        capture(match[1]);
+      }
+    }
+  });
+
+  if (positives.length === 0 && !sawZero && !sawFree) return null;
+
+  const priceMin = positives.length > 0 ? Math.min(...positives) : null;
+  const priceMax = positives.length > 0 ? Math.max(...positives) : null;
+
+  return normalizePriceResult(
+    {
+      cost: priceMin,
+      priceMin,
+      priceMax,
+      currency,
+      ticketUrl: pageUrl,
+      isFree: positives.length === 0 && (sawZero || sawFree),
+    },
+    "scraped_text"
+  );
+}
+
+function parseTextPriceFallback(html, pageUrl) {
+  const text = String(html || "").replace(/\s+/g, " ").trim();
+  if (!text) return null;
+
+  const euroRegex =
+    /(?:€|eur)\s*([0-9][0-9.,]*)\s*(?:-|to|tot|–|—)\s*(?:€|eur)?\s*([0-9][0-9.,]*)/gi;
+  const fromRegex = /\b(?:from|vanaf|a partir de)\s*(?:€|eur)\s*([0-9][0-9.,]*)/gi;
+  const singleRegex = /(?:€|eur)\s*([0-9][0-9.,]*)|([0-9][0-9.,]*)\s*(?:€|eur)/gi;
+  const values = [];
+  let match = null;
+
+  while ((match = euroRegex.exec(text))) {
+    const a = normalizeNumericToken(match[1]);
+    const b = normalizeNumericToken(match[2]);
+    if (a != null) values.push(a);
+    if (b != null) values.push(b);
+  }
+  while ((match = fromRegex.exec(text))) {
+    const parsed = normalizeNumericToken(match[1]);
+    if (parsed != null) values.push(parsed);
+  }
+  while ((match = singleRegex.exec(text))) {
+    const parsed = normalizeNumericToken(match[1] || match[2]);
+    if (parsed != null) values.push(parsed);
+    if (values.length >= 8) break;
+  }
+
+  const freeSignal = looksLikeFreePriceText(text);
+  if (values.length === 0 && !freeSignal) return null;
+
+  const positives = values.filter((value) => value > 0);
+  const sawZero = values.some((value) => value === 0);
+  const priceMin = positives.length > 0 ? Math.min(...positives) : null;
+  const priceMax = positives.length > 0 ? Math.max(...positives) : null;
+
+  return normalizePriceResult(
+    {
+      cost: priceMin,
+      priceMin,
+      priceMax,
+      currency: "EUR",
+      ticketUrl: pageUrl,
+      isFree: positives.length === 0 && (sawZero || freeSignal),
+    },
+    "scraped_text"
+  );
+}
+
+function isTicketmasterHost(value) {
+  const host = hostnameFromUrl(value) || cleanText(value)?.toLowerCase() || "";
+  if (!host) return false;
+  return /(^|\.)ticketmaster\./i.test(host);
+}
+
+function extractTicketmasterWebEventId(url) {
+  const target = cleanText(url);
+  if (!target) return null;
+
+  try {
+    const parsed = new URL(target);
+    const segments = String(parsed.pathname || "")
+      .split("/")
+      .map((segment) => cleanText(segment))
+      .filter(Boolean);
+
+    for (let i = segments.length - 1; i >= 0; i -= 1) {
+      const segment = segments[i];
+      if (!segment) continue;
+      const exact = segment.match(/^\d{6,}$/);
+      if (exact) return exact[0];
+      const suffix = segment.match(/(\d{6,})$/);
+      if (suffix) return suffix[1];
+    }
+
+    const queryId =
+      cleanText(parsed.searchParams.get("eventId")) ||
+      cleanText(parsed.searchParams.get("eventid"));
+    if (queryId && /^\d{6,}$/.test(queryId)) return queryId;
+  } catch {
+    return null;
+  }
+
+  return null;
+}
+
+function createStatusError(prefix, status) {
+  const err = new Error(`${prefix}_${status}`);
+  err.response = { status };
+  return err;
+}
+
+function roundCurrencyAmount(value) {
+  const n = toFiniteNumber(value);
+  if (n == null) return null;
+  return Math.round((n + Number.EPSILON) * 100) / 100;
+}
+
+function delay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, Math.max(0, Number(ms) || 0)));
+}
+
+function parseTicketmasterTicketSelectionPrice(payload, context = {}) {
+  const normalizedPayload =
+    payload && typeof payload === "object" && !Array.isArray(payload) ? payload : null;
+  if (!normalizedPayload) return null;
+
+  const values = [];
+  let sawZero = false;
+
+  const ticketTypes = toArray(normalizedPayload.ticketTypes);
+  for (const ticketType of ticketTypes) {
+    const prices = toArray(ticketType?.prices);
+    for (const price of prices) {
+      const base = toFiniteNumber(
+        price?.faceValue ?? price?.amount ?? price?.value ?? price?.listPrice
+      );
+      const serviceFee = toFiniteNumber(price?.serviceFeeChargesValue);
+      const upsellFee = toFiniteNumber(price?.upsellFeeChargesValue);
+
+      let total = base;
+      if (total != null) {
+        if (serviceFee != null && serviceFee >= 0) total += serviceFee;
+        if (upsellFee != null && upsellFee >= 0) total += upsellFee;
+      } else {
+        const directValues = extractPriceNumbers(
+          price?.displayPrice ??
+            price?.formattedPrice ??
+            price?.formatted ??
+            price?.label
+        );
+        if (directValues.length > 0) {
+          total = directValues.find((entry) => entry > 0) ?? directValues[0];
+        }
+      }
+
+      if (total == null) continue;
+      const roundedTotal = roundCurrencyAmount(total);
+      if (roundedTotal == null) continue;
+      if (roundedTotal > 0) values.push(roundedTotal);
+      else if (total === 0) sawZero = true;
+    }
+  }
+
+  if (values.length === 0 && !sawZero) return null;
+
+  let currency =
+    normalizeCurrencyCode(normalizedPayload.currencyCode) ||
+    normalizeCurrencyCode(normalizedPayload.currency);
+  if (!currency && /\.be$/i.test(context.hostname || "")) {
+    currency = "EUR";
+  }
+
+  const priceMin = values.length > 0 ? Math.min(...values) : null;
+  const priceMax = values.length > 0 ? Math.max(...values) : null;
+
+  return normalizePriceResult(
+    {
+      cost: priceMin,
+      priceMin,
+      priceMax,
+      currency,
+      ticketUrl: context.ticketUrl || null,
+      isFree: values.length === 0 && sawZero,
+    },
+    "ticketmaster_api"
+  );
+}
+
+async function extractTicketmasterApiPrice({ targetUrl, timeoutMs, userAgent }) {
+  const target = cleanText(targetUrl);
+  if (!target) return null;
+
+  let parsedTarget = null;
+  try {
+    parsedTarget = new URL(target);
+  } catch {
+    return null;
+  }
+
+  if (!isTicketmasterHost(parsedTarget.hostname)) return null;
+
+  const eventId = extractTicketmasterWebEventId(target);
+  if (!eventId) return null;
+
+  const apiUrl = `${parsedTarget.protocol}//${parsedTarget.host}/api/ticketselection/${encodeURIComponent(
+    eventId
+  )}`;
+  const referer = `${parsedTarget.protocol}//${parsedTarget.host}${parsedTarget.pathname}`;
+
+  const maxAttempts = 3;
+  let lastBlockedStatus = null;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    const response = await axios.get(apiUrl, {
+      timeout: Math.max(1200, timeoutMs),
+      responseType: "json",
+      maxRedirects: 2,
+      headers: {
+        "User-Agent": userAgent || DEFAULT_USER_AGENT,
+        Accept: "application/json,text/plain,*/*",
+        "X-Requested-With": "XMLHttpRequest",
+        Referer: referer,
+        "Accept-Language": "en-US,en;q=0.9",
+      },
+      validateStatus(status) {
+        return status >= 200 && status < 500;
+      },
+    });
+
+    if (response.status === 400 || response.status === 404) return null;
+    if (response.status >= 500) return null;
+    if (response.status >= 400) {
+      if ((response.status === 403 || response.status === 429) && attempt < maxAttempts) {
+        lastBlockedStatus = response.status;
+        await delay(300 + attempt * 500);
+        continue;
+      }
+      throw createStatusError("ticketmaster_ticketselection_failed", response.status);
+    }
+
+    const parsed = parseTicketmasterTicketSelectionPrice(response.data, {
+      hostname: parsedTarget.hostname,
+      ticketUrl: target,
+    });
+    if (!parsed || !hasPriceSignal(parsed)) return null;
+
+    return {
+      ...parsed,
+      fetchedUrl: apiUrl,
+      matchedBy: "ticketmaster_ticketselection",
+    };
+  }
+
+  if (lastBlockedStatus != null) {
+    throw createStatusError("ticketmaster_ticketselection_failed", lastBlockedStatus);
+  }
+
+  return null;
+}
+
+function pickBestPriceCandidate(candidates) {
+  let best = null;
+  for (const candidate of candidates) {
+    if (!candidate || !hasPriceSignal(candidate)) continue;
+    if (!best) {
+      best = candidate;
+      continue;
+    }
+    const bestMax = toFiniteNumber(best.priceMax) ?? toFiniteNumber(best.priceMin) ?? 0;
+    const candidateMax =
+      toFiniteNumber(candidate.priceMax) ?? toFiniteNumber(candidate.priceMin) ?? 0;
+    if (candidateMax > bestMax) best = candidate;
+  }
+  return best;
+}
+
+async function extractPriceFromEventUrl({
+  url,
+  ticketUrl,
+  timeoutMs = 4500,
+  userAgent = DEFAULT_USER_AGENT,
+} = {}) {
+  const target = cleanText(ticketUrl) || cleanText(url);
+  if (!target) return null;
+
+  let parsed = null;
+  try {
+    parsed = new URL(target);
+  } catch {
+    return null;
+  }
+  if (!/^https?:$/i.test(parsed.protocol)) return null;
+
+  if (isTicketmasterHost(parsed.hostname || target)) {
+    const ticketmasterApiPrice = await extractTicketmasterApiPrice({
+      targetUrl: target,
+      timeoutMs,
+      userAgent,
+    });
+    if (ticketmasterApiPrice && hasPriceSignal(ticketmasterApiPrice)) {
+      return ticketmasterApiPrice;
+    }
+  }
+
+  let html = null;
+  try {
+    html = await fetchHtml(target, {
+      timeoutMs: Math.max(1200, timeoutMs),
+      userAgent,
+    });
+  } catch (err) {
+    const status = Number(err?.response?.status);
+    if (Number.isFinite(status) && status >= 400) {
+      const wrapped = new Error(`price_fetch_failed_${status}`);
+      wrapped.response = { status };
+      throw wrapped;
+    }
+    return null;
+  }
+
+  if (!html) return null;
+
+  const eventNodes = extractJsonLdEventNodes(html);
+  const offerCandidates = [];
+  for (const node of eventNodes) {
+    const offers = parseOffers(node?.offers, target, node?.isAccessibleForFree === true);
+    if (offers) {
+      offerCandidates.push(
+        normalizePriceResult(
+          {
+            cost: offers.cost,
+            priceMin: offers.priceMin,
+            priceMax: offers.priceMax,
+            currency: offers.currency,
+            ticketUrl: offers.ticketUrl || target,
+            isFree: offers.isFree,
+          },
+          "scraped_jsonld"
+        )
+      );
+    }
+  }
+
+  const bestJsonLd = pickBestPriceCandidate(offerCandidates);
+  if (bestJsonLd) {
+    return {
+      ...bestJsonLd,
+      fetchedUrl: target,
+      matchedBy: "jsonld_offers",
+    };
+  }
+
+  const inlineJson = parseInlineJsonPrice(html, target);
+  if (inlineJson) {
+    return {
+      ...inlineJson,
+      fetchedUrl: target,
+      matchedBy: "inline_json",
+    };
+  }
+
+  const textFallback = parseTextPriceFallback(html, target);
+  if (textFallback) {
+    return {
+      ...textFallback,
+      fetchedUrl: target,
+      matchedBy: "text_fallback",
+    };
+  }
+
+  return null;
+}
+
 module.exports = {
   DEFAULT_USER_AGENT,
   fetchScrapedEvents,
   parseDelimitedUrls,
+  extractPriceFromEventUrl,
 };

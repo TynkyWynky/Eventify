@@ -8,6 +8,7 @@ const {
   DEFAULT_USER_AGENT,
   fetchScrapedEvents,
   parseDelimitedUrls,
+  extractPriceFromEventUrl,
 } = require("./webScraper");
 const {
   DEFAULT_RECOMMENDATION_WEIGHTS,
@@ -36,6 +37,12 @@ function toBool(value, fallback = false) {
 function toPositiveInt(value, fallback) {
   const n = Number(value);
   if (!Number.isFinite(n) || n <= 0) return fallback;
+  return Math.floor(n);
+}
+
+function toNonNegativeInt(value, fallback) {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n < 0) return fallback;
   return Math.floor(n);
 }
 
@@ -72,6 +79,62 @@ const SOCIAL_WRITE_WINDOW_MS = toPositiveInt(process.env.SOCIAL_WRITE_WINDOW_MS,
 const SOCIAL_WRITE_MAX_ATTEMPTS = toPositiveInt(process.env.SOCIAL_WRITE_MAX_ATTEMPTS, 60);
 const INVITE_WINDOW_MS = toPositiveInt(process.env.INVITE_WINDOW_MS, 60 * 60 * 1000);
 const INVITE_MAX_ATTEMPTS = toPositiveInt(process.env.INVITE_MAX_ATTEMPTS, 30);
+const OLLAMA_CONFIG = {
+  enabled: toBool(process.env.OLLAMA_ENABLED, false),
+  baseUrl: (process.env.OLLAMA_BASE_URL || "http://127.0.0.1:11434").trim().replace(/\/+$/, ""),
+  model: (process.env.OLLAMA_MODEL || "llama3.1:8b").trim(),
+  timeoutMs: Math.max(1200, toPositiveInt(process.env.OLLAMA_TIMEOUT_MS, 5500)),
+  maxMessageChars: Math.max(200, toPositiveInt(process.env.OLLAMA_MAX_MESSAGE_CHARS, 1200)),
+};
+const CHATBOT_CONFIG = {
+  ollamaOnly: toBool(process.env.CHATBOT_OLLAMA_ONLY, true),
+  timeoutMs: Math.max(
+    1200,
+    toPositiveInt(process.env.CHATBOT_OLLAMA_TIMEOUT_MS, Math.min(12000, OLLAMA_CONFIG.timeoutMs))
+  ),
+  maxReplyChars: Math.max(400, toPositiveInt(process.env.CHATBOT_OLLAMA_MAX_REPLY_CHARS, 1400)),
+  cacheTtlMs: Math.max(5000, toPositiveInt(process.env.CHATBOT_OLLAMA_CACHE_TTL_MS, 120000)),
+};
+const PRICE_TIER_THRESHOLDS = Object.freeze({
+  low: 20,
+  mid: 45,
+  high: 80,
+});
+
+const chatbotReplyCache = new Map();
+const PRICE_ENRICH_CONFIG = {
+  enabled: toBool(process.env.PRICE_ENRICH_ENABLED, true),
+  maxPerRequest: toNonNegativeInt(process.env.PRICE_ENRICH_MAX_PER_REQUEST, 12),
+  ticketmasterMaxPerRequest: toNonNegativeInt(
+    process.env.PRICE_ENRICH_TICKETMASTER_MAX_PER_REQUEST,
+    6
+  ),
+  concurrency: Math.max(1, toPositiveInt(process.env.PRICE_ENRICH_CONCURRENCY, 4)),
+  timeoutMs: Math.max(1200, toPositiveInt(process.env.PRICE_ENRICH_TIMEOUT_MS, 4500)),
+  userAgent: cleanText(process.env.PRICE_ENRICH_USER_AGENT) || "Mozilla/5.0",
+  backgroundEnabled: toBool(process.env.PRICE_ENRICH_BACKGROUND_ENABLED, true),
+  backgroundDelayMs: Math.max(
+    250,
+    toPositiveInt(process.env.PRICE_ENRICH_BACKGROUND_DELAY_MS, 2000)
+  ),
+  backgroundMaxQueue: Math.max(
+    10,
+    toPositiveInt(process.env.PRICE_ENRICH_BACKGROUND_MAX_QUEUE, 250)
+  ),
+  cacheTtlMs: Math.max(
+    60 * 1000,
+    toPositiveInt(process.env.PRICE_ENRICH_CACHE_TTL_MS, 6 * 60 * 60 * 1000)
+  ),
+  blockTtlMs: Math.max(
+    30 * 1000,
+    toPositiveInt(process.env.PRICE_ENRICH_BLOCK_TTL_MS, 10 * 60 * 1000)
+  ),
+  ticketmasterProxyBaseUrl: cleanText(process.env.PRICE_ENRICH_TICKETMASTER_PROXY_BASE_URL),
+  ticketmasterProxyTimeoutMs: Math.max(
+    1200,
+    toPositiveInt(process.env.PRICE_ENRICH_TICKETMASTER_PROXY_TIMEOUT_MS, 10000)
+  ),
+};
 
 function parseDbSsl(value) {
   const normalized = String(value || "").trim().toLowerCase();
@@ -397,6 +460,14 @@ async function ensureDatabaseSchemaCompatibility() {
         WHERE is_organisator IS DISTINCT FROM COALESCE(is_organizer, FALSE);
       END IF;
     END $$;
+  `);
+
+  await db.query(`
+    ALTER TABLE events
+    ADD COLUMN IF NOT EXISTS price_min DECIMAL(10, 2),
+    ADD COLUMN IF NOT EXISTS price_max DECIMAL(10, 2),
+    ADD COLUMN IF NOT EXISTS price_tier VARCHAR(16),
+    ADD COLUMN IF NOT EXISTS price_source VARCHAR(32)
   `);
 
   await db.query(`
@@ -2112,8 +2183,187 @@ function normalizeTags(tags) {
 }
 
 function toNumberOrNull(value) {
+  if (value == null || value === "") return null;
+  if (typeof value === "boolean") return null;
   const n = Number(value);
   return Number.isFinite(n) ? n : null;
+}
+
+function normalizeCurrencyCode(value) {
+  const text = cleanText(value);
+  if (!text) return null;
+  if (text === "€") return "EUR";
+  const normalized = text.toUpperCase();
+  if (normalized === "EURO") return "EUR";
+  if (/^[A-Z]{3}$/.test(normalized)) return normalized;
+  return null;
+}
+
+function hasPositivePriceSignal(price) {
+  const values = [price?.cost, price?.priceMin, price?.priceMax]
+    .map((value) => toNumberOrNull(value))
+    .filter((value) => value != null);
+  return values.some((value) => value > 0);
+}
+
+function hasAnyPriceSignal(price) {
+  const values = [price?.cost, price?.priceMin, price?.priceMax]
+    .map((value) => toNumberOrNull(value))
+    .filter((value) => value != null);
+  if (values.length > 0) return true;
+  return price?.isFree === true;
+}
+
+function computePriceTier({ priceMin, priceMax, cost, currency, isFree }) {
+  if (isFree === true) return "free";
+  const normalizedCurrency = normalizeCurrencyCode(currency);
+  if (!normalizedCurrency || normalizedCurrency !== "EUR") return null;
+
+  const values = [toNumberOrNull(priceMax), toNumberOrNull(priceMin), toNumberOrNull(cost)].filter(
+    (value) => value != null && value > 0
+  );
+  if (values.length === 0) return null;
+
+  const reference = values[0];
+  if (reference <= PRICE_TIER_THRESHOLDS.low) return "low";
+  if (reference <= PRICE_TIER_THRESHOLDS.mid) return "mid";
+  if (reference <= PRICE_TIER_THRESHOLDS.high) return "high";
+  return "premium";
+}
+
+function formatPriceAmount(value, currency) {
+  const n = toNumberOrNull(value);
+  if (n == null) return null;
+  const normalizedCurrency = normalizeCurrencyCode(currency);
+  const rounded = Number.isInteger(n) ? String(Math.round(n)) : n.toFixed(2).replace(/\.00$/, "");
+  if (!normalizedCurrency || normalizedCurrency === "EUR") return `€${rounded}`;
+  return `${normalizedCurrency} ${rounded}`;
+}
+
+function formatPriceLabel({ priceMin, priceMax, cost, currency, isFree }) {
+  if (isFree === true) return "Free";
+  const min = toNumberOrNull(priceMin);
+  const max = toNumberOrNull(priceMax);
+  const single = toNumberOrNull(cost);
+  if (min != null && max != null) {
+    const a = Math.min(min, max);
+    const b = Math.max(min, max);
+    if (Math.abs(a - b) < 0.01) return formatPriceAmount(a, currency) || "Price unknown";
+    const left = formatPriceAmount(a, currency);
+    const right = formatPriceAmount(b, currency);
+    if (left && right) return `${left}–${right}`;
+  }
+  if (single != null) return formatPriceAmount(single, currency) || "Price unknown";
+  if (min != null) return formatPriceAmount(min, currency) || "Price unknown";
+  if (max != null) return formatPriceAmount(max, currency) || "Price unknown";
+  return "Price unknown";
+}
+
+function normalizeEventPrice(event) {
+  const topPriceMin = toNumberOrNull(event?.priceMin);
+  const topPriceMax = toNumberOrNull(event?.priceMax);
+  const metaPriceMin = toNumberOrNull(event?.metadata?.priceMin);
+  const metaPriceMax = toNumberOrNull(event?.metadata?.priceMax);
+  const topCost = toNumberOrNull(event?.cost);
+
+  let priceMin = topPriceMin != null ? topPriceMin : metaPriceMin;
+  let priceMax = topPriceMax != null ? topPriceMax : metaPriceMax;
+  let cost =
+    topCost != null
+      ? topCost
+      : priceMin != null
+      ? priceMin
+      : priceMax != null
+      ? priceMax
+      : null;
+
+  if (priceMin == null && cost != null) priceMin = cost;
+  if (priceMax == null && cost != null) priceMax = cost;
+
+  if (priceMin != null && priceMax != null && priceMin > priceMax) {
+    const swap = priceMin;
+    priceMin = priceMax;
+    priceMax = swap;
+  }
+
+  const currency =
+    normalizeCurrencyCode(event?.currency) ||
+    normalizeCurrencyCode(event?.metadata?.currency) ||
+    normalizeCurrencyCode(event?.metadata?.priceCurrency);
+
+  const hasPaidSignal =
+    (priceMin != null && priceMin > 0) ||
+    (priceMax != null && priceMax > 0) ||
+    (cost != null && cost > 0);
+  const hasZeroSignal =
+    priceMin === 0 || priceMax === 0 || cost === 0 || event?.isFree === true;
+  const isFree = hasPaidSignal ? false : hasZeroSignal;
+  const hasAnyPrice = hasPaidSignal || hasZeroSignal;
+
+  return {
+    cost: cost != null ? cost : isFree ? 0 : null,
+    priceMin: priceMin != null ? priceMin : isFree ? 0 : null,
+    priceMax: priceMax != null ? priceMax : isFree ? 0 : null,
+    currency: currency || null,
+    isFree,
+    hasAnyPrice,
+  };
+}
+
+function resolvePriceConfidence(event, normalizedPrice) {
+  const explicit = cleanText(event?.priceConfidence)?.toLowerCase();
+  if (explicit) return explicit;
+
+  const sourceHint = cleanText(event?.priceSource || event?.metadata?.priceSource)?.toLowerCase();
+  if (sourceHint === "scraped_jsonld") return "scraped_jsonld";
+  if (sourceHint === "scraped_text") return "scraped_text";
+  if (sourceHint === "scraped_proxy") return "scraped_text";
+
+  if (!normalizedPrice?.hasAnyPrice) return "unknown";
+  if (
+    normalizedPrice.priceMin != null &&
+    normalizedPrice.priceMax != null &&
+    normalizedPrice.priceMin > 0 &&
+    normalizedPrice.priceMax > 0
+  ) {
+    return "api_exact";
+  }
+  return "api_partial";
+}
+
+function enrichEventWithPriceInsights(event) {
+  const normalizedPrice = normalizeEventPrice(event);
+  const priceTier = computePriceTier(normalizedPrice);
+  const priceLabel = formatPriceLabel(normalizedPrice);
+  const priceSource =
+    cleanText(event?.priceSource || event?.metadata?.priceSource) ||
+    (normalizedPrice.hasAnyPrice ? "api" : "unknown");
+  const priceConfidence = resolvePriceConfidence(event, normalizedPrice);
+
+  const metadata =
+    event?.metadata && typeof event.metadata === "object" ? event.metadata : null;
+
+  return {
+    ...event,
+    ...normalizedPrice,
+    priceTier,
+    priceLabel,
+    priceSource,
+    priceConfidence,
+    metadata: metadata
+      ? {
+          ...metadata,
+          priceMin:
+            toNumberOrNull(metadata.priceMin) != null
+              ? toNumberOrNull(metadata.priceMin)
+              : normalizedPrice.priceMin,
+          priceMax:
+            toNumberOrNull(metadata.priceMax) != null
+              ? toNumberOrNull(metadata.priceMax)
+              : normalizedPrice.priceMax,
+        }
+      : event?.metadata,
+  };
 }
 
 function resolveMergedIsFree(primary, secondary, merged) {
@@ -2399,6 +2649,24 @@ async function mapSequential(items, fn) {
   return out;
 }
 
+async function mapWithConcurrency(items, concurrency, worker) {
+  const list = Array.isArray(items) ? items : [];
+  if (list.length === 0) return [];
+  const limit = Math.max(1, Number(concurrency) || 1);
+  const out = new Array(list.length);
+  let cursor = 0;
+
+  const runners = Array.from({ length: Math.min(limit, list.length) }, async () => {
+    while (cursor < list.length) {
+      const index = cursor++;
+      out[index] = await worker(list[index], index);
+    }
+  });
+
+  await Promise.all(runners);
+  return out;
+}
+
 function summarizeSources(events) {
   const counts = {};
   for (const event of events) {
@@ -2468,6 +2736,17 @@ const scrapeCache = {
   inFlight: null,
   lastError: null,
 };
+const priceEnrichCache = new Map();
+const priceBlockedHosts = new Map();
+const priceEnrichRoundRobin = {
+  ticketmasterCursor: 0,
+  generalCursor: 0,
+};
+const priceEnrichBackground = {
+  queue: [],
+  queueKeys: new Set(),
+  running: false,
+};
 
 // Cache for admin-moderation (disabled events) so we don't hit DB on every /events call
 const moderationCache = {
@@ -2496,6 +2775,377 @@ function getScrapeCacheAgeMs() {
   if (!scrapeCache.fetchedAt) return null;
   const ageMs = Date.now() - scrapeCache.fetchedAt;
   return ageMs >= 0 ? ageMs : 0;
+}
+
+function isPriceCacheEntryFresh(entry) {
+  if (!entry || !entry.cachedAt) return false;
+  return Date.now() - entry.cachedAt < PRICE_ENRICH_CONFIG.cacheTtlMs;
+}
+
+function getCachedPriceEntry(url) {
+  const key = cleanText(url);
+  if (!key) return null;
+  const cached = priceEnrichCache.get(key);
+  if (!cached) return null;
+  if (isPriceCacheEntryFresh(cached)) return cached;
+  priceEnrichCache.delete(key);
+  return null;
+}
+
+function setCachedPriceEntry(url, payload) {
+  const key = cleanText(url);
+  if (!key) return;
+  priceEnrichCache.set(key, {
+    cachedAt: Date.now(),
+    payload: payload || null,
+  });
+}
+
+function getHostFromUrlSafe(url) {
+  const value = cleanText(url);
+  if (!value) return null;
+  try {
+    const parsed = new URL(value);
+    if (!/^https?:$/i.test(parsed.protocol)) return null;
+    return parsed.hostname.toLowerCase();
+  } catch {
+    return null;
+  }
+}
+
+function buildPriceBlockKey(url, source) {
+  const targetUrl = cleanText(url);
+  const host = getHostFromUrlSafe(url);
+  if (!targetUrl && !host) return null;
+
+  const sourceKey = cleanText(source)?.toLowerCase() || "";
+  // Ticketmaster can return mixed 200/403 across events and over short intervals.
+  // Keep retrying per request rather than skipping by block cache.
+  if (sourceKey === "ticketmaster") {
+    return null;
+  }
+  return host ? `host:${host}` : targetUrl ? `url:${targetUrl}` : null;
+}
+
+function isHostBlockedForPrice(url, source) {
+  const key = buildPriceBlockKey(url, source);
+  if (!key) return false;
+  const blockedUntil = priceBlockedHosts.get(key) || 0;
+  if (!blockedUntil) return false;
+  if (Date.now() >= blockedUntil) {
+    priceBlockedHosts.delete(key);
+    return false;
+  }
+  return true;
+}
+
+function blockHostForPrice(url, source) {
+  const key = buildPriceBlockKey(url, source);
+  if (!key) return;
+  priceBlockedHosts.set(key, Date.now() + PRICE_ENRICH_CONFIG.blockTtlMs);
+}
+
+function sleepMs(ms) {
+  return new Promise((resolve) => setTimeout(resolve, Math.max(0, Number(ms) || 0)));
+}
+
+function buildEventPriceQueueKey(event) {
+  const source = cleanText(event?.source)?.toLowerCase() || "unknown";
+  const sourceId = cleanText(event?.sourceId) || "";
+  const url = cleanText(event?.ticketUrl || event?.url) || "";
+  if (sourceId) return `${source}:${sourceId}`;
+  if (url) return `${source}:url:${url}`;
+  return null;
+}
+
+async function runPriceEnrichBackgroundQueue() {
+  if (priceEnrichBackground.running) return;
+  priceEnrichBackground.running = true;
+
+  try {
+    while (priceEnrichBackground.queue.length > 0) {
+      const event = priceEnrichBackground.queue.shift();
+      const key = buildEventPriceQueueKey(event);
+      if (key) {
+        priceEnrichBackground.queueKeys.delete(key);
+      }
+      if (!event) continue;
+
+      try {
+        await enrichEventPriceOnDemand(event);
+      } catch {
+        // Ignore background enrichment failures.
+      }
+
+      await sleepMs(PRICE_ENRICH_CONFIG.backgroundDelayMs);
+    }
+  } finally {
+    priceEnrichBackground.running = false;
+  }
+}
+
+function enqueueBackgroundPriceEnrichment(entries) {
+  if (!PRICE_ENRICH_CONFIG.backgroundEnabled) return;
+  if (!Array.isArray(entries) || entries.length === 0) return;
+
+  for (const entry of entries) {
+    const event = entry?.event;
+    if (!event) continue;
+    const key = buildEventPriceQueueKey(event);
+    if (!key) continue;
+    if (priceEnrichBackground.queueKeys.has(key)) continue;
+    if (priceEnrichBackground.queue.length >= PRICE_ENRICH_CONFIG.backgroundMaxQueue) break;
+    priceEnrichBackground.queue.push(event);
+    priceEnrichBackground.queueKeys.add(key);
+  }
+
+  void runPriceEnrichBackgroundQueue();
+}
+
+function buildTicketmasterProxyUrl(url) {
+  const base = cleanText(PRICE_ENRICH_CONFIG.ticketmasterProxyBaseUrl);
+  const target = cleanText(url);
+  if (!base || !target) return null;
+  const normalizedBase = base.replace(/\s+/g, "");
+  const strippedTarget = target.replace(/^https?:\/\//i, "");
+  return `${normalizedBase}${strippedTarget}`;
+}
+
+function isBlockedStatusError(err) {
+  const status = Number(err?.response?.status);
+  return status === 401 || status === 403 || status === 429;
+}
+
+async function enrichEventPriceOnDemand(event) {
+  if (!PRICE_ENRICH_CONFIG.enabled) {
+    return { event: enrichEventWithPriceInsights(event), enriched: false, blockedHostSkip: false };
+  }
+
+  const current = enrichEventWithPriceInsights(event);
+  if (current.hasAnyPrice) {
+    return { event: current, enriched: false, blockedHostSkip: false };
+  }
+
+  const targetUrl = cleanText(current.ticketUrl || current.url);
+  if (!targetUrl) return { event: current, enriched: false, blockedHostSkip: false };
+
+  const isTicketmaster = cleanText(current.source)?.toLowerCase() === "ticketmaster";
+  const sourceKey = cleanText(current.source) || null;
+  const ticketmasterProxyUrl = isTicketmaster ? buildTicketmasterProxyUrl(targetUrl) : null;
+  const canUseTicketmasterProxy = Boolean(ticketmasterProxyUrl);
+
+  if (isHostBlockedForPrice(targetUrl, sourceKey) && !canUseTicketmasterProxy) {
+    return { event: current, enriched: false, blockedHostSkip: true };
+  }
+
+  const cached = getCachedPriceEntry(targetUrl);
+  if (cached) {
+    if (!cached.payload) {
+      return { event: current, enriched: false, blockedHostSkip: false };
+    }
+    const merged = enrichEventWithPriceInsights({
+      ...current,
+      ...cached.payload,
+    });
+    return { event: merged, enriched: hasAnyPriceSignal(merged), blockedHostSkip: false };
+  }
+
+  let directBlocked = false;
+  let extracted = null;
+  try {
+    extracted = await extractPriceFromEventUrl({
+      url: current.url,
+      ticketUrl: current.ticketUrl,
+      timeoutMs: PRICE_ENRICH_CONFIG.timeoutMs,
+      userAgent: PRICE_ENRICH_CONFIG.userAgent || DEFAULT_USER_AGENT,
+    });
+  } catch (err) {
+    if (isBlockedStatusError(err)) {
+      directBlocked = true;
+      blockHostForPrice(targetUrl, sourceKey);
+    }
+  }
+
+  if ((!extracted || !hasAnyPriceSignal(extracted)) && canUseTicketmasterProxy) {
+    try {
+      extracted = await extractPriceFromEventUrl({
+        url: ticketmasterProxyUrl,
+        ticketUrl: ticketmasterProxyUrl,
+        timeoutMs: PRICE_ENRICH_CONFIG.ticketmasterProxyTimeoutMs,
+        userAgent: PRICE_ENRICH_CONFIG.userAgent || DEFAULT_USER_AGENT,
+      });
+      if (extracted && hasAnyPriceSignal(extracted)) {
+        extracted.priceSource = "scraped_proxy";
+      }
+    } catch {
+      // Ignore proxy fallback failures.
+    }
+  }
+
+  if (!extracted || !hasAnyPriceSignal(extracted)) {
+    if (!directBlocked) {
+      setCachedPriceEntry(targetUrl, null);
+    }
+    return { event: current, enriched: false, blockedHostSkip: directBlocked && !canUseTicketmasterProxy };
+  }
+
+  const extractedSource = cleanText(extracted.priceSource) || "scraped_text";
+  const extractedCost = toNumberOrNull(extracted.cost);
+  const extractedPriceMin = toNumberOrNull(extracted.priceMin);
+  const extractedPriceMax = toNumberOrNull(extracted.priceMax);
+  const extractedCurrency =
+    normalizeCurrencyCode(extracted.currency) || current.currency || null;
+  const extractedIsFree = extracted.isFree === true;
+  const extractedTicketUrl = cleanText(extracted.ticketUrl) || current.ticketUrl;
+
+  const confidenceProbe = {
+    ...current,
+    cost: extractedCost,
+    priceMin: extractedPriceMin,
+    priceMax: extractedPriceMax,
+    currency: extractedCurrency,
+    isFree: extractedIsFree,
+    priceSource: extractedSource,
+    priceConfidence: null,
+  };
+  const extractedConfidence = resolvePriceConfidence(
+    confidenceProbe,
+    normalizeEventPrice(confidenceProbe)
+  );
+
+  const payload = {
+    cost: extractedCost,
+    priceMin: extractedPriceMin,
+    priceMax: extractedPriceMax,
+    currency: extractedCurrency,
+    isFree: extractedIsFree,
+    ticketUrl: extractedTicketUrl,
+    priceSource: extractedSource,
+    priceConfidence: extractedConfidence,
+    metadata: {
+      ...(current.metadata && typeof current.metadata === "object" ? current.metadata : {}),
+      priceMin: extractedPriceMin,
+      priceMax: extractedPriceMax,
+      priceSource: extractedSource,
+      priceMatchedBy: cleanText(extracted.matchedBy) || null,
+      priceFetchedUrl: cleanText(extracted.fetchedUrl) || null,
+      priceProxyUsed: extractedSource === "scraped_proxy",
+    },
+  };
+
+  setCachedPriceEntry(targetUrl, payload);
+  const merged = enrichEventWithPriceInsights({
+    ...current,
+    ...payload,
+  });
+  return { event: merged, enriched: hasAnyPriceSignal(merged), blockedHostSkip: false };
+}
+
+async function enrichMissingPrices(events) {
+  const list = Array.isArray(events) ? events : [];
+  if (!PRICE_ENRICH_CONFIG.enabled || PRICE_ENRICH_CONFIG.maxPerRequest <= 0 || list.length === 0) {
+    const normalized = list.map((event) => enrichEventWithPriceInsights(event));
+    return {
+      events: normalized,
+      enrichedThisRequest: 0,
+      blockedHostSkips: 0,
+    };
+  }
+
+  const normalized = list.map((event) => {
+    const current = enrichEventWithPriceInsights(event);
+    if (current.hasAnyPrice) return current;
+    const targetUrl = cleanText(current.ticketUrl || current.url);
+    if (!targetUrl) return current;
+    const cached = getCachedPriceEntry(targetUrl);
+    if (!cached || !cached.payload) return current;
+    return enrichEventWithPriceInsights({
+      ...current,
+      ...cached.payload,
+    });
+  });
+  const missingAll = normalized
+    .map((event, index) => ({ event, index }))
+    .filter(({ event }) => !event.hasAnyPrice);
+
+  if (missingAll.length === 0) {
+    return {
+      events: normalized,
+      enrichedThisRequest: 0,
+      blockedHostSkips: 0,
+    };
+  }
+
+  const totalLimit = Math.max(0, PRICE_ENRICH_CONFIG.maxPerRequest);
+  const ticketmasterLimit = Math.max(
+    0,
+    Math.min(totalLimit, PRICE_ENRICH_CONFIG.ticketmasterMaxPerRequest)
+  );
+
+  const ticketmasterMissing = missingAll.filter(
+    ({ event }) => cleanText(event?.source)?.toLowerCase() === "ticketmaster"
+  );
+  const otherMissing = missingAll.filter(
+    ({ event }) => cleanText(event?.source)?.toLowerCase() !== "ticketmaster"
+  );
+
+  const selectRoundRobin = (list, limit, cursorKey) => {
+    const safeLimit = Math.max(0, Math.min(limit, list.length));
+    if (safeLimit === 0) return [];
+    if (safeLimit >= list.length) {
+      priceEnrichRoundRobin[cursorKey] = 0;
+      return list.slice();
+    }
+
+    const start = Math.max(0, priceEnrichRoundRobin[cursorKey] || 0) % list.length;
+    const out = [];
+    for (let i = 0; i < safeLimit; i += 1) {
+      out.push(list[(start + i) % list.length]);
+    }
+    priceEnrichRoundRobin[cursorKey] = (start + safeLimit) % list.length;
+    return out;
+  };
+
+  const selectedTicketmaster = selectRoundRobin(
+    ticketmasterMissing,
+    ticketmasterLimit,
+    "ticketmasterCursor"
+  );
+  const remainingSlots = Math.max(0, totalLimit - selectedTicketmaster.length);
+  const selectedOthers = selectRoundRobin(
+    otherMissing,
+    remainingSlots,
+    "generalCursor"
+  );
+  const missing = [...selectedOthers, ...selectedTicketmaster];
+  const selectedKeySet = new Set(missing.map((entry) => String(entry.index)));
+  const missingBackground = missingAll.filter(
+    (entry) => !selectedKeySet.has(String(entry.index))
+  );
+  enqueueBackgroundPriceEnrichment(missingBackground);
+
+  if (missing.length === 0) {
+    return {
+      events: normalized,
+      enrichedThisRequest: 0,
+      blockedHostSkips: 0,
+    };
+  }
+
+  let enrichedThisRequest = 0;
+  let blockedHostSkips = 0;
+  await mapWithConcurrency(missing, PRICE_ENRICH_CONFIG.concurrency, async (entry) => {
+    const result = await enrichEventPriceOnDemand(entry.event);
+    normalized[entry.index] = result.event;
+    if (result.enriched) enrichedThisRequest += 1;
+    if (result.blockedHostSkip) blockedHostSkips += 1;
+  });
+
+  return {
+    events: normalized,
+    enrichedThisRequest,
+    blockedHostSkips,
+  };
 }
 
 function invalidateModerationCache() {
@@ -2959,11 +3609,11 @@ function extractTicketmasterPrice(event) {
 
   if (topLevel.values.length > 0 && topLevel.values.every((value) => value === 0)) {
     return {
-      min: 0,
-      max: 0,
-      cost: 0,
+      min: null,
+      max: null,
+      cost: null,
       currency: topLevel.currency || null,
-      isFree: true,
+      isFree: false,
     };
   }
 
@@ -3033,30 +3683,6 @@ function extractTicketmasterPrice(event) {
 
   const nestedSummary = summarize(nestedValues, nestedCurrency);
   if (nestedSummary) return nestedSummary;
-
-  const freeHint = normalizeKeyPart(
-    [
-      cleanText(event?.name),
-      cleanText(event?.info),
-      cleanText(event?.description),
-      cleanText(event?.pleaseNote),
-      cleanText(event?.additionalInfo),
-    ]
-      .filter(Boolean)
-      .join(" ")
-  );
-  const explicitFree = /\b(free (entry|admission|event|concert|show|ticket)|entry free|admission free|gratis (toegang|inkom|concert|event)|gratuit(e)? (entree|acces|concert|evenement)|kostenlos(e)? (eintritt|ticket)|vrije toegang)\b/i.test(
-    freeHint || ""
-  );
-  if (explicitFree) {
-    return {
-      min: 0,
-      max: 0,
-      cost: 0,
-      currency: nestedCurrency || null,
-      isFree: true,
-    };
-  }
 
   return {
     min: null,
@@ -3554,6 +4180,11 @@ app.get("/events", async (req, res) => {
       });
     }
 
+    const priceResult = await enrichMissingPrices(events);
+    events = priceResult.events;
+    const withAnyPrice = events.filter((event) => event?.hasAnyPrice).length;
+    const unknownPrice = Math.max(0, events.length - withAnyPrice);
+
     if (events.length === 0 && sourceErrors.length > 0) {
       return res.status(502).json({
         ok: false,
@@ -3588,6 +4219,13 @@ app.get("/events", async (req, res) => {
       sourceCounts: summarizeSources(events),
       disabledFilteredOut,
       sourceWarnings: sourceErrors.length > 0 ? sourceErrors : undefined,
+      priceCoverage: {
+        total: events.length,
+        withAnyPrice,
+        enrichedThisRequest: priceResult.enrichedThisRequest,
+        unknownPrice,
+        blockedHostSkips: priceResult.blockedHostSkips,
+      },
       count: events.length,
       events,
     });
@@ -3998,9 +4636,202 @@ const COPILOT_CITIES = [
   { name: "Lessines", aliases: ["lessines", "leuze", "7860"], lat: 50.712, lng: 3.836 },
   { name: "Tournai", aliases: ["tournai", "doornik"], lat: 50.605, lng: 3.389 },
 ];
+const COPILOT_STYLE_PATTERNS = [
+  { style: "Drum & Bass", patterns: ["drum and bass", "drum & bass", "drum n bass", "dnb"] },
+  { style: "Hip-Hop", patterns: ["hip hop", "hip-hop", "rap", "trap", "drill"] },
+  { style: "R&B", patterns: ["r&b", "rnb", "neo soul"] },
+  { style: "Techno", patterns: ["techno", "hard techno", "acid techno"] },
+  { style: "House", patterns: ["house", "deep house", "tech house", "afro house"] },
+  { style: "Jazz", patterns: ["jazz", "swing", "bebop"] },
+  { style: "Metal", patterns: ["metal", "metalcore", "thrash"] },
+  { style: "Rock", patterns: ["rock", "punk", "grunge"] },
+  { style: "Indie", patterns: ["indie", "alternative", "shoegaze"] },
+  { style: "Pop", patterns: ["pop", "mainstream", "top 40"] },
+  { style: "Electronic", patterns: ["electronic", "edm", "electro", "electronica"] },
+];
+const COPILOT_ALLOWED_STYLES = COPILOT_STYLE_PATTERNS.map((item) => item.style);
+const COPILOT_WEEKDAY_TO_DOW = {
+  sunday: 0,
+  monday: 1,
+  tuesday: 2,
+  wednesday: 3,
+  thursday: 4,
+  friday: 5,
+  saturday: 6,
+};
+const COPILOT_MONTH_NAME_TO_INDEX = Object.freeze({
+  jan: 0,
+  january: 0,
+  januari: 0,
+  janvier: 0,
+  feb: 1,
+  february: 1,
+  februari: 1,
+  fevrier: 1,
+  mar: 2,
+  march: 2,
+  maart: 2,
+  mars: 2,
+  apr: 3,
+  april: 3,
+  avril: 3,
+  may: 4,
+  mei: 4,
+  mai: 4,
+  jun: 5,
+  june: 5,
+  juni: 5,
+  juin: 5,
+  jul: 6,
+  july: 6,
+  juli: 6,
+  juillet: 6,
+  aug: 7,
+  august: 7,
+  augustus: 7,
+  aout: 7,
+  sep: 8,
+  sept: 8,
+  september: 8,
+  septembre: 8,
+  oct: 9,
+  october: 9,
+  oktober: 9,
+  octobre: 9,
+  nov: 10,
+  november: 10,
+  novembre: 10,
+  dec: 11,
+  december: 11,
+  decembre: 11,
+});
+const COPILOT_NEXT_WEEK_PHRASES = ["volgende week", "next week", "semaine prochaine"];
+const COPILOT_MONTH_NAME_REGEX = Object.keys(COPILOT_MONTH_NAME_TO_INDEX)
+  .sort((a, b) => b.length - a.length)
+  .join("|");
+const COPILOT_OLLAMA_DATE_HINTS = [
+  "none",
+  "today",
+  "tomorrow",
+  "this weekend",
+  "monday",
+  "tuesday",
+  "wednesday",
+  "thursday",
+  "friday",
+  "saturday",
+  "sunday",
+];
+const COPILOT_FETCH_RADIUS_KM = 200;
+const COPILOT_FETCH_SIZE = 120;
+const COPILOT_HARD_DISTANCE_CAP_KM = 450;
+const CHATBOT_QUERY_STOPWORDS = new Set([
+  "de",
+  "het",
+  "een",
+  "en",
+  "of",
+  "voor",
+  "met",
+  "zonder",
+  "naar",
+  "rond",
+  "van",
+  "in",
+  "op",
+  "te",
+  "bij",
+  "ik",
+  "wij",
+  "we",
+  "you",
+  "your",
+  "for",
+  "from",
+  "with",
+  "without",
+  "dans",
+  "avec",
+  "sans",
+  "pour",
+  "sur",
+  "max",
+  "maximum",
+  "km",
+  "vriend",
+  "vrienden",
+  "friend",
+  "friends",
+  "budget",
+  "cheap",
+  "goedkoop",
+  "duur",
+  "expensive",
+  "city",
+  "stad",
+  "ville",
+  "today",
+  "tomorrow",
+  "vandaag",
+  "morgen",
+  "demain",
+  "weekend",
+  "this",
+  "dit",
+  "ce",
+  "friday",
+  "saturday",
+  "sunday",
+  "monday",
+  "tuesday",
+  "wednesday",
+  "thursday",
+  "vrijdag",
+  "zaterdag",
+  "zondag",
+  "maandag",
+  "dinsdag",
+  "woensdag",
+  "donderdag",
+]);
+for (const budgetKeyword of ["cheap", "goedkoop", "budget", "duur", "expensive"]) {
+  CHATBOT_QUERY_STOPWORDS.delete(budgetKeyword);
+}
+const COPILOT_CHEAP_BUDGET_HINTS = [
+  "cheap",
+  "budget",
+  "budget friendly",
+  "low budget",
+  "affordable",
+  "inexpensive",
+  "not too expensive",
+  "not expensive",
+  "goedkoop",
+  "goedkope",
+  "goedkoopste",
+  "betaalbaar",
+  "voordelig",
+  "budgetvriendelijk",
+  "niet te duur",
+  "niet duur",
+  "niet te prijzig",
+  "laag budget",
+  "studentenbudget",
+  "pas cher",
+  "bon marche",
+  "abordable",
+  "petit budget",
+  "pas trop cher",
+];
 
 function copilotNormalize(s) {
   return String(s || "").trim().toLowerCase();
+}
+
+function containsCheapBudgetHint(value) {
+  const normalized = normalizeCityText(value);
+  if (!normalized) return false;
+  return COPILOT_CHEAP_BUDGET_HINTS.some((token) => normalized.includes(token));
 }
 
 function toRouteSafeId(value) {
@@ -4041,20 +4872,42 @@ function haversineKm(lat1, lng1, lat2, lng2) {
   return r * c;
 }
 
+function collectStylesFromText(text) {
+  const normalized = copilotNormalize(text);
+  if (!normalized) return [];
+
+  const styles = [];
+  for (const rule of COPILOT_STYLE_PATTERNS) {
+    if (rule.patterns.some((pattern) => normalized.includes(pattern))) {
+      styles.push(rule.style);
+    }
+  }
+  return styles;
+}
+
+function normalizeCopilotStyle(rawStyle) {
+  const normalized = copilotNormalize(rawStyle)
+    .replace(/[^a-z0-9&+\s-]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!normalized || normalized.length < 2) return null;
+
+  for (const rule of COPILOT_STYLE_PATTERNS) {
+    if (normalized === copilotNormalize(rule.style)) return rule.style;
+    if (
+      rule.patterns.some(
+        (pattern) => normalized.includes(pattern) || (normalized.length >= 4 && pattern.includes(normalized))
+      )
+    ) {
+      return rule.style;
+    }
+  }
+  return null;
+}
+
 function inferStyle(text) {
-  const t = copilotNormalize(text);
-  if (!t) return "Electronic";
-  if (t.includes("techno")) return "Techno";
-  if (t.includes("house")) return "House";
-  if (t.includes("drum") || t.includes("dnb")) return "Drum & Bass";
-  if (t.includes("hip hop") || t.includes("hip-hop") || t.includes("rap")) return "Hip-Hop";
-  if (t.includes("jazz")) return "Jazz";
-  if (t.includes("metal")) return "Metal";
-  if (t.includes("rock")) return "Rock";
-  if (t.includes("indie")) return "Indie";
-  if (t.includes("r&b") || t.includes("rnb")) return "R&B";
-  if (t.includes("pop")) return "Pop";
-  return "Electronic";
+  const styles = collectStylesFromText(text);
+  return styles[0] || "Electronic";
 }
 
 function parseMaxKm(message) {
@@ -4076,41 +4929,166 @@ function parseFriendCount(message) {
 }
 
 function parseBudget(message) {
-  const m = copilotNormalize(message);
-  const r = m.match(/(\d{1,4})\s*€|€\s*(\d{1,4})/);
-  const n = Number(r?.[1] || r?.[2]);
-  if (Number.isFinite(n) && n > 0) return n;
-  if (m.includes("niet te duur") || m.includes("pas cher") || m.includes("cheap")) return "cheap";
+  const raw = String(message || "").toLowerCase();
+  const normalized = normalizeCityText(raw);
+  if (!normalized) return null;
+
+  const parseAmount = (raw) => {
+    const n = Number(String(raw || "").replace(",", "."));
+    if (!Number.isFinite(n) || n <= 0) return null;
+    return Math.min(5000, Math.round(n));
+  };
+
+  const amountPatterns = [
+    /(?:€|eur|euro)\s*(\d{1,4}(?:[.,]\d{1,2})?)/i,
+    /(\d{1,4}(?:[.,]\d{1,2})?)\s*(?:€|eur|euro)\b/i,
+    /\bbudget(?:\s*(?:is|=|:))?\s*(?:van\s*)?(?:€\s*)?(\d{1,4}(?:[.,]\d{1,2})?)\b/i,
+    /\b(?:max(?:imum)?\s*(?:prijs|price|budget)|prijs\s*max|price\s*max)\s*(?:€\s*)?(\d{1,4}(?:[.,]\d{1,2})?)\b/i,
+  ];
+
+  for (const pattern of amountPatterns) {
+    const match = raw.match(pattern) || normalized.match(pattern);
+    const parsed = parseAmount(match?.[1]);
+    if (parsed != null) return parsed;
+  }
+
+  if (containsCheapBudgetHint(normalized)) return "cheap";
   return null;
 }
 
 function parseRequestedStyles(message) {
-  const m = copilotNormalize(message);
-  const styles = new Set();
+  return collectStylesFromText(message);
+}
 
-  if (m.includes("techno")) styles.add("Techno");
-  if (m.includes("house")) styles.add("House");
-  if (m.includes("drum") || m.includes("dnb")) styles.add("Drum & Bass");
-  if (m.includes("hip hop") || m.includes("hip-hop") || m.includes("rap")) styles.add("Hip-Hop");
-  if (m.includes("jazz")) styles.add("Jazz");
-  if (m.includes("metal")) styles.add("Metal");
-  if (m.includes("rock")) styles.add("Rock");
-  if (m.includes("indie")) styles.add("Indie");
-  if (m.includes("r&b") || m.includes("rnb")) styles.add("R&B");
-  if (m.includes("pop")) styles.add("Pop");
-  if (m.includes("electronic") || m.includes("edm")) styles.add("Electronic");
+function normalizeCityText(value) {
+  return String(value || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9\s-]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
 
-  return Array.from(styles);
+function escapeRegex(value) {
+  return String(value || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function findCity(message) {
-  const m = copilotNormalize(message);
-  for (const c of COPILOT_CITIES) {
-    for (const a of c.aliases) {
-      if (m.includes(a)) return c;
+  const normalizedMessage = normalizeCityText(message);
+  if (!normalizedMessage) return null;
+
+  let best = null;
+  let bestAliasLen = 0;
+
+  for (const city of COPILOT_CITIES) {
+    const variants = [city.name, ...(Array.isArray(city.aliases) ? city.aliases : [])];
+    for (const variant of variants) {
+      const alias = normalizeCityText(variant);
+      if (!alias) continue;
+
+      const regex = new RegExp(`(^|\\s)${escapeRegex(alias)}(?=\\s|$)`);
+      if (!regex.test(normalizedMessage)) continue;
+
+      if (alias.length > bestAliasLen) {
+        best = city;
+        bestAliasLen = alias.length;
+      }
     }
   }
-  return null;
+
+  return best;
+}
+
+function extractChatbotQueryTokens(message, city) {
+  const normalized = normalizeCityText(message);
+  if (!normalized) return [];
+
+  const cityTerms = new Set();
+  if (city) {
+    const variants = [city.name, ...(Array.isArray(city.aliases) ? city.aliases : [])];
+    for (const variant of variants) {
+      const cityTokenized = normalizeCityText(variant)
+        .split(" ")
+        .filter(Boolean);
+      for (const token of cityTokenized) cityTerms.add(token);
+    }
+  }
+
+  const rawTokens = normalized
+    .split(" ")
+    .map((token) => token.trim())
+    .filter(Boolean);
+
+  const deduped = [];
+  const seen = new Set();
+
+  for (const token of rawTokens) {
+    if (token.length < 3) continue;
+    if (/^\d+$/.test(token)) continue;
+    if (CHATBOT_QUERY_STOPWORDS.has(token)) continue;
+    if (cityTerms.has(token)) continue;
+    if (seen.has(token)) continue;
+    seen.add(token);
+    deduped.push(token);
+  }
+
+  return deduped.slice(0, 10);
+}
+
+function scoreChatbotTokenMatch(eventText, queryTokens) {
+  const normalizedText = normalizeCityText(eventText);
+  const tokens = Array.isArray(queryTokens) ? queryTokens : [];
+  if (!normalizedText || tokens.length === 0) {
+    return { matchedCount: 0, score: 0 };
+  }
+
+  const textParts = normalizedText.split(" ").filter(Boolean);
+  const textSet = new Set(textParts);
+
+  let matchedCount = 0;
+  let score = 0;
+
+  for (const token of tokens) {
+    if (!token) continue;
+
+    let matched = false;
+    if (textSet.has(token) || normalizedText.includes(token)) {
+      matched = true;
+    } else if (token.length >= 5) {
+      for (const part of textParts) {
+        if (part.length < 5) continue;
+        if (part.includes(token) || token.includes(part)) {
+          matched = true;
+          break;
+        }
+      }
+    }
+
+    if (matched) {
+      matchedCount += 1;
+      if (token.length >= 7) score += 2.6;
+      else if (token.length >= 5) score += 2.1;
+      else score += 1.4;
+    }
+  }
+
+  if (matchedCount > 0) score += matchedCount * 1.5;
+
+  return { matchedCount, score: Number(score.toFixed(2)) };
+}
+
+function resolveCityFromHint(value) {
+  const hint = cleanText(value);
+  if (!hint) return null;
+  const normalized = copilotNormalize(hint);
+
+  for (const city of COPILOT_CITIES) {
+    if (copilotNormalize(city.name) === normalized) return city;
+    if (city.aliases.some((alias) => copilotNormalize(alias) === normalized)) return city;
+  }
+
+  return findCity(hint);
 }
 
 function startOfDay(d) {
@@ -4136,9 +5114,125 @@ function nextWeekdayRange(now, targetDow) {
   return { from: startOfDay(day), to: endOfDay(day), label: day.toDateString() };
 }
 
+function nextWeekdayRangeWithWeekOffset(now, targetDow, weekOffset = 0) {
+  const safeWeekOffset = Number.isFinite(weekOffset) ? Math.max(0, Math.round(weekOffset)) : 0;
+  const from = new Date(now);
+  const dow = from.getDay(); // 0..6
+  let delta = (targetDow - dow + 7) % 7;
+  delta += safeWeekOffset * 7;
+  const day = new Date(from);
+  day.setDate(day.getDate() + delta);
+  return { from: startOfDay(day), to: endOfDay(day), label: day.toDateString() };
+}
+
+function buildDateRangeFromParts({ now, day, monthIndex, year = null, label }) {
+  const safeDay = Number(day);
+  const safeMonth = Number(monthIndex);
+  if (!Number.isInteger(safeDay) || safeDay < 1 || safeDay > 31) return null;
+  if (!Number.isInteger(safeMonth) || safeMonth < 0 || safeMonth > 11) return null;
+
+  const baseNow = now instanceof Date && !Number.isNaN(now.getTime()) ? now : new Date();
+  let safeYear =
+    Number.isInteger(year) && year >= 1970 && year <= 2200 ? year : baseNow.getFullYear();
+
+  const mk = (targetYear) => {
+    const d = new Date(targetYear, safeMonth, safeDay);
+    if (
+      d.getFullYear() !== targetYear ||
+      d.getMonth() !== safeMonth ||
+      d.getDate() !== safeDay
+    ) {
+      return null;
+    }
+    return d;
+  };
+
+  let candidate = mk(safeYear);
+  if (!candidate) return null;
+
+  if (year == null && endOfDay(candidate).getTime() < startOfDay(baseNow).getTime()) {
+    safeYear += 1;
+    candidate = mk(safeYear);
+    if (!candidate) return null;
+  }
+
+  const fallbackLabel = `${String(safeDay).padStart(2, "0")}-${String(safeMonth + 1).padStart(
+    2,
+    "0"
+  )}-${safeYear}`;
+  return {
+    from: startOfDay(candidate),
+    to: endOfDay(candidate),
+    label: label || fallbackLabel,
+  };
+}
+
+function parseExplicitDateRange(message, now) {
+  const normalized = normalizeCityText(message);
+  if (!normalized) return null;
+
+  const slashMatch = normalized.match(/\b(\d{1,2})[\/.-](\d{1,2})(?:[\/.-](\d{2,4}))?\b/);
+  if (slashMatch) {
+    const day = Number(slashMatch[1]);
+    const month = Number(slashMatch[2]);
+    let year = slashMatch[3] ? Number(slashMatch[3]) : null;
+    if (year != null && year < 100) year += 2000;
+    return buildDateRangeFromParts({
+      now,
+      day,
+      monthIndex: month - 1,
+      year: Number.isInteger(year) ? year : null,
+      label: `${String(day).padStart(2, "0")}/${String(month).padStart(2, "0")}`,
+    });
+  }
+
+  const dayMonthRegex = new RegExp(
+    `\\b(\\d{1,2})\\s+(${COPILOT_MONTH_NAME_REGEX})(?:\\s+(\\d{2,4}))?\\b`
+  );
+  const dayMonth = normalized.match(dayMonthRegex);
+  if (dayMonth) {
+    const day = Number(dayMonth[1]);
+    const monthName = dayMonth[2];
+    const monthIndex = COPILOT_MONTH_NAME_TO_INDEX[monthName];
+    let year = dayMonth[3] ? Number(dayMonth[3]) : null;
+    if (year != null && year < 100) year += 2000;
+    return buildDateRangeFromParts({
+      now,
+      day,
+      monthIndex,
+      year: Number.isInteger(year) ? year : null,
+      label: `${String(day).padStart(2, "0")} ${monthName}`,
+    });
+  }
+
+  const monthDayRegex = new RegExp(
+    `\\b(${COPILOT_MONTH_NAME_REGEX})\\s+(\\d{1,2})(?:\\s+(\\d{2,4}))?\\b`
+  );
+  const monthDay = normalized.match(monthDayRegex);
+  if (monthDay) {
+    const monthName = monthDay[1];
+    const monthIndex = COPILOT_MONTH_NAME_TO_INDEX[monthName];
+    const day = Number(monthDay[2]);
+    let year = monthDay[3] ? Number(monthDay[3]) : null;
+    if (year != null && year < 100) year += 2000;
+    return buildDateRangeFromParts({
+      now,
+      day,
+      monthIndex,
+      year: Number.isInteger(year) ? year : null,
+      label: `${String(day).padStart(2, "0")} ${monthName}`,
+    });
+  }
+
+  return null;
+}
+
 function parseDateRange(message, clientNowIso) {
   const m = copilotNormalize(message);
+  const normalized = normalizeCityText(message);
   const now = clientNowIso ? new Date(clientNowIso) : new Date();
+  const explicitDate = parseExplicitDateRange(message, now);
+  if (explicitDate) return explicitDate;
 
   if (m.includes("morgen") || m.includes("demain") || m.includes("tomorrow")) {
     const d = new Date(now);
@@ -4172,13 +5266,1036 @@ function parseDateRange(message, clientNowIso) {
     { keys: ["zaterdag", "saturday", "samedi"], dow: 6 },
   ];
 
+  const asksNextWeek = COPILOT_NEXT_WEEK_PHRASES.some((phrase) => normalized.includes(phrase));
   for (const d of days) {
     if (d.keys.some((k) => m.includes(k))) {
+      if (asksNextWeek) {
+        return nextWeekdayRangeWithWeekOffset(now, d.dow, 1);
+      }
       return nextWeekdayRange(now, d.dow);
     }
   }
 
+  if (asksNextWeek) {
+    const currentDow = now.getDay();
+    const deltaToNextMonday = ((1 - currentDow + 7) % 7) + 7;
+    const nextMonday = new Date(now);
+    nextMonday.setDate(nextMonday.getDate() + deltaToNextMonday);
+    const nextSunday = new Date(nextMonday);
+    nextSunday.setDate(nextSunday.getDate() + 6);
+    return { from: startOfDay(nextMonday), to: endOfDay(nextSunday), label: "next week" };
+  }
+
   return null; // no explicit date constraint
+}
+
+function parseDateRangeFromHint(dateHint, clientNowIso) {
+  const hint = copilotNormalize(dateHint).replace(/[_-]/g, " ");
+  if (!hint || ["none", "null", "n/a", "na"].includes(hint)) return null;
+
+  if (hint === "today" || hint === "tonight") {
+    return parseDateRange("today", clientNowIso);
+  }
+  if (hint === "tomorrow") {
+    return parseDateRange("tomorrow", clientNowIso);
+  }
+  if (hint === "this weekend" || hint === "weekend") {
+    return parseDateRange("this weekend", clientNowIso);
+  }
+
+  if (hint in COPILOT_WEEKDAY_TO_DOW) {
+    const maybeNow = clientNowIso ? new Date(clientNowIso) : new Date();
+    const now = Number.isNaN(maybeNow.getTime()) ? new Date() : maybeNow;
+    return nextWeekdayRange(now, COPILOT_WEEKDAY_TO_DOW[hint]);
+  }
+
+  return parseDateRange(hint, clientNowIso);
+}
+
+function toClampedInteger(value, min, max) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return null;
+  return Math.max(min, Math.min(max, Math.round(n)));
+}
+
+function coerceCopilotBudget(rawBudget) {
+  if (rawBudget == null) return null;
+
+  if (typeof rawBudget === "number") {
+    if (!Number.isFinite(rawBudget) || rawBudget <= 0) return null;
+    return Math.min(5000, Math.round(rawBudget));
+  }
+
+  if (typeof rawBudget === "string") {
+    const normalized = copilotNormalize(rawBudget);
+    if (!normalized) return null;
+    if (containsCheapBudgetHint(normalized) || normalized.includes("low")) return "cheap";
+    const numeric = Number(normalized.replace(/[^0-9.]/g, ""));
+    if (Number.isFinite(numeric) && numeric > 0) {
+      return Math.min(5000, Math.round(numeric));
+    }
+    return null;
+  }
+
+  if (typeof rawBudget === "object") {
+    const mode = copilotNormalize(rawBudget.mode || rawBudget.type || "");
+    if (["cheap", "budget", "low"].includes(mode)) return "cheap";
+
+    const budgetCandidates = [
+      rawBudget.value,
+      rawBudget.max,
+      rawBudget.maxEur,
+      rawBudget.max_eur,
+      rawBudget.amount,
+    ];
+
+    for (const candidate of budgetCandidates) {
+      const parsed = coerceCopilotBudget(candidate);
+      if (parsed != null) return parsed;
+    }
+  }
+
+  return null;
+}
+
+function parseJsonObjectLoose(value) {
+  if (value == null) return null;
+  if (value && typeof value === "object" && !Array.isArray(value)) return value;
+  if (typeof value !== "string") return null;
+
+  const text = value.trim();
+  if (!text) return null;
+
+  try {
+    const parsed = JSON.parse(text);
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) return parsed;
+  } catch {}
+
+  const start = text.indexOf("{");
+  const end = text.lastIndexOf("}");
+  if (start < 0 || end <= start) return null;
+
+  try {
+    const parsed = JSON.parse(text.slice(start, end + 1));
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) return parsed;
+  } catch {}
+
+  return null;
+}
+
+function buildChatbotCacheKey({ message, originLabel, suggestions = [] }) {
+  const normalizedMessage = copilotNormalize(message)
+    .replace(/\s+/g, " ")
+    .slice(0, OLLAMA_CONFIG.maxMessageChars);
+  const normalizedOrigin = copilotNormalize(originLabel).slice(0, 80);
+  const suggestionKey = (Array.isArray(suggestions) ? suggestions : [])
+    .map((entry) => {
+      const key = cleanText(entry?.eventKey) || "unknown";
+      const price = cleanText(entry?.priceLabel) || "price_unknown";
+      const tier = cleanText(entry?.priceTier) || "tier_unknown";
+      const confidence = cleanText(entry?.priceConfidence) || "conf_unknown";
+      return `${key}:${price}:${tier}:${confidence}`;
+    })
+    .filter(Boolean)
+    .slice(0, 5)
+    .join("|")
+    .slice(0, 420);
+  return `${normalizedMessage}||${normalizedOrigin}||${suggestionKey}`;
+}
+
+function getCachedChatbotReply(cacheKey) {
+  const key = cleanText(cacheKey);
+  if (!key) return null;
+  const cached = chatbotReplyCache.get(key);
+  if (!cached) return null;
+  if (Date.now() - cached.cachedAt <= CHATBOT_CONFIG.cacheTtlMs) {
+    return {
+      answer: cleanText(cached.answer) || null,
+      suggestions: Array.isArray(cached.suggestions) ? cached.suggestions.slice(0, 5) : [],
+    };
+  }
+  chatbotReplyCache.delete(key);
+  return null;
+}
+
+function setCachedChatbotReply(cacheKey, { answer, suggestions = [] }) {
+  const key = cleanText(cacheKey);
+  const text = cleanText(answer);
+  if (!key || !text) return;
+  chatbotReplyCache.set(key, {
+    cachedAt: Date.now(),
+    answer: text.slice(0, CHATBOT_CONFIG.maxReplyChars),
+    suggestions: Array.isArray(suggestions) ? suggestions.slice(0, 5) : [],
+  });
+}
+
+function buildChatbotFallbackReply({ message, originLabel, suggestions = [] }) {
+  const normalized = copilotNormalize(message);
+  const place = cleanText(originLabel) || "je locatie";
+  const list = Array.isArray(suggestions) ? suggestions.slice(0, 5) : [];
+  if (list.length > 0) {
+    const lines = [`Top ideeën rond ${place}:`];
+    for (let i = 0; i < list.length; i += 1) {
+      const item = list[i];
+      const price = cleanText(item?.priceLabel);
+      const city = cleanText(item?.city);
+      lines.push(
+        `${i + 1}. ${item.title}${city ? ` (${city})` : ""}${price ? ` - ${price}` : ""}`
+      );
+    }
+    return lines.join("\n");
+  }
+
+  if (containsCheapBudgetHint(normalized)) {
+    return (
+      `Snelle budget-ideeën rond ${place}:\n` +
+      "1. Kleine venue clubnacht met early tickets\n" +
+      "2. Lokale live showcase met support acts\n" +
+      "3. Late DJ set in alternatieve bar\n" +
+      "Tip: geef dag + max km voor scherpere picks."
+    );
+  }
+  return (
+    `Snelle ideeën rond ${place}:\n` +
+    "1. Clubnacht met elektronische line-up\n" +
+    "2. Live concert in middelgrote venue\n" +
+    "3. Late set met dansbare vibe\n" +
+    "Zeg erbij: dag, stijl, max km en budget."
+  );
+}
+
+function trimChatbotReply(value) {
+  const text = cleanText(value);
+  if (!text) return null;
+  return text.slice(0, CHATBOT_CONFIG.maxReplyChars);
+}
+
+function eventMatchesStyleFast(event, styles) {
+  const list = Array.isArray(styles) ? styles : [];
+  if (list.length === 0) return true;
+  const tags = Array.isArray(event?.tags) ? event.tags : [];
+  return tags.some((tag) => list.includes(tag));
+}
+
+function eventWithinDistanceFast(event, maxKm) {
+  if (typeof maxKm !== "number" || !Number.isFinite(maxKm) || maxKm <= 0) return true;
+  if (event?.distanceKm == null) return true;
+  return event.distanceKm <= maxKm;
+}
+
+function getComparablePriceForBudget(event) {
+  const minPrice = toNumberOrNull(event?.priceMin);
+  const maxPrice = toNumberOrNull(event?.priceMax);
+  const singleCost = toNumberOrNull(event?.cost);
+  if (minPrice != null) return minPrice;
+  if (singleCost != null) return singleCost;
+  if (maxPrice != null) return maxPrice;
+  return null;
+}
+
+function computeFastChatbotBudgetSignals(event, budget) {
+  const noBudget = budget == null || budget === "";
+  if (noBudget) {
+    return {
+      budgetScore: 0,
+      budgetPreferred: false,
+      budgetWithin: null,
+      budgetUnknown: false,
+      budgetTooExpensive: false,
+    };
+  }
+
+  const tier = cleanText(event?.priceTier);
+  const isFree = event?.isFree === true;
+  const hasPrice = event?.hasAnyPrice === true;
+  const comparable = getComparablePriceForBudget(event);
+
+  if (budget === "cheap") {
+    if (!hasPrice) {
+      return {
+        budgetScore: -0.6,
+        budgetPreferred: false,
+        budgetWithin: null,
+        budgetUnknown: true,
+        budgetTooExpensive: false,
+      };
+    }
+
+    if (isFree || tier === "free") {
+      return {
+        budgetScore: 3.2,
+        budgetPreferred: true,
+        budgetWithin: true,
+        budgetUnknown: false,
+        budgetTooExpensive: false,
+      };
+    }
+
+    if (tier === "low") {
+      return {
+        budgetScore: 2.6,
+        budgetPreferred: true,
+        budgetWithin: true,
+        budgetUnknown: false,
+        budgetTooExpensive: false,
+      };
+    }
+
+    if (tier === "mid") {
+      return {
+        budgetScore: 1.1,
+        budgetPreferred: true,
+        budgetWithin: true,
+        budgetUnknown: false,
+        budgetTooExpensive: false,
+      };
+    }
+
+    if (tier === "high" || tier === "premium") {
+      return {
+        budgetScore: -2.9,
+        budgetPreferred: false,
+        budgetWithin: false,
+        budgetUnknown: false,
+        budgetTooExpensive: true,
+      };
+    }
+
+    if (comparable != null) {
+      const cheapComparable = comparable <= PRICE_TIER_THRESHOLDS.mid;
+      return {
+        budgetScore: cheapComparable ? 1.1 : -2.4,
+        budgetPreferred: cheapComparable,
+        budgetWithin: cheapComparable,
+        budgetUnknown: false,
+        budgetTooExpensive: !cheapComparable,
+      };
+    }
+
+    return {
+      budgetScore: -0.6,
+      budgetPreferred: false,
+      budgetWithin: null,
+      budgetUnknown: true,
+      budgetTooExpensive: false,
+    };
+  }
+
+  if (typeof budget === "number" && Number.isFinite(budget) && budget > 0) {
+    if (isFree) {
+      return {
+        budgetScore: 3.3,
+        budgetPreferred: true,
+        budgetWithin: true,
+        budgetUnknown: false,
+        budgetTooExpensive: false,
+      };
+    }
+    if (comparable == null) {
+      return {
+        budgetScore: -0.4,
+        budgetPreferred: false,
+        budgetWithin: null,
+        budgetUnknown: true,
+        budgetTooExpensive: false,
+      };
+    }
+
+    if (comparable <= budget) {
+      const closeness = clamp01(1 - comparable / Math.max(1, budget));
+      return {
+        budgetScore: 1.7 + closeness * 1.8,
+        budgetPreferred: true,
+        budgetWithin: true,
+        budgetUnknown: false,
+        budgetTooExpensive: false,
+      };
+    }
+
+    const overshoot = Math.min(2.2, (comparable - budget) / Math.max(1, budget));
+    return {
+      budgetScore: -2.1 - overshoot * 2.2,
+      budgetPreferred: false,
+      budgetWithin: false,
+      budgetUnknown: false,
+      budgetTooExpensive: true,
+    };
+  }
+
+  return {
+    budgetScore: 0,
+    budgetPreferred: false,
+    budgetWithin: null,
+    budgetUnknown: false,
+    budgetTooExpensive: false,
+  };
+}
+
+function scoreFastChatbotSuggestion(event, budget) {
+  let score = 0;
+  const keywordScore = Number(event?.keywordScore) || 0;
+  const keywordMatchCount = Number(event?.keywordMatchCount) || 0;
+  if (keywordScore > 0) score += keywordScore * 20;
+  if (keywordMatchCount >= 2) score += 16;
+
+  const distance = typeof event?.distanceKm === "number" ? event.distanceKm : null;
+  if (distance != null) {
+    score += Math.max(0, 120 - distance);
+  }
+  const start = event?.startDate;
+  if (start && !Number.isNaN(start.getTime())) {
+    const now = Date.now();
+    const diffHours = (start.getTime() - now) / (1000 * 60 * 60);
+    if (diffHours >= -4) score += Math.max(0, 48 - Math.min(48, diffHours));
+  }
+  if (event?.isFree === true) score += 4;
+  if (event?.hasAnyPrice === true) score += 2;
+  const budgetSignals = computeFastChatbotBudgetSignals(event, budget);
+  score += budgetSignals.budgetScore * 14;
+  return score;
+}
+
+async function buildFastChatbotSuggestions({
+  message,
+  originLat,
+  originLng,
+  originLabel,
+  clientNowIso,
+  limit = 3,
+} = {}) {
+  const safeMessage = safeText(message, "").trim();
+  const safeOriginLabel = cleanText(originLabel) || "your location";
+  const city = findCity(safeMessage);
+  const styles = parseRequestedStyles(safeMessage);
+  const queryTokens = extractChatbotQueryTokens(safeMessage, city);
+  const dateRange = parseDateRange(safeMessage, clientNowIso);
+  const budget = parseBudget(safeMessage);
+  const maxKm = parseMaxKm(safeMessage) ?? 30;
+  const maxResults = Math.max(1, Math.min(3, limit));
+
+  const fallbackLat = Number.isFinite(originLat) ? originLat : 50.8503;
+  const fallbackLng = Number.isFinite(originLng) ? originLng : 4.3517;
+  const centerLat = city ? city.lat : fallbackLat;
+  const centerLng = city ? city.lng : fallbackLng;
+  const fetchRadius = Math.max(10, Math.min(120, maxKm + 20));
+  const fetchSize = Math.max(20, Math.min(80, maxResults * 16));
+
+  let feedEvents = [];
+  const keyword = [...styles, ...queryTokens].slice(0, 5).join(" ");
+  const feedQueryBase = {
+    lat: centerLat,
+    lng: centerLng,
+    radiusKm: fetchRadius,
+    classificationName: "music",
+    size: fetchSize,
+    maxResults: fetchSize,
+    includeScraped: 1,
+    includeSetlists: 0,
+  };
+  const buildSuggestionReasons = (entry) => {
+    const reasons = [];
+    if (typeof entry?.distanceKm === "number") reasons.push(`~${Math.round(entry.distanceKm)}km away`);
+    const priceText = cleanText(entry?.priceLabel) || formatPriceLabel(entry || {});
+    const tierText = cleanText(entry?.priceTier);
+    if (priceText) reasons.push(`Price: ${priceText}${tierText ? ` (${tierText})` : ""}`);
+    if (city?.name) reasons.push(`City: ${city.name}`);
+    return reasons;
+  };
+
+  try {
+    feedEvents = await resolveEventsForAi({
+      query: {
+        ...feedQueryBase,
+        keyword,
+      },
+    });
+  } catch {
+    feedEvents = [];
+  }
+
+  if (feedEvents.length === 0 && keyword) {
+    try {
+      feedEvents = await resolveEventsForAi({
+        query: {
+          ...feedQueryBase,
+          keyword: "",
+        },
+      });
+    } catch {
+      feedEvents = [];
+    }
+  }
+
+  if (budget != null) {
+    try {
+      const budgetPoolSize = Math.max(fetchSize, 60);
+      const budgetPoolEvents = await resolveEventsForAi({
+        query: {
+          ...feedQueryBase,
+          keyword: "",
+          size: budgetPoolSize,
+          maxResults: budgetPoolSize,
+        },
+      });
+      if (Array.isArray(budgetPoolEvents) && budgetPoolEvents.length > 0) {
+        feedEvents = dedupe([...(Array.isArray(feedEvents) ? feedEvents : []), ...budgetPoolEvents]);
+      }
+    } catch {
+      // Keep primary feed when budget pool fetch fails.
+    }
+  }
+
+  const candidates = (Array.isArray(feedEvents) ? feedEvents : []).map((e, idx) => {
+    const eventKey = buildEventKeyFromApiEvent(e, idx);
+    const lat = toNumberOrNull(e.lat);
+    const lng = toNumberOrNull(e.lng);
+    const distanceKm =
+      lat != null && lng != null ? haversineKm(centerLat, centerLng, lat, lng) : null;
+    const normalizedTags = Array.isArray(e.tags)
+      ? e.tags.map((tag) => normalizeCopilotStyle(tag)).filter(Boolean)
+      : [];
+    const inferredStyle = inferStyle(`${e.title || ""} ${e.artistName || ""} ${e.genre || ""}`);
+    const tags = Array.from(new Set([...(normalizedTags || []), ...(inferredStyle ? [inferredStyle] : [])]));
+    const lexicalText = [
+      e.title,
+      e.artistName,
+      e.genre,
+      e.venue,
+      e.city,
+      ...(Array.isArray(e.tags) ? e.tags : []),
+    ]
+      .filter(Boolean)
+      .join(" ");
+    const keywordMatch = scoreChatbotTokenMatch(lexicalText, queryTokens);
+    const priceInfo = normalizeEventPrice(e);
+    const priceTier = cleanText(e.priceTier) || computePriceTier(priceInfo);
+    const priceLabel = cleanText(e.priceLabel) || formatPriceLabel(priceInfo);
+    const priceConfidence = cleanText(e.priceConfidence) || resolvePriceConfidence(e, priceInfo);
+    const budgetSignals = computeFastChatbotBudgetSignals(
+      {
+        ...e,
+        ...priceInfo,
+        hasAnyPrice: priceInfo.hasAnyPrice,
+        priceTier,
+      },
+      budget
+    );
+    const startIso = e.start ? String(e.start) : null;
+    const startDate = startIso ? new Date(startIso) : null;
+
+    return {
+      eventKey,
+      title: e.title || "Untitled event",
+      startIso,
+      startDate,
+      venue: e.venue || null,
+      city: e.city || null,
+      distanceKm,
+      tags,
+      cost: priceInfo.cost,
+      priceMin: priceInfo.priceMin,
+      priceMax: priceInfo.priceMax,
+      currency: priceInfo.currency,
+      isFree: priceInfo.isFree,
+      hasAnyPrice: priceInfo.hasAnyPrice,
+      budgetScore: budgetSignals.budgetScore,
+      budgetPreferred: budgetSignals.budgetPreferred,
+      budgetWithin: budgetSignals.budgetWithin,
+      budgetUnknown: budgetSignals.budgetUnknown,
+      budgetTooExpensive: budgetSignals.budgetTooExpensive,
+      keywordMatchCount: keywordMatch.matchedCount,
+      keywordScore: keywordMatch.score,
+      priceTier,
+      priceLabel,
+      priceConfidence,
+      source: cleanText(e.source) || null,
+      sourceId: cleanText(e.sourceId) || null,
+      metadata: e.metadata && typeof e.metadata === "object" ? e.metadata : null,
+      ticketUrl: cleanText(e.ticketUrl || e.url),
+      url: cleanText(e.url || e.ticketUrl),
+      imageUrl: e.imageUrl || null,
+      reasons: buildSuggestionReasons({ distanceKm, priceLabel, priceTier }),
+    };
+  });
+
+  if (candidates.length === 0) return [];
+
+  let filtered = candidates.filter((entry) => eventWithinDistanceFast(entry, maxKm));
+  if (filtered.length === 0) filtered = candidates.slice();
+  let budgetFallbackPool = filtered.slice();
+
+  if (dateRange) {
+    const dateFiltered = filtered.filter((entry) => isDateInRange(entry.startDate, dateRange));
+    if (dateFiltered.length > 0) {
+      filtered = dateFiltered;
+      budgetFallbackPool = dateFiltered.slice();
+    }
+  }
+
+  if (styles.length > 0) {
+    const styleFiltered = filtered.filter((entry) => eventMatchesStyleFast(entry, styles));
+    if (styleFiltered.length > 0) filtered = styleFiltered;
+  }
+
+  if (budget === "cheap") {
+    const cheapPreferred = filtered.filter((entry) => entry?.budgetPreferred === true);
+    if (cheapPreferred.length > 0) {
+      filtered = cheapPreferred;
+    } else {
+      const cheapFallback = budgetFallbackPool.filter((entry) => entry?.budgetPreferred === true);
+      if (cheapFallback.length > 0) filtered = cheapFallback;
+    }
+  } else if (typeof budget === "number" && Number.isFinite(budget) && budget > 0) {
+    const numericWithin = filtered.filter((entry) => entry?.budgetWithin === true);
+    if (numericWithin.length > 0) {
+      filtered = numericWithin;
+    } else {
+      const numericFallback = budgetFallbackPool.filter((entry) => entry?.budgetWithin === true);
+      if (numericFallback.length > 0) filtered = numericFallback;
+    }
+  }
+
+  const postConstraintPool = filtered.slice();
+
+  if (queryTokens.length > 0) {
+    const strongKeywordFiltered = filtered.filter((entry) => (entry.keywordMatchCount || 0) >= 2);
+    if (strongKeywordFiltered.length >= maxResults) {
+      filtered = strongKeywordFiltered;
+    } else {
+      const weakKeywordFiltered = filtered.filter((entry) => (entry.keywordMatchCount || 0) >= 1);
+      if (weakKeywordFiltered.length > 0) filtered = weakKeywordFiltered;
+    }
+  }
+
+  const sortByScore = (a, b) => {
+    const scoreDiff = scoreFastChatbotSuggestion(b, budget) - scoreFastChatbotSuggestion(a, budget);
+    if (scoreDiff !== 0) return scoreDiff;
+    const ad = typeof a.distanceKm === "number" ? a.distanceKm : 1e9;
+    const bd = typeof b.distanceKm === "number" ? b.distanceKm : 1e9;
+    if (ad !== bd) return ad - bd;
+    const at = a.startDate && !Number.isNaN(a.startDate.getTime()) ? a.startDate.getTime() : Number.MAX_SAFE_INTEGER;
+    const bt = b.startDate && !Number.isNaN(b.startDate.getTime()) ? b.startDate.getTime() : Number.MAX_SAFE_INTEGER;
+    return at - bt;
+  };
+  filtered.sort(sortByScore);
+
+  const fallbackPoolForFill =
+    budget != null && budgetFallbackPool.length > postConstraintPool.length
+      ? budgetFallbackPool
+      : postConstraintPool;
+  if (filtered.length < maxResults && fallbackPoolForFill.length > filtered.length) {
+    const seen = new Set(filtered.map((entry) => entry.eventKey));
+    const extras = fallbackPoolForFill
+      .filter((entry) => !seen.has(entry.eventKey))
+      .sort(sortByScore)
+      .slice(0, maxResults - filtered.length);
+    filtered = [...filtered, ...extras];
+  }
+
+  let selected = filtered.slice(0, maxResults);
+  if (selected.some((entry) => !entry?.hasAnyPrice)) {
+    try {
+      const enriched = await enrichMissingPrices(selected);
+      selected = (Array.isArray(enriched?.events) ? enriched.events : selected).map((entry) => {
+        const priceInfo = normalizeEventPrice(entry);
+        const nextPriceTier = cleanText(entry?.priceTier) || computePriceTier(priceInfo);
+        const nextPriceLabel = cleanText(entry?.priceLabel) || formatPriceLabel(priceInfo);
+        const nextPriceConfidence =
+          cleanText(entry?.priceConfidence) || resolvePriceConfidence(entry, priceInfo);
+        return {
+          ...entry,
+          cost: priceInfo.cost,
+          priceMin: priceInfo.priceMin,
+          priceMax: priceInfo.priceMax,
+          currency: priceInfo.currency,
+          isFree: priceInfo.isFree,
+          hasAnyPrice: priceInfo.hasAnyPrice,
+          priceTier: nextPriceTier,
+          priceLabel: nextPriceLabel,
+          priceConfidence: nextPriceConfidence,
+          reasons: buildSuggestionReasons({
+            ...entry,
+            priceTier: nextPriceTier,
+            priceLabel: nextPriceLabel,
+          }),
+        };
+      });
+    } catch {
+      // Keep original suggestions when targeted enrich fails.
+    }
+  }
+
+  return selected.map((entry) => mapCopilotSuggestion(entry));
+}
+
+async function buildFastOllamaChatbotPayload({
+  message,
+  originLabel,
+  clientNowIso,
+  suggestions = [],
+}) {
+  const safeMessage = String(message || "").slice(0, OLLAMA_CONFIG.maxMessageChars).trim();
+  if (!safeMessage) {
+    return {
+      answer: "Beschrijf kort je plan: dag, stad, vibe, max km en budget.",
+      meta: { strategy: "empty_message", model: OLLAMA_CONFIG.model, cached: false },
+    };
+  }
+
+  if (!OLLAMA_CONFIG.enabled || !OLLAMA_CONFIG.model) {
+    return {
+      answer: buildChatbotFallbackReply({ message: safeMessage, originLabel, suggestions }),
+      meta: { strategy: "fallback_no_ollama", model: OLLAMA_CONFIG.model || null, cached: false },
+    };
+  }
+
+  const safeOrigin = cleanText(originLabel) || "user location";
+  const groundedSuggestions = Array.isArray(suggestions) ? suggestions.slice(0, 5) : [];
+  const groundedBlock =
+    groundedSuggestions.length > 0
+      ? groundedSuggestions
+          .map((entry, index) => {
+            const bits = [
+              `title=${entry.title}`,
+              `city=${entry.city || "unknown"}`,
+              `venue=${entry.venue || "unknown"}`,
+              `date=${entry.startIso || "unknown"}`,
+              `distanceKm=${
+                typeof entry.distanceKm === "number" ? Math.round(entry.distanceKm * 10) / 10 : "unknown"
+              }`,
+              `price=${entry.priceLabel || "unknown"}`,
+              `eventKey=${entry.eventKey || "unknown"}`,
+              `ticketUrl=${entry.ticketUrl || "unknown"}`,
+            ];
+            return `${index + 1}. ${bits.join("; ")}`;
+          })
+          .join("\n")
+      : "No grounded events available.";
+
+  const systemPrompt = [
+    "You are Eventify's live events chatbot assistant.",
+    "Always answer in the user's language (Dutch, French or English).",
+    "Do not start with acknowledgements like 'Oké ik snap je'.",
+    "Immediately provide concrete ideas in a compact numbered list with at most 5 items.",
+    "If a grounded events list is provided, only mention event names from that list.",
+    "Keep answers concise and practical (max 8 short lines).",
+    "If constraints are missing, state one short assumption line.",
+  ].join(" ");
+
+  const prompt = [
+    `User request: ${safeMessage}`,
+    `Origin label: ${safeOrigin}`,
+    `Client timestamp ISO: ${clientNowIso || new Date().toISOString()}`,
+    "Grounded events:",
+    groundedBlock,
+    "Output style: short, direct ideas + one assumption line when needed.",
+  ].join("\n");
+
+  try {
+    const { data } = await axios.post(
+      `${OLLAMA_CONFIG.baseUrl}/api/generate`,
+      {
+        model: OLLAMA_CONFIG.model,
+        stream: false,
+        system: systemPrompt,
+        prompt,
+        options: {
+          temperature: 0.2,
+          top_p: 0.9,
+          num_predict: 180,
+        },
+      },
+      {
+        timeout: CHATBOT_CONFIG.timeoutMs,
+      }
+    );
+
+    const content = trimChatbotReply(data?.response);
+    if (!content) {
+      return {
+        answer: buildChatbotFallbackReply({ message: safeMessage, originLabel, suggestions }),
+        meta: { strategy: "ollama_generate_empty", model: OLLAMA_CONFIG.model, cached: false },
+      };
+    }
+
+    return {
+      answer: content,
+      meta: { strategy: "ollama_generate", model: OLLAMA_CONFIG.model, cached: false },
+    };
+  } catch (err) {
+    const detail = cleanText(
+      err?.response?.data?.error || err?.message || err?.code || "ollama generate failed"
+    );
+    return {
+      answer: buildChatbotFallbackReply({ message: safeMessage, originLabel, suggestions }),
+      meta: {
+        strategy: "fallback_ollama_error",
+        model: OLLAMA_CONFIG.model,
+        cached: false,
+        error: detail ? detail.slice(0, 180) : "unknown",
+      },
+    };
+  }
+}
+
+async function buildFastChatbotResponse({
+  message,
+  originLat,
+  originLng,
+  originLabel,
+  clientNowIso,
+} = {}) {
+  const suggestions = await buildFastChatbotSuggestions({
+    message,
+    originLat,
+    originLng,
+    originLabel,
+    clientNowIso,
+    limit: 3,
+  });
+
+  const cacheKey = buildChatbotCacheKey({ message, originLabel, suggestions });
+  const cached = getCachedChatbotReply(cacheKey);
+  if (cached?.answer) {
+    return {
+      answer: cached.answer,
+      suggestions: Array.isArray(cached.suggestions) ? cached.suggestions : suggestions,
+      meta: { strategy: "ollama_generate_cache", model: OLLAMA_CONFIG.model, cached: true },
+    };
+  }
+
+  if (suggestions.length > 0) {
+    const groundedAnswer = buildChatbotFallbackReply({
+      message,
+      originLabel,
+      suggestions,
+    });
+    setCachedChatbotReply(cacheKey, { answer: groundedAnswer, suggestions });
+    return {
+      answer: groundedAnswer,
+      suggestions,
+      meta: {
+        strategy: "grounded_template",
+        model: OLLAMA_CONFIG.model || null,
+        cached: false,
+      },
+    };
+  }
+
+  const generated = await buildFastOllamaChatbotPayload({
+    message,
+    originLabel,
+    clientNowIso,
+    suggestions,
+  });
+
+  const answer = trimChatbotReply(generated.answer) || buildChatbotFallbackReply({
+    message,
+    originLabel,
+    suggestions,
+  });
+  setCachedChatbotReply(cacheKey, { answer, suggestions });
+
+  return {
+    answer,
+    suggestions,
+    meta: generated.meta,
+  };
+}
+
+function sanitizeOllamaCopilotIntent(rawIntent, { clientNowIso } = {}) {
+  const raw = parseJsonObjectLoose(rawIntent);
+  if (!raw) return null;
+
+  const city = resolveCityFromHint(raw.city || raw.cityName || raw.location || raw.place);
+
+  const styleCandidates = [];
+  if (Array.isArray(raw.styles)) styleCandidates.push(...raw.styles);
+  if (Array.isArray(raw.genres)) styleCandidates.push(...raw.genres);
+  if (Array.isArray(raw.vibes)) styleCandidates.push(...raw.vibes);
+  for (const single of [raw.style, raw.genre, raw.vibe]) {
+    if (single != null) styleCandidates.push(single);
+  }
+
+  const styleSet = new Set();
+  for (const style of styleCandidates) {
+    const normalizedStyle = normalizeCopilotStyle(style);
+    if (normalizedStyle) styleSet.add(normalizedStyle);
+  }
+  const styles = [...styleSet].slice(0, 4);
+
+  let maxKm = null;
+  for (const candidate of [raw.maxKm, raw.max_km, raw.radiusKm, raw.radius_km]) {
+    const parsed = toClampedInteger(candidate, 1, 200);
+    if (parsed != null) {
+      maxKm = parsed;
+      break;
+    }
+  }
+
+  const budget = coerceCopilotBudget(
+    raw.budget ?? raw.maxBudget ?? raw.budgetEur ?? raw.budget_eur ?? raw.priceLimit
+  );
+
+  let friendCount = null;
+  for (const candidate of [raw.friendCount, raw.friend_count, raw.friends, raw.groupSize]) {
+    const parsed = toClampedInteger(candidate, 0, 20);
+    if (parsed != null) {
+      friendCount = parsed;
+      break;
+    }
+  }
+
+  const modeRaw = copilotNormalize(raw.mode || raw.intentMode || "");
+  const mode = modeRaw === "plan" || modeRaw === "normal" ? modeRaw : null;
+
+  const dateHint = cleanText(raw.dateHint || raw.when || raw.date || raw.day || raw.timeHint);
+  const dateRange = parseDateRangeFromHint(dateHint || "", clientNowIso);
+
+  return {
+    city,
+    styles,
+    maxKm,
+    budget,
+    friendCount,
+    mode,
+    dateHint: dateHint || null,
+    dateRange,
+  };
+}
+
+async function extractCopilotIntentWithOllama({ message, clientNowIso }) {
+  if (!OLLAMA_CONFIG.enabled || !OLLAMA_CONFIG.model) {
+    return { intent: null, meta: { used: false, strategy: "disabled", model: null } };
+  }
+
+  const safeMessage = String(message || "").slice(0, OLLAMA_CONFIG.maxMessageChars).trim();
+  if (!safeMessage) {
+    return {
+      intent: null,
+      meta: { used: false, strategy: "empty_message", model: OLLAMA_CONFIG.model },
+    };
+  }
+
+  const systemPrompt = [
+    "You extract search intent for a music event recommendation assistant.",
+    "Reply with one JSON object only. Do not include markdown.",
+    "If unsure, use null or empty arrays.",
+    `Cities should be one of: ${COPILOT_CITIES.map((city) => city.name).join(", ")}.`,
+    `Styles should be chosen from: ${COPILOT_ALLOWED_STYLES.join(", ")}.`,
+    `dateHint must be one of: ${COPILOT_OLLAMA_DATE_HINTS.join(", ")}.`,
+    "Schema:",
+    '{"city": string|null, "styles": string[], "maxKm": number|null, "budget": number|"cheap"|null, "friendCount": number|null, "mode": "normal"|"plan"|null, "dateHint": string|null}',
+  ].join(" ");
+
+  const userPrompt = [
+    `Message: "${safeMessage}"`,
+    `Client time (ISO): ${clientNowIso || new Date().toISOString()}`,
+  ].join("\n");
+
+  try {
+    const { data } = await axios.post(
+      `${OLLAMA_CONFIG.baseUrl}/api/chat`,
+      {
+        model: OLLAMA_CONFIG.model,
+        stream: false,
+        format: "json",
+        options: {
+          temperature: 0.1,
+          top_p: 0.9,
+          num_predict: 220,
+        },
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: userPrompt },
+        ],
+      },
+      {
+        timeout: OLLAMA_CONFIG.timeoutMs,
+      }
+    );
+
+    const content = data?.message?.content;
+    const sanitized = sanitizeOllamaCopilotIntent(content, { clientNowIso });
+    if (!sanitized) {
+      return {
+        intent: null,
+        meta: { used: false, strategy: "ollama_invalid_json", model: OLLAMA_CONFIG.model },
+      };
+    }
+
+    return {
+      intent: sanitized,
+      meta: { used: true, strategy: "ollama", model: OLLAMA_CONFIG.model },
+    };
+  } catch (err) {
+    const detail = String(
+      err?.response?.data?.error || err?.message || err?.code || "ollama request failed"
+    ).slice(0, 180);
+    return {
+      intent: null,
+      meta: {
+        used: false,
+        strategy: "ollama_error",
+        model: OLLAMA_CONFIG.model,
+        error: detail,
+      },
+    };
+  }
+}
+
+async function resolveCopilotIntent({ message, clientNowIso, modeRaw }) {
+  const normalizedMessage = copilotNormalize(message);
+  const explicitCityFromMessage = findCity(message);
+  const heuristicBudget = parseBudget(message);
+  const hasDistanceHint = /\b(max(?:imum)?\s*\d{1,3}\s*km|\d{1,3}\s*km|radius)\b/.test(
+    normalizedMessage
+  );
+  const hasBudgetHint = heuristicBudget != null || containsCheapBudgetHint(normalizedMessage);
+  const hasFriendHint = /\b(\d+\s*(vriend|vrienden|friends)|we\s*zijn\s*met\s*\d+)\b/.test(
+    normalizedMessage
+  );
+  const hasPlanHint = /\b(plan voor ons|plan for us|group plan)\b/.test(normalizedMessage);
+
+  const heuristicMode =
+    normalizedMessage.includes("plan voor ons") ||
+    normalizedMessage.includes("plan for us") ||
+    copilotNormalize(modeRaw) === "plan"
+      ? "plan"
+      : "normal";
+
+  const heuristic = {
+    city: findCity(message),
+    styles: parseRequestedStyles(message),
+    maxKm: parseMaxKm(message),
+    budget: heuristicBudget,
+    friendCount: parseFriendCount(message),
+    dateRange: parseDateRange(message, clientNowIso),
+    mode: heuristicMode,
+  };
+
+  const ollama = await extractCopilotIntentWithOllama({ message, clientNowIso });
+  const llm = ollama.intent;
+
+  const mode =
+    heuristic.mode === "plan"
+      ? "plan"
+      : hasPlanHint && llm?.mode === "plan"
+      ? "plan"
+      : "normal";
+
+  return {
+    // User-mentioned city in the message always wins over origin/filter context.
+    city: explicitCityFromMessage || llm?.city || heuristic.city,
+    styles: llm?.styles?.length ? llm.styles : heuristic.styles,
+    maxKm: heuristic.maxKm ?? (hasDistanceHint ? llm?.maxKm : null) ?? 30,
+    budget: heuristic.budget ?? (hasBudgetHint ? llm?.budget : null),
+    friendCount: heuristic.friendCount ?? (hasFriendHint ? llm?.friendCount : null),
+    dateRange: llm?.dateRange || heuristic.dateRange,
+    mode,
+    parser: llm ? "ollama+heuristic" : "heuristic",
+    parserMeta: ollama.meta,
+  };
 }
 
 function clamp01(x) {
@@ -4225,6 +6342,231 @@ async function getFriendsGoingCountsOptional(userId, eventKeys) {
   return map;
 }
 
+function isDateInRange(startDate, dateRange) {
+  if (!dateRange) return true;
+  if (!startDate || Number.isNaN(startDate.getTime())) return true;
+  return startDate >= dateRange.from && startDate <= dateRange.to;
+}
+
+function scoreCopilotCandidates(
+  candidates,
+  { styles, maxKm, dateRange, budget, trendingMap, friendsMap, relaxed = false }
+) {
+  const list = Array.isArray(candidates) ? candidates : [];
+  const styleList = Array.isArray(styles) ? styles : [];
+  const trend = trendingMap instanceof Map ? trendingMap : new Map();
+  const friends = friendsMap instanceof Map ? friendsMap : new Map();
+
+  const scored = list.map((c) => {
+    const reasons = [];
+
+    // Vibe score
+    let vibeScore = 0;
+    if (styleList.length > 0) {
+      const matches = (Array.isArray(c.tags) ? c.tags : []).filter((t) =>
+        styleList.includes(t)
+      );
+      if (matches.length > 0) {
+        vibeScore = matches.length * (relaxed ? 2.4 : 3);
+        reasons.push(`Vibe: ${matches.join(", ")}`);
+      } else if (relaxed) {
+        vibeScore = 0.6;
+        reasons.push("Dicht bij je vibe (alternatief)");
+      }
+    } else {
+      vibeScore = 1;
+      if (c.tags?.[0]) reasons.push(`Vibe: ${c.tags[0]}`);
+    }
+
+    // Distance score
+    let distScore = 0;
+    if (typeof c.distanceKm === "number") {
+      const ratio = clamp01(1 - c.distanceKm / Math.max(1, maxKm));
+      distScore = ratio * 4;
+      reasons.push(`~${Math.round(c.distanceKm)}km away (max ${maxKm}km)`);
+    }
+
+    // Popularity
+    const goingCount = trend.get(c.eventKey) || 0;
+    const trendScore = Math.min(6, Math.log2(goingCount + 1) * 2);
+    if (goingCount > 0) reasons.push(`Trending: ${goingCount} going`);
+
+    // Friends
+    const friendsGoing = friends.get(c.eventKey) || 0;
+    const friendsScore = Math.min(6, friendsGoing * 3);
+    if (friendsGoing > 0) reasons.push(`${friendsGoing} friend(s) going`);
+
+    // Date fit
+    let dateScore = 0;
+    if (dateRange && c.startDate && !Number.isNaN(c.startDate.getTime())) {
+      const fits = isDateInRange(c.startDate, dateRange);
+      if (fits) {
+        dateScore = relaxed ? 1.1 : 1.5;
+        reasons.push(`Past: ${dateRange.label}`);
+      } else if (relaxed) {
+        dateScore = 0.35;
+        reasons.push("Andere datum dan gevraagd");
+      }
+    }
+
+    // Price + budget
+    let priceScore = 0;
+    const minPrice = toNumberOrNull(c.priceMin);
+    const maxPrice = toNumberOrNull(c.priceMax);
+    const ticketCost = toNumberOrNull(c.cost);
+    const hasPrice = minPrice != null || maxPrice != null || ticketCost != null || c.isFree === true;
+    const minComparable =
+      minPrice != null ? minPrice : ticketCost != null ? ticketCost : maxPrice;
+    const priceLabel = cleanText(c.priceLabel) || formatPriceLabel(c);
+    const priceTier = cleanText(c.priceTier);
+
+    if (typeof budget === "number" && Number.isFinite(budget) && budget > 0) {
+      if (!hasPrice) {
+        reasons.push("Price unknown");
+      } else if (c.isFree === true) {
+        priceScore += 2.4;
+        reasons.push(`Price: ${priceLabel} (under €${Math.round(budget)})`);
+      } else if (minComparable != null && minComparable <= budget) {
+        const closeness = clamp01(1 - minComparable / Math.max(1, budget));
+        priceScore += 1.2 + closeness * 1.6;
+        reasons.push(`Price: ${priceLabel} (under €${Math.round(budget)})`);
+      } else if (minComparable != null && minComparable > budget) {
+        const overshoot = Math.min(2, (minComparable - budget) / Math.max(1, budget));
+        priceScore -= 1.1 + overshoot * 1.8;
+        reasons.push(`Above budget (€${Math.round(budget)})`);
+      }
+    } else if (budget === "cheap") {
+      if (!hasPrice) {
+        reasons.push("Price unknown");
+      } else {
+        if (priceTier === "free" || priceTier === "low") {
+          priceScore += 1.8;
+        } else if (priceTier === "mid") {
+          priceScore += 0.9;
+        } else if (priceTier === "high" || priceTier === "premium") {
+          priceScore -= 1.4;
+        }
+        reasons.push(`Price: ${priceLabel}${priceTier ? ` (${priceTier})` : ""}`);
+      }
+    } else if (hasPrice) {
+      reasons.push(`Price: ${priceLabel}${priceTier ? ` (${priceTier})` : ""}`);
+    }
+
+    const total =
+      vibeScore * 2.2 +
+      distScore * 1.6 +
+      trendScore * 1.2 +
+      friendsScore * 1.4 +
+      dateScore * 1.1 +
+      priceScore * 1.5;
+
+    return {
+      ...c,
+      goingCount,
+      friendsGoing,
+      score: total,
+      reasons: reasons.slice(0, 4),
+    };
+  });
+
+  scored.sort((a, b) => b.score - a.score);
+  return scored;
+}
+
+function mapCopilotSuggestion(scoredItem) {
+  return {
+    eventKey: scoredItem.eventKey,
+    title: scoredItem.title,
+    startIso: scoredItem.startIso,
+    venue: scoredItem.venue,
+    city: scoredItem.city,
+    distanceKm:
+      typeof scoredItem.distanceKm === "number"
+        ? Math.round(scoredItem.distanceKm * 10) / 10
+        : null,
+    reasons: scoredItem.reasons,
+    imageUrl: scoredItem.imageUrl || null,
+    tags: Array.isArray(scoredItem.tags) ? scoredItem.tags : [],
+    cost: toNumberOrNull(scoredItem.cost),
+    priceMin: toNumberOrNull(scoredItem.priceMin),
+    priceMax: toNumberOrNull(scoredItem.priceMax),
+    currency: normalizeCurrencyCode(scoredItem.currency),
+    isFree: scoredItem.isFree === true,
+    priceTier: scoredItem.priceTier || null,
+    priceLabel: scoredItem.priceLabel || null,
+    priceConfidence: scoredItem.priceConfidence || "unknown",
+    ticketUrl:
+      cleanText(
+        scoredItem.ticketUrl ||
+          scoredItem.url ||
+          scoredItem.raw?.ticketUrl ||
+          scoredItem.raw?.url
+      ) || null,
+  };
+}
+
+function buildCopilotAnswer({ suggestions, city, originLabel, relaxedFallback }) {
+  const place = city ? city.name : originLabel;
+  const top = Array.isArray(suggestions) ? suggestions.slice(0, 3) : [];
+
+  if (top.length === 0) {
+    return (
+      `Ik vind nu geen sterke ideeën rond ${place} met deze filters.\n` +
+      "Probeer zonder vaste datum of met iets grotere radius."
+    );
+  }
+
+  const lines = [];
+  lines.push(
+    relaxedFallback
+      ? `Geen exacte matches gevonden, maar dit zijn goede alternatieve ideeën rond ${place}:`
+      : `Top ideeën rond ${place}:`
+  );
+
+  for (let i = 0; i < top.length; i += 1) {
+    const item = top[i];
+    const reason = Array.isArray(item.reasons) && item.reasons[0] ? ` - ${item.reasons[0]}` : "";
+    lines.push(`${i + 1}. ${item.title}${reason}`);
+  }
+
+  return lines.join("\n");
+}
+
+app.post("/chatbot", authOptional, async (req, res) => {
+  try {
+    const message = safeText(req.body?.message, "").trim();
+    const originLat = Number(req.body?.originLat);
+    const originLng = Number(req.body?.originLng);
+    const originLabel = safeText(req.body?.originLabel, "your location");
+    const clientNowIso = safeText(req.body?.clientNowIso, "");
+
+    if (!message) return res.status(400).json({ ok: false, error: "Missing message" });
+
+    const chatbot = await buildFastChatbotResponse({
+      message,
+      originLat,
+      originLng,
+      originLabel,
+      clientNowIso,
+    });
+
+    return res.json({
+      ok: true,
+      answer: chatbot.answer,
+      suggestions: Array.isArray(chatbot.suggestions) ? chatbot.suggestions : [],
+      intentParser: {
+        strategy: chatbot.meta?.strategy || "ollama_generate",
+        model: chatbot.meta?.model || null,
+        cached: chatbot.meta?.cached === true,
+        error: chatbot.meta?.error || null,
+        ollamaOnly: true,
+      },
+    });
+  } catch (err) {
+    return res.status(500).json({ ok: false, error: err?.message || String(err) });
+  }
+});
+
 app.post("/copilot", authOptional, async (req, res) => {
   try {
     const message = safeText(req.body?.message, "").trim();
@@ -4240,43 +6582,90 @@ app.post("/copilot", authOptional, async (req, res) => {
       return res.status(400).json({ ok: false, error: "Invalid originLat/originLng" });
     }
 
-    const city = findCity(message);
-    const styles = parseRequestedStyles(message); // e.g. ["Techno","House"]
-    const maxKm = parseMaxKm(message) ?? 30;
-    const budget = parseBudget(message);
-    const friendCount = parseFriendCount(message);
-    const dateRange = parseDateRange(message, clientNowIso);
-    const mode =
-      copilotNormalize(message).includes("plan voor ons") ||
-      copilotNormalize(message).includes("plan for us") ||
-      modeRaw === "plan"
-        ? "plan"
-        : "normal";
+    if (CHATBOT_CONFIG.ollamaOnly) {
+      const chatbot = await buildFastChatbotResponse({
+        message,
+        originLat,
+        originLng,
+        originLabel,
+        clientNowIso,
+      });
+
+      return res.json({
+        ok: true,
+        answer: chatbot.answer,
+        suggestions: Array.isArray(chatbot.suggestions) ? chatbot.suggestions : [],
+        intentParser: {
+          strategy: chatbot.meta?.strategy || "ollama_generate",
+          model: chatbot.meta?.model || null,
+          cached: chatbot.meta?.cached === true,
+          error: chatbot.meta?.error || null,
+          ollamaOnly: true,
+        },
+      });
+    }
+
+    const copilotIntent = await resolveCopilotIntent({
+      message,
+      clientNowIso,
+      modeRaw,
+    });
+
+    const city = copilotIntent.city;
+    const styles = copilotIntent.styles; // e.g. ["Techno","House"]
+    const maxKm = copilotIntent.maxKm;
+    const budget = copilotIntent.budget;
+    const friendCount = copilotIntent.friendCount;
+    const dateRange = copilotIntent.dateRange;
+    const mode = copilotIntent.mode;
 
     const centerLat = city ? city.lat : originLat;
     const centerLng = city ? city.lng : originLng;
+    const distanceReferenceLat = city ? city.lat : originLat;
+    const distanceReferenceLng = city ? city.lng : originLng;
 
-    // Fetch a bit more, then we filter + rank ourselves.
-    const tmEvents = await fetchTicketmaster({
-      keyword: "", // keep broad; we do filtering ourselves
-      lat: centerLat,
-      lng: centerLng,
-      radiusKm: maxKm,
-      size: 60,
-      classificationName: "music",
+    // Fetch broad event feed first (Ticketmaster + scraped), then filter + rank ourselves.
+    const feedEvents = await resolveEventsForAi({
+      query: {
+        keyword: "",
+        lat: centerLat,
+        lng: centerLng,
+        radiusKm: COPILOT_FETCH_RADIUS_KM,
+        classificationName: "music",
+        size: COPILOT_FETCH_SIZE,
+        maxResults: COPILOT_FETCH_SIZE,
+        includeScraped: 1,
+        includeSetlists: 0,
+      },
     });
 
-    let candidates = (tmEvents || []).map((e, idx) => {
+    let candidates = (feedEvents || []).map((e, idx) => {
       const eventKey = buildEventKeyFromApiEvent(e, idx);
 
-      const lat = typeof e.lat === "number" ? e.lat : null;
-      const lng = typeof e.lng === "number" ? e.lng : null;
+      const lat = toNumberOrNull(e.lat);
+      const lng = toNumberOrNull(e.lng);
 
       const distanceKm =
-        lat != null && lng != null ? haversineKm(originLat, originLng, lat, lng) : null;
+        lat != null && lng != null
+          ? haversineKm(distanceReferenceLat, distanceReferenceLng, lat, lng)
+          : null;
 
       const inferredStyle = inferStyle(`${e.title || ""} ${e.artistName || ""} ${e.genre || ""}`);
-      const inferredTags = inferredStyle ? [inferredStyle] : [];
+      const normalizedTags = Array.isArray(e.tags)
+        ? e.tags
+            .map((tag) => normalizeCopilotStyle(tag))
+            .filter(Boolean)
+        : [];
+      const inferredTags = Array.from(
+        new Set([...(normalizedTags || []), ...(inferredStyle ? [inferredStyle] : [])])
+      );
+      const priceInfo = normalizeEventPrice(e);
+      const priceTier = cleanText(e.priceTier) || computePriceTier(priceInfo);
+      const priceLabel = cleanText(e.priceLabel) || formatPriceLabel(priceInfo);
+      const priceConfidence = cleanText(e.priceConfidence) || resolvePriceConfidence(e, priceInfo);
+      const priceSource =
+        cleanText(e.priceSource || e.metadata?.priceSource) ||
+        (priceInfo.hasAnyPrice ? "api" : "unknown");
 
       const startIso = e.start ? String(e.start) : null;
       const startDate = startIso ? new Date(startIso) : null;
@@ -4294,17 +6683,30 @@ app.post("/copilot", authOptional, async (req, res) => {
         imageUrl: e.imageUrl || null,
         tags: inferredTags,
         distanceKm,
+        cost: priceInfo.cost,
+        priceMin: priceInfo.priceMin,
+        priceMax: priceInfo.priceMax,
+        currency: priceInfo.currency,
+        isFree: priceInfo.isFree,
+        priceTier,
+        priceLabel,
+        priceConfidence,
+        priceSource,
         raw: e,
       };
     });
-
-
-
     // Admin moderation: remove disabled events from copilot suggestions
     const disabledKeysForCopilot = await getDisabledEventKeysOptional();
     if (disabledKeysForCopilot.size > 0) {
       candidates = candidates.filter((c) => !disabledKeysForCopilot.has(c.eventKey));
     }
+
+    // Remove weird distances up front (for both strict + fallback suggestion flows)
+    candidates = candidates.filter(
+      (c) => c.distanceKm == null || c.distanceKm <= COPILOT_HARD_DISTANCE_CAP_KM
+    );
+    const broadCandidates = candidates.slice();
+
     // Filter by date if user asked (Friday / weekend / tomorrow / ...)
     if (dateRange) {
       candidates = candidates.filter((c) => {
@@ -4318,97 +6720,52 @@ app.post("/copilot", authOptional, async (req, res) => {
       candidates = candidates.filter((c) => c.tags.some((t) => styles.includes(t)));
     }
 
-    // Remove weird distances
-    candidates = candidates.filter((c) => c.distanceKm == null || c.distanceKm <= maxKm * 2);
+    const withinMaxKm = (entry) =>
+      entry && (entry.distanceKm == null || entry.distanceKm <= Math.max(1, maxKm));
+    const distanceLimitedCandidates = candidates.filter(withinMaxKm);
+    const broadDistanceLimitedCandidates = broadCandidates.filter(withinMaxKm);
 
-    const eventKeys = candidates.map((c) => c.eventKey);
+    const eventKeys = broadCandidates.map((c) => c.eventKey);
 
     const me = req.auth?.sub ? Number(req.auth.sub) : null;
 
     const trendingMap = await getTrendingCountsOptional(eventKeys);
     const friendsMap = await getFriendsGoingCountsOptional(me, eventKeys);
 
-    // Score + reasons
-    const scored = candidates.map((c) => {
-      const reasons = [];
-
-      // vibe score
-      let vibeScore = 0;
-      if (styles.length > 0) {
-        const matches = c.tags.filter((t) => styles.includes(t));
-        vibeScore = matches.length * 3;
-        if (matches.length) reasons.push(`Matches vibe: ${matches.join(", ")}`);
-      } else {
-        vibeScore = 1;
-        if (c.tags[0]) reasons.push(`Vibe: ${c.tags[0]}`);
-      }
-
-      // distance score
-      let distScore = 0;
-      if (typeof c.distanceKm === "number") {
-        const ratio = clamp01(1 - c.distanceKm / Math.max(1, maxKm));
-        distScore = ratio * 4;
-        reasons.push(`~${Math.round(c.distanceKm)}km away (max ${maxKm}km)`);
-      }
-
-      // trending
-      const goingCount = trendingMap.get(c.eventKey) || 0;
-      const trendScore = Math.min(6, Math.log2(goingCount + 1) * 2);
-      if (goingCount > 0) reasons.push(`Trending: ${goingCount} going`);
-
-      // friends going
-      const friendsGoing = friendsMap.get(c.eventKey) || 0;
-      const friendsScore = Math.min(6, friendsGoing * 3);
-      if (friendsGoing > 0) reasons.push(`${friendsGoing} friend(s) going`);
-
-      // date hint
-      if (dateRange && c.startDate && !Number.isNaN(c.startDate.getTime())) {
-        reasons.push(`Fits: ${dateRange.label}`);
-      }
-
-      // budget hint (Ticketmaster doesn’t always have price, so keep it a soft reason)
-      if (budget === "cheap") reasons.push("Prefer not too expensive (soft match)");
-
-      const total =
-        vibeScore * 2.2 +
-        distScore * 1.6 +
-        trendScore * 1.2 +
-        friendsScore * 1.4;
-
-      return {
-        ...c,
-        goingCount,
-        friendsGoing,
-        score: total,
-        reasons: reasons.slice(0, 4),
-      };
+    const strictScored = scoreCopilotCandidates(distanceLimitedCandidates, {
+      styles,
+      maxKm,
+      dateRange,
+      budget,
+      trendingMap,
+      friendsMap,
+      relaxed: false,
     });
 
-    scored.sort((a, b) => b.score - a.score);
+    let relaxedFallback = false;
+    let suggestions = strictScored.slice(0, 5).map((s) => mapCopilotSuggestion(s));
 
-    const suggestions = scored.slice(0, 5).map((s) => ({
-      eventKey: s.eventKey,
-      title: s.title,
-      startIso: s.startIso,
-      venue: s.venue,
-      city: s.city,
-      distanceKm: typeof s.distanceKm === "number" ? Math.round(s.distanceKm * 10) / 10 : null,
-      reasons: s.reasons,
-    }));
+    // If strict constraints return nothing, still provide practical alternatives.
+    if (suggestions.length === 0 && broadDistanceLimitedCandidates.length > 0) {
+      const relaxedScored = scoreCopilotCandidates(broadDistanceLimitedCandidates, {
+        styles,
+        maxKm,
+        dateRange,
+        budget,
+        trendingMap,
+        friendsMap,
+        relaxed: true,
+      });
+      suggestions = relaxedScored.slice(0, 5).map((s) => mapCopilotSuggestion(s));
+      relaxedFallback = suggestions.length > 0;
+    }
 
-    const intentBits = [
-      dateRange ? `when: ${dateRange.label}` : null,
-      city ? `city: ${city.name}` : null,
-      styles.length ? `vibe: ${styles.join("/")}` : null,
-      `max ${maxKm}km`,
-      budget ? `budget: ${budget === "cheap" ? "not too expensive" : `€${budget}`}` : null,
-      typeof friendCount === "number" ? `friends: ${friendCount}` : null,
-      mode === "plan" ? `mode: plan` : null,
-    ].filter(Boolean);
-
-    const answer =
-      `Oké — ik snap je. (${intentBits.join(", ")})\n` +
-      `Hier zijn mijn beste matches rond ${city ? city.name : originLabel}.`;
+    const answer = buildCopilotAnswer({
+      suggestions,
+      city,
+      originLabel,
+      relaxedFallback,
+    });
 
     // MVP plan-mode: just pick first as "best match" for now (fairness comes later)
     const bestMatchEventKey = mode === "plan" && suggestions.length ? suggestions[0].eventKey : null;
@@ -4431,6 +6788,12 @@ app.post("/copilot", authOptional, async (req, res) => {
         mode,
         friendIdsCount: friendIds.length,
         dateRange: dateRange ? { from: dateRange.from, to: dateRange.to, label: dateRange.label } : null,
+      },
+      intentParser: {
+        strategy: copilotIntent.parser,
+        model: copilotIntent.parserMeta?.model || null,
+        error: copilotIntent.parserMeta?.error || null,
+        relaxedFallback,
       },
       answer,
       suggestions,
@@ -4461,6 +6824,27 @@ async function startApiServer() {
     );
     console.log(
       `Scrape cache: ttl=${SCRAPE_CACHE_CONFIG.ttlMs}ms, wait=${SCRAPE_CACHE_CONFIG.requestWaitMs}ms`
+    );
+    console.log(
+      `Chatbot mode: ${
+        CHATBOT_CONFIG.ollamaOnly
+          ? `ollama-only (/chatbot, timeout=${CHATBOT_CONFIG.timeoutMs}ms, cacheTtl=${CHATBOT_CONFIG.cacheTtlMs}ms)`
+          : "copilot ranking + optional ollama intent"
+      }`
+    );
+    console.log(
+      `Copilot intent parser: ${
+        OLLAMA_CONFIG.enabled
+          ? `heuristic + ollama (${OLLAMA_CONFIG.model} @ ${OLLAMA_CONFIG.baseUrl})`
+          : "heuristic only (set OLLAMA_ENABLED=true to enable Ollama)"
+      }`
+    );
+    console.log(
+      `Price enrich: ${
+        PRICE_ENRICH_CONFIG.enabled
+          ? `enabled (max=${PRICE_ENRICH_CONFIG.maxPerRequest}, tmMax=${PRICE_ENRICH_CONFIG.ticketmasterMaxPerRequest}, concurrency=${PRICE_ENRICH_CONFIG.concurrency}, timeout=${PRICE_ENRICH_CONFIG.timeoutMs}ms, ttl=${PRICE_ENRICH_CONFIG.cacheTtlMs}ms, bg=${PRICE_ENRICH_CONFIG.backgroundEnabled ? `on/${PRICE_ENRICH_CONFIG.backgroundDelayMs}ms` : "off"}, tmProxy=${PRICE_ENRICH_CONFIG.ticketmasterProxyBaseUrl ? "on" : "off"})`
+          : "disabled"
+      }`
     );
 
     if (SCRAPE_CONFIG.enabled && SCRAPE_CONFIG.sourceUrls.length > 0) {
