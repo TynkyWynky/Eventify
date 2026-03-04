@@ -2457,25 +2457,34 @@ a.accountFriendAction {
   }
 
   .navInner {
-    flex-wrap: wrap;
-    gap: 10px;
+    display: grid;
+    grid-template-columns: 1fr auto;
+    grid-template-areas:
+      "brand actions"
+      "search search";
+    gap: 10px 12px;
   }
 
+  .brandTitle { grid-area: brand; }
   .brandTitle { font-size: 22px; }
 
   .navSearchWrap {
-    flex: 1 1 100%;
-    order: 3;
+    grid-area: search;
+    width: 100%;
   }
 
   .navActions {
-    order: 2;
-    margin-left: auto;
+    grid-area: actions;
+    margin-left: 0;
+    justify-self: end;
   }
 
-  .navSearchWrap { order: 3; }
-
-  .searchBar { padding: 10px 12px; }
+  .searchBar { padding: 10px 88px 10px 12px; }
+  .searchCommitBtn {
+    right: 7px;
+    padding: 5px 10px;
+    font-size: 11px;
+  }
 
   .btn,
   .btnSecondary,
@@ -2490,12 +2499,11 @@ a.accountFriendAction {
   .brandTitle { font-size: 20px; }
 
   .navActions {
-    flex-wrap: wrap;
-    justify-content: flex-end;
+    gap: 8px;
   }
 
-  .navPill { height: 38px; padding: 0 12px; }
-  .navIconBtn { width: 40px; height: 40px; }
+  .navPill { height: 36px; padding: 0 10px; }
+  .navIconBtn { width: 38px; height: 38px; }
 
   .authCard {
     border-radius: 20px;
@@ -2507,20 +2515,21 @@ a.accountFriendAction {
    RESPONSIVE — HERO + FILTERBAR
    ========================= */
 @media (max-width: 720px) {
-  .heroBanner { min-height: 200px; }
-  .heroBannerDashboard { min-height: 220px; }
+  .heroBanner { min-height: 190px; }
+  .heroBannerDashboard { min-height: 200px; }
 
-  .heroContent { padding: var(--space-5); }
-  .heroCenter { padding: var(--space-5); }
+  .heroContent { padding: var(--space-4); }
+  .heroCenter { padding: var(--space-4); }
 
-  .heroTitle { font-size: 28px; }
-  .heroCenter .heroTitle { font-size: 32px; }
+  .heroTitle { font-size: 26px; }
+  .heroCenter .heroTitle { font-size: 36px; line-height: 1.05; }
+  .heroSubtitle { margin-top: 8px; }
 
   .heroFilterBar {
     width: 100%;
-    flex-wrap: wrap;
-    justify-content: center;
-    gap: 10px;
+    margin-top: 12px;
+    gap: 8px;
+    padding: 10px;
   }
 
   .selectField { width: 100%; min-width: 0; }
@@ -2530,10 +2539,11 @@ a.accountFriendAction {
 }
 
 @media (max-width: 520px) {
-  .heroBanner { min-height: 180px; }
-  .heroBannerDashboard { min-height: 200px; }
-  .heroTitle { font-size: 24px; }
-  .heroCenter .heroTitle { font-size: 28px; }
+  .heroBanner { min-height: 170px; }
+  .heroBannerDashboard { min-height: 186px; }
+  .heroTitle { font-size: 22px; }
+  .heroCenter .heroTitle { font-size: 24px; }
+  .heroCenter .heroSubtitle { font-size: 16px; }
 
   .eventFooter {
     flex-direction: column;
@@ -2571,21 +2581,45 @@ a.accountFriendAction {
   }
 
   .heroFilterBar .selectRoot { width: 100%; }
+  .dashboardStatusRow {
+    margin-top: 8px;
+    gap: 8px;
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .dashboardRetryBtn {
+    width: 100%;
+    min-width: 0;
+  }
 }
 
-/* Strict mobile mode: avoid horizontal dashboard carousels */
 @media (max-width: 760px) {
   .trendingRow {
-    grid-auto-flow: row;
-    grid-template-columns: 1fr;
-    grid-auto-columns: 1fr;
-    overflow-x: visible;
-    scroll-snap-type: none;
+    margin-top: 12px;
+    grid-auto-flow: column;
+    grid-auto-columns: minmax(250px, 82vw);
+    gap: 12px;
+    overflow-x: auto;
+    scroll-snap-type: x mandatory;
+    padding-bottom: 10px;
+    padding-right: 8px;
   }
 
   .trendingRow .eventCardLink {
-    scroll-snap-align: none;
+    scroll-snap-align: start;
   }
+
+  .eventCardTitle {
+    white-space: normal;
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+  }
+
+  .eventCardMeta { font-size: 11px; }
+  .eventSocialRow { gap: 6px; }
+  .eventSocialPill { min-height: 30px; padding: 6px 9px; }
 }
 
 /* =========================
@@ -3525,6 +3559,19 @@ a.accountFriendAction {
 }
 
 .footerCol { min-width: 0; }
+.footerHeadingDesktop { display: block; }
+.footerAccordionToggle { display: none; }
+
+.footerLinkList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.footerAuthStack {
+  display: grid;
+  gap: 0;
+}
 
 .footerLink {
   display: inline-flex;
@@ -3604,6 +3651,47 @@ a.accountFriendAction {
   .footerGrid {
     grid-template-columns: 1fr;
     gap: var(--space-4);
+  }
+
+  .footerAccordionCol {
+    border-top: 1px solid var(--borderSoft);
+    padding-top: 10px;
+  }
+
+  .footerHeadingDesktop { display: none; }
+
+  .footerAccordionToggle {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    border-radius: 12px;
+    border: 1px solid var(--border);
+    background: rgba(255,255,255,.04);
+    color: var(--text);
+    font-weight: 900;
+    padding: 10px 12px;
+    cursor: pointer;
+  }
+
+  .footerAccordionToggle.isOpen {
+    border-color: rgba(178,106,168,.5);
+    background: rgba(178,106,168,.12);
+  }
+
+  .footerLinkList {
+    max-height: 0;
+    overflow: hidden;
+    opacity: 0;
+    transition: max-height .2s ease, opacity .2s ease;
+    padding-left: 4px;
+  }
+
+  .footerLinkList.isOpen {
+    max-height: 240px;
+    opacity: 1;
+    margin-top: 8px;
   }
 
   .footerBottom {

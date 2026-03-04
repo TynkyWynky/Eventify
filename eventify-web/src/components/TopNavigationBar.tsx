@@ -147,7 +147,7 @@ export default function TopNavigationBar() {
         <div className="navSearchWrap" ref={searchWrapRef}>
           <input
             className="searchBar"
-            placeholder="Artist, Place, Genre, ..."
+            placeholder="Search artists, places..."
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onFocus={() => setSearchOpen(true)}

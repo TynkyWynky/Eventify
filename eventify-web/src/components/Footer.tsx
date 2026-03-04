@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
 
@@ -32,6 +33,11 @@ function ExternalIcon() {
 export default function Footer() {
   const { user } = useAuth();
   const year = new Date().getFullYear();
+  const [openSection, setOpenSection] = useState<"explore" | "legal" | "contact" | null>(null);
+
+  function toggleSection(section: "explore" | "legal" | "contact") {
+    setOpenSection((prev) => (prev === section ? null : section));
+  }
 
   return (
     <footer className="siteFooter" role="contentinfo">
@@ -54,45 +60,95 @@ export default function Footer() {
             </div>
           </div>
 
-          <nav className="footerCol" aria-label="Explore">
-            <div className="footerHeading">Explore</div>
-            <li><Link className="footerLink" to="/">Discover</Link></li>
-            <li><Link className="footerLink" to="/my-events">My events</Link></li>
-            <li>{user ? (
-              <Link className="footerLink" to="/account">Account</Link>
-            ) : (
-              <>
-                <Link className="footerLink" to="/login">Login</Link>
-                <Link className="footerLink" to="/register">Sign up</Link>
-              </>
-            )}</li>
-            {user?.role === "admin" ? (
-              <li> <Link className="footerLink" to="/admin">Admin</Link> </li>
-            ) : null}             
-          </nav>
-
-          <nav className="footerCol" aria-label="Legal">
-            <div className="footerHeading">Legal</div>
-            <li><Link className="footerLink" to="/privacy">Privacy (GDPR)</Link></li>
-            <li><Link className="footerLink" to="/terms">Terms</Link></li>
-            <li><Link className="footerLink" to="/cookies">Cookies</Link></li>
-            <li><Link className="footerLink" to="/legal">Legal notice</Link></li>        
-          </nav>
-
-          <div className="footerCol" aria-label="Contact">
-            <div className="footerHeading">Contact</div>
-            <a className="footerLink" href="mailto:atypique.professional@gmail.com">
-              atypique.professional@gmail.com
-            </a>
-
-            <a
-              className="footerLink footerLinkExternal"
-              href="https://www.instagram.com/atypique.enterprise/"
-              target="_blank"
-              rel="noreferrer"
+          <nav className="footerCol footerAccordionCol" aria-label="Explore">
+            <div className="footerHeading footerHeadingDesktop">Explore</div>
+            <button
+              type="button"
+              className={`footerAccordionToggle ${openSection === "explore" ? "isOpen" : ""}`}
+              onClick={() => toggleSection("explore")}
+              aria-expanded={openSection === "explore"}
+              aria-controls="footer-explore-links"
             >
-              Instagram <ExternalIcon />
-            </a>
+              <span>Explore</span>
+              <span aria-hidden="true">{openSection === "explore" ? "−" : "+"}</span>
+            </button>
+
+            <ul
+              id="footer-explore-links"
+              className={`footerLinkList ${openSection === "explore" ? "isOpen" : ""}`}
+            >
+              <li><Link className="footerLink" to="/">Discover</Link></li>
+              <li><Link className="footerLink" to="/my-events">My events</Link></li>
+              <li>
+                {user ? (
+                  <Link className="footerLink" to="/account">Account</Link>
+                ) : (
+                  <div className="footerAuthStack">
+                    <Link className="footerLink" to="/login">Login</Link>
+                    <Link className="footerLink" to="/register">Sign up</Link>
+                  </div>
+                )}
+              </li>
+              {user?.role === "admin" ? (
+                <li><Link className="footerLink" to="/admin">Admin</Link></li>
+              ) : null}
+            </ul>
+          </nav>
+
+          <nav className="footerCol footerAccordionCol" aria-label="Legal">
+            <div className="footerHeading footerHeadingDesktop">Legal</div>
+            <button
+              type="button"
+              className={`footerAccordionToggle ${openSection === "legal" ? "isOpen" : ""}`}
+              onClick={() => toggleSection("legal")}
+              aria-expanded={openSection === "legal"}
+              aria-controls="footer-legal-links"
+            >
+              <span>Legal</span>
+              <span aria-hidden="true">{openSection === "legal" ? "−" : "+"}</span>
+            </button>
+
+            <ul
+              id="footer-legal-links"
+              className={`footerLinkList ${openSection === "legal" ? "isOpen" : ""}`}
+            >
+              <li><Link className="footerLink" to="/privacy">Privacy (GDPR)</Link></li>
+              <li><Link className="footerLink" to="/terms">Terms</Link></li>
+              <li><Link className="footerLink" to="/cookies">Cookies</Link></li>
+              <li><Link className="footerLink" to="/legal">Legal notice</Link></li>
+            </ul>
+          </nav>
+
+          <div className="footerCol footerAccordionCol" aria-label="Contact">
+            <div className="footerHeading footerHeadingDesktop">Contact</div>
+            <button
+              type="button"
+              className={`footerAccordionToggle ${openSection === "contact" ? "isOpen" : ""}`}
+              onClick={() => toggleSection("contact")}
+              aria-expanded={openSection === "contact"}
+              aria-controls="footer-contact-links"
+            >
+              <span>Contact</span>
+              <span aria-hidden="true">{openSection === "contact" ? "−" : "+"}</span>
+            </button>
+
+            <div
+              id="footer-contact-links"
+              className={`footerLinkList ${openSection === "contact" ? "isOpen" : ""}`}
+            >
+              <a className="footerLink" href="mailto:atypique.professional@gmail.com">
+                atypique.professional@gmail.com
+              </a>
+
+              <a
+                className="footerLink footerLinkExternal"
+                href="https://www.instagram.com/atypique.enterprise/"
+                target="_blank"
+                rel="noreferrer"
+              >
+                Instagram <ExternalIcon />
+              </a>
+            </div>
           </div>
         </div>
 
