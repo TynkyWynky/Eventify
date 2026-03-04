@@ -5204,6 +5204,160 @@ app.get("/organizer/events/:id/public", async (req, res) => {
   }
 });
 
+function mapDbEventRowToApiEvent(row) {
+  const sourceMetadata = parseSourceMetadataObject(row?.source_metadata);
+  const metadataInner =
+    sourceMetadata?.metadata && typeof sourceMetadata.metadata === "object"
+      ? sourceMetadata.metadata
+      : {};
+  const rawEvent =
+    sourceMetadata?.raw_event && typeof sourceMetadata.raw_event === "object"
+      ? sourceMetadata.raw_event
+      : {};
+
+  const tags = Array.isArray(row?.tags)
+    ? row.tags.map((entry) => cleanText(entry)).filter(Boolean)
+    : [];
+
+  const mapped = {
+    source: cleanText(row?.source) || "db_sync",
+    sourceId: cleanText(row?.source_id) || cleanText(row?.id) || null,
+    title: cleanText(row?.title) || "Untitled event",
+    description: cleanText(row?.description) || null,
+    start: cleanText(row?.start_datetime) || null,
+    end: cleanText(row?.end_datetime) || null,
+    timezone: cleanText(row?.timezone) || "UTC",
+    venue: cleanText(row?.venue_name) || null,
+    address: cleanText(row?.address) || null,
+    city: cleanText(row?.city) || null,
+    state: cleanText(row?.state) || null,
+    country: cleanText(row?.country) || null,
+    postalCode: cleanText(row?.postal_code) || null,
+    lat: toNumberOrNull(row?.latitude),
+    lng: toNumberOrNull(row?.longitude),
+    isVirtual: row?.is_virtual === true,
+    virtualLink: cleanText(row?.virtual_link) || null,
+    isFree: row?.is_free === true,
+    cost: toNumberOrNull(row?.cost),
+    priceMin: toNumberOrNull(row?.price_min),
+    priceMax: toNumberOrNull(row?.price_max),
+    currency: normalizeCurrencyCode(row?.currency),
+    priceTier: cleanText(row?.price_tier) || null,
+    priceSource: cleanText(row?.price_source) || null,
+    ticketUrl: cleanText(row?.ticket_url) || cleanText(row?.source_url) || null,
+    url: cleanText(row?.source_url) || cleanText(row?.ticket_url) || null,
+    imageUrl: cleanText(row?.cover_image_url) || null,
+    genre:
+      cleanText(row?.category) ||
+      cleanText(metadataInner?.genre) ||
+      cleanText(rawEvent?.genre) ||
+      null,
+    category: cleanText(row?.category) || cleanText(metadataInner?.category) || null,
+    tags,
+    status: cleanText(row?.status) || "published",
+    organizerName: cleanText(rawEvent?.organizerName) || null,
+    artistName: cleanText(rawEvent?.artistName) || null,
+    metadata: {
+      ...metadataInner,
+      ...(row?.price_min != null ? { priceMin: toNumberOrNull(row?.price_min) } : {}),
+      ...(row?.price_max != null ? { priceMax: toNumberOrNull(row?.price_max) } : {}),
+      ...(row?.price_source ? { priceSource: cleanText(row.price_source) } : {}),
+    },
+  };
+
+  return enrichEventWithPriceInsights(mapped);
+}
+
+function matchesDbEventKeyword(event, keyword) {
+  const normalized = normalizeCityText(keyword);
+  if (!normalized) return true;
+  const terms = normalized.split(" ").filter(Boolean);
+  if (terms.length === 0) return true;
+
+  const haystack = normalizeCityText(
+    [
+      event?.title,
+      event?.description,
+      event?.venue,
+      event?.city,
+      event?.genre,
+      event?.category,
+      event?.artistName,
+      ...(Array.isArray(event?.tags) ? event.tags : []),
+    ]
+      .filter(Boolean)
+      .join(" ")
+  );
+
+  return terms.every((term) => haystack.includes(term));
+}
+
+function matchesDbClassification(event, classificationName) {
+  const classification = cleanText(classificationName)?.toLowerCase();
+  if (!classification || classification === "music") return true;
+
+  const fields = normalizeCityText(
+    [
+      event?.genre,
+      event?.category,
+      ...(Array.isArray(event?.tags) ? event.tags : []),
+    ]
+      .filter(Boolean)
+      .join(" ")
+  );
+  if (!fields) return false;
+  return fields.includes(normalizeCityText(classification));
+}
+
+function matchesDbDistance(event, { lat, lng, radiusKm }) {
+  if (!Number.isFinite(lat) || !Number.isFinite(lng) || !Number.isFinite(radiusKm) || radiusKm <= 0) {
+    return true;
+  }
+  const eventLat = toNumberOrNull(event?.lat);
+  const eventLng = toNumberOrNull(event?.lng);
+  if (eventLat == null || eventLng == null) return true;
+  return haversineKm(lat, lng, eventLat, eventLng) <= radiusKm;
+}
+
+async function fetchPublishedEventsFromDb({
+  keyword,
+  lat,
+  lng,
+  radiusKm,
+  classificationName,
+  maxResults = 80,
+}) {
+  if (!pool) return [];
+  const db = requireDb();
+  const safeLimit = Math.max(80, Math.min(1400, maxResults * 12));
+
+  const result = await db.query(
+    `
+      SELECT id, title, description, start_datetime, end_datetime, timezone,
+             venue_name, address, city, state, country, postal_code,
+             latitude, longitude, is_virtual, virtual_link,
+             is_free, cost, price_min, price_max, currency, price_tier, price_source,
+             ticket_url, category, tags, status,
+             source, source_id, source_url, cover_image_url, source_metadata,
+             created_at, updated_at
+      FROM events
+      WHERE status = 'published'
+        AND start_datetime >= (CURRENT_TIMESTAMP - INTERVAL '6 hours')
+      ORDER BY start_datetime ASC, created_at DESC
+      LIMIT $1
+    `,
+    [safeLimit]
+  );
+
+  const mapped = (result.rows || []).map((row) => mapDbEventRowToApiEvent(row));
+  const filtered = mapped
+    .filter((event) => matchesDbClassification(event, classificationName))
+    .filter((event) => matchesDbEventKeyword(event, keyword))
+    .filter((event) => matchesDbDistance(event, { lat, lng, radiusKm }));
+
+  return filtered.slice(0, Math.max(1, maxResults));
+}
+
 /**
  * GET /events
  * Query params:
@@ -5233,6 +5387,8 @@ app.get("/events", async (req, res) => {
       includeSetlists = "0",
       setlistsPerArtist = "3",
       maxArtists = "5",
+      preferDb = "1",
+      allowLiveFetch = "1",
     } = req.query;
 
     const latNum = Number(lat);
@@ -5249,6 +5405,93 @@ app.get("/events", async (req, res) => {
     }
 
     const sourceErrors = [];
+    const preferDbFirst = toBool(preferDb, true);
+    const allowLiveFetchBool = toBool(allowLiveFetch, true);
+
+    if (preferDbFirst) {
+      try {
+        const dbEvents = await fetchPublishedEventsFromDb({
+          keyword,
+          lat: latNum,
+          lng: lngNum,
+          radiusKm: radiusNum,
+          classificationName,
+          maxResults: maxResultsNum,
+        });
+
+        if (dbEvents.length > 0 || !allowLiveFetchBool) {
+          const events = dedupe(dbEvents).slice(0, maxResultsNum);
+          const withAnyPrice = events.filter((event) => event?.hasAnyPrice).length;
+          const unknownPrice = Math.max(0, events.length - withAnyPrice);
+          return res.json({
+            ok: true,
+            keyword,
+            lat: latNum,
+            lng: lngNum,
+            radiusKm: radiusNum,
+            classificationName,
+            includeScraped: false,
+            includeSetlists: false,
+            sourceCounts: summarizeSources(events),
+            sourceWarnings: sourceErrors.length > 0 ? sourceErrors : undefined,
+            dbFirst: true,
+            liveFetchAttempted: false,
+            scrapeCache: {
+              mode: "db_only",
+              ageMs: null,
+              timedOut: false,
+              ttlMs: SCRAPE_CACHE_CONFIG.ttlMs,
+              waitMs: SCRAPE_CACHE_CONFIG.requestWaitMs,
+            },
+            priceCoverage: {
+              total: events.length,
+              withAnyPrice,
+              enrichedThisRequest: 0,
+              unknownPrice,
+              blockedHostSkips: 0,
+            },
+            count: events.length,
+            events,
+          });
+        }
+      } catch (err) {
+        sourceErrors.push({ source: "db", error: String(err?.message || err) });
+      }
+    }
+
+    if (!allowLiveFetchBool) {
+      return res.json({
+        ok: true,
+        keyword,
+        lat: latNum,
+        lng: lngNum,
+        radiusKm: radiusNum,
+        classificationName,
+        includeScraped: false,
+        includeSetlists: false,
+        sourceCounts: {},
+        sourceWarnings: sourceErrors.length > 0 ? sourceErrors : undefined,
+        dbFirst: true,
+        liveFetchAttempted: false,
+        scrapeCache: {
+          mode: "disabled",
+          ageMs: null,
+          timedOut: false,
+          ttlMs: SCRAPE_CACHE_CONFIG.ttlMs,
+          waitMs: SCRAPE_CACHE_CONFIG.requestWaitMs,
+        },
+        priceCoverage: {
+          total: 0,
+          withAnyPrice: 0,
+          enrichedThisRequest: 0,
+          unknownPrice: 0,
+          blockedHostSkips: 0,
+        },
+        count: 0,
+        events: [],
+      });
+    }
+
     const tmPromise = fetchTicketmaster({
       keyword,
       lat: latNum,

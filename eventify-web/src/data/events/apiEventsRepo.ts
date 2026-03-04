@@ -291,7 +291,7 @@ const DEFAULT_FETCH_SIZE = Math.max(
 );
 const EVENTS_FETCH_TIMEOUT_MS = Math.max(
   1200,
-  Math.floor(toEnvNum(import.meta.env.VITE_EVENTS_FETCH_TIMEOUT_MS, 4500))
+  Math.floor(toEnvNum(import.meta.env.VITE_EVENTS_FETCH_TIMEOUT_MS, 15000))
 );
 const EVENTS_CACHE_TTL_MS = Math.max(
   3000,
@@ -299,6 +299,16 @@ const EVENTS_CACHE_TTL_MS = Math.max(
 );
 const INCLUDE_SCRAPED = !["0", "false", "no", "off"].includes(
   String(import.meta.env.VITE_EVENTS_INCLUDE_SCRAPED ?? "1")
+    .trim()
+    .toLowerCase()
+);
+const EVENTS_PREFER_DB_FIRST = !["0", "false", "no", "off"].includes(
+  String(import.meta.env.VITE_EVENTS_PREFER_DB_FIRST ?? "1")
+    .trim()
+    .toLowerCase()
+);
+const EVENTS_ALLOW_LIVE_FETCH = !["0", "false", "no", "off"].includes(
+  String(import.meta.env.VITE_EVENTS_ALLOW_LIVE_FETCH ?? "1")
     .trim()
     .toLowerCase()
 );
@@ -472,6 +482,8 @@ async function fetchRemoteEvents(
   url.searchParams.set("maxResults", String(size));
   url.searchParams.set("includeScraped", INCLUDE_SCRAPED ? "1" : "0");
   url.searchParams.set("includeSetlists", "0");
+  url.searchParams.set("preferDb", EVENTS_PREFER_DB_FIRST ? "1" : "0");
+  url.searchParams.set("allowLiveFetch", EVENTS_ALLOW_LIVE_FETCH ? "1" : "0");
   if (keyword) url.searchParams.set("keyword", keyword);
 
   const controller = new AbortController();
@@ -515,14 +527,14 @@ export const apiEventsRepo: EventsRepo = {
         originLat: origin.lat,
         originLng: origin.lng,
       }),
-      fetchRemoteEvents(params, { signal: opts?.signal }).catch(() => {
+      fetchRemoteEvents(params, { signal: opts?.signal }).catch((err) => {
         if (
           lastRemoteListCache &&
           Date.now() - lastRemoteListCache.at <= EVENTS_CACHE_TTL_MS
         ) {
           return lastRemoteListCache.items.map((item) => ({ ...item }));
         }
-        return [] as EventItem[];
+        throw err;
       }),
     ]);
 
