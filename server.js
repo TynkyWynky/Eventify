@@ -4920,7 +4920,37 @@ async function resolveEventsForAi({ events, query = {} } = {}) {
 
   const safeQuery = objectOrEmpty(query);
   const port = process.env.PORT ? Number(process.env.PORT) : 3000;
-  const endpoint = `http://127.0.0.1:${port}/events`;
+  const apiBase = cleanText(process.env.API_BASE_URL);
+  const vercelUrl = cleanText(process.env.VERCEL_URL);
+
+  const toAbsoluteBase = (value) => {
+    const raw = cleanText(value);
+    if (!raw) return null;
+    if (/^https?:\/\//i.test(raw)) return raw.replace(/\/+$/, "");
+    if (raw.startsWith("/") && vercelUrl) {
+      return `https://${vercelUrl}${raw}`.replace(/\/+$/, "");
+    }
+    return null;
+  };
+
+  const joinUrl = (base, path) =>
+    `${String(base || "").replace(/\/+$/, "")}/${String(path || "").replace(/^\/+/, "")}`;
+
+  const endpointCandidates = [];
+  endpointCandidates.push(`http://127.0.0.1:${port}/events`);
+
+  const absoluteApiBase = toAbsoluteBase(apiBase);
+  if (absoluteApiBase) {
+    endpointCandidates.push(joinUrl(absoluteApiBase, "events"));
+    endpointCandidates.push(joinUrl(absoluteApiBase, "api/events"));
+  }
+
+  if (vercelUrl) {
+    endpointCandidates.push(`https://${vercelUrl}/api/events`);
+    endpointCandidates.push(`https://${vercelUrl}/events`);
+  }
+
+  const uniqueEndpoints = [...new Set(endpointCandidates.filter(Boolean))];
 
   const params = {
     keyword: cleanText(safeQuery.keyword) || undefined,
@@ -4944,16 +4974,29 @@ async function resolveEventsForAi({ events, query = {} } = {}) {
     includeSetlists: 0,
   };
 
-  const { data } = await axios.get(endpoint, {
-    params,
-    timeout: 45000,
-  });
+  let lastError = null;
+  for (const endpoint of uniqueEndpoints) {
+    try {
+      const { data } = await axios.get(endpoint, {
+        params,
+        timeout: 45000,
+      });
 
-  if (!data || data.ok !== true || !Array.isArray(data.events)) {
-    throw new Error("Failed to resolve events for AI endpoints.");
+      if (data && data.ok === true && Array.isArray(data.events)) {
+        return data.events;
+      }
+
+      lastError = new Error(`Unexpected response shape from ${endpoint}`);
+    } catch (err) {
+      lastError = err;
+    }
   }
 
-  return data.events;
+  throw new Error(
+    `Failed to resolve events for AI endpoints (${uniqueEndpoints.join(" | ")}): ${String(
+      lastError?.message || lastError || "unknown"
+    )}`
+  );
 }
 
 // -----------------------------
