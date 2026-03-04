@@ -146,15 +146,11 @@ function EventCard({
           </div>
           <div className="eventFooterRight">{event.dateLabel}</div>
         </div>
-        {event.trending ? (
+        {priceBadge ? (
           <div className="eventSocialRow">
-            <span className="eventSocialPill eventSocialTrend">Trending</span>
+            <span className="eventSocialPill eventSocialPrice">{priceBadge}</span>
           </div>
         ) : null}
-        <div className="eventSocialRow">
-          {event.trending ? <span className="eventSocialPill eventSocialTrend">Trending</span> : null}
-          {priceBadge ? <span className="eventSocialPill eventSocialPrice">{priceBadge}</span> : null}
-        </div>
       </article>
     </Link>
   );

@@ -1031,7 +1031,7 @@ export default function MyEventsPage() {
                       </div>
                       <div className="sectionHint myEventsEventStats">
                         {views} views
-                        {active ? " • BOOSTED (Trending)" : ""}
+                        {active ? " • BOOSTED" : ""}
                       </div>
                     </div>
 

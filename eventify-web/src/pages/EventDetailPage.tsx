@@ -183,7 +183,7 @@ type GroupPlansResponse = {
 
 function getApiBaseUrl() {
   const raw = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.trim();
-  return raw || "http://localhost:3000";
+  return raw || "http://localhost:3002";
 }
 
 function formatStartIso(startIso?: string | null) {

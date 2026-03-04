@@ -101,7 +101,7 @@ function toEnvNum(raw: string | undefined, fallback: number) {
 
 function getApiBaseUrl() {
   const raw = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.trim();
-  return raw || "http://localhost:3000";
+  return raw || "http://localhost:3002";
 }
 
 export const DEFAULT_USER_LAT = toEnvNum(import.meta.env.VITE_DEFAULT_LAT, 50.8503);

@@ -1751,12 +1751,17 @@ function extractTicketmasterWebEventId(url) {
       if (exact) return exact[0];
       const suffix = segment.match(/(\d{6,})$/);
       if (suffix) return suffix[1];
+      const mixedId = segment.match(/^[A-Za-z0-9_-]{8,}$/);
+      if (mixedId && /\d/.test(segment) && /[A-Za-z]/.test(segment)) {
+        return mixedId[0];
+      }
     }
 
     const queryId =
       cleanText(parsed.searchParams.get("eventId")) ||
-      cleanText(parsed.searchParams.get("eventid"));
-    if (queryId && /^\d{6,}$/.test(queryId)) return queryId;
+      cleanText(parsed.searchParams.get("eventid")) ||
+      cleanText(parsed.searchParams.get("id"));
+    if (queryId && /^[A-Za-z0-9_-]{6,}$/.test(queryId)) return queryId;
   } catch {
     return null;
   }
@@ -1847,6 +1852,97 @@ function parseTicketmasterTicketSelectionPrice(payload, context = {}) {
   );
 }
 
+function parseTicketmasterEventInfoPrice(payload, context = {}) {
+  const normalizedPayload =
+    payload && typeof payload === "object" && !Array.isArray(payload) ? payload : null;
+  if (!normalizedPayload) return null;
+
+  const values = [];
+  let sawZero = false;
+  const ignoredPathRegex = /(fee|delivery|shipping|service|handling|order|payment|charge|tax|vat)/i;
+  const priceKeyRegex = /(price|min|max|cost|amount|value|ticket)/i;
+
+  const captureNumbers = (value, pathLabel) => {
+    if (ignoredPathRegex.test(pathLabel)) return;
+    const numbers = extractPriceNumbers(value);
+    for (const amount of numbers) {
+      const rounded = roundCurrencyAmount(amount);
+      if (rounded == null) continue;
+      if (rounded > 0) values.push(rounded);
+      else if (rounded === 0) sawZero = true;
+    }
+  };
+
+  const walk = (node, path = []) => {
+    if (node == null) return;
+    if (Array.isArray(node)) {
+      node.forEach((item, index) => walk(item, path.concat(String(index))));
+      return;
+    }
+    if (typeof node !== "object") return;
+
+    for (const [key, value] of Object.entries(node)) {
+      const nextPath = path.concat(String(key || ""));
+      const pathLabel = nextPath.join(".");
+      if (
+        value != null &&
+        (typeof value === "number" || typeof value === "string") &&
+        priceKeyRegex.test(String(key || ""))
+      ) {
+        captureNumbers(value, pathLabel);
+      }
+      walk(value, nextPath);
+    }
+  };
+
+  walk(normalizedPayload);
+
+  // Some markets only expose textual labels under event info blocks.
+  const textBlocks = [];
+  if (typeof normalizedPayload.webInfo === "string") textBlocks.push(normalizedPayload.webInfo);
+  if (typeof normalizedPayload.webInfoNoHtml === "string") textBlocks.push(normalizedPayload.webInfoNoHtml);
+  for (const topic of toArray(normalizedPayload.eventInfoTopics)) {
+    if (typeof topic?.description === "string") textBlocks.push(topic.description);
+  }
+
+  for (const block of textBlocks) {
+    const compact = cleanText(String(block || "").replace(/<[^>]+>/g, " ")) || "";
+    if (!compact) continue;
+    if (ignoredPathRegex.test(compact)) continue;
+    const numbers = extractPriceNumbers(compact);
+    for (const amount of numbers) {
+      const rounded = roundCurrencyAmount(amount);
+      if (rounded == null) continue;
+      if (rounded > 0) values.push(rounded);
+      else if (rounded === 0) sawZero = true;
+    }
+  }
+
+  if (values.length === 0 && !sawZero) return null;
+
+  let currency =
+    normalizeCurrencyCode(normalizedPayload.currencyCode) ||
+    normalizeCurrencyCode(normalizedPayload.currency);
+  if (!currency && /\.be$/i.test(context.hostname || "")) {
+    currency = "EUR";
+  }
+
+  const priceMin = values.length > 0 ? Math.min(...values) : null;
+  const priceMax = values.length > 0 ? Math.max(...values) : null;
+
+  return normalizePriceResult(
+    {
+      cost: priceMin,
+      priceMin,
+      priceMax,
+      currency,
+      ticketUrl: context.ticketUrl || null,
+      isFree: values.length === 0 && sawZero,
+    },
+    "ticketmaster_eventinfo"
+  );
+}
+
 async function extractTicketmasterApiPrice({ targetUrl, timeoutMs, userAgent }) {
   const target = cleanText(targetUrl);
   if (!target) return null;
@@ -1919,6 +2015,60 @@ async function extractTicketmasterApiPrice({ targetUrl, timeoutMs, userAgent }) 
   return null;
 }
 
+async function extractTicketmasterEventInfoApiPrice({ targetUrl, timeoutMs, userAgent }) {
+  const target = cleanText(targetUrl);
+  if (!target) return null;
+
+  let parsedTarget = null;
+  try {
+    parsedTarget = new URL(target);
+  } catch {
+    return null;
+  }
+
+  if (!isTicketmasterHost(parsedTarget.hostname)) return null;
+
+  const eventId = extractTicketmasterWebEventId(target);
+  if (!eventId) return null;
+
+  const apiUrl = `${parsedTarget.protocol}//${parsedTarget.host}/api/eventinfo/${encodeURIComponent(
+    eventId
+  )}`;
+
+  const response = await axios.get(apiUrl, {
+    timeout: Math.max(1200, timeoutMs),
+    responseType: "json",
+    maxRedirects: 2,
+    headers: {
+      "User-Agent": userAgent || DEFAULT_USER_AGENT,
+      Accept: "application/json,text/plain,*/*",
+      Referer: `${parsedTarget.protocol}//${parsedTarget.host}/`,
+      "Accept-Language": "en-US,en;q=0.9",
+    },
+    validateStatus(status) {
+      return status >= 200 && status < 500;
+    },
+  });
+
+  if (response.status === 400 || response.status === 404) return null;
+  if (response.status >= 500) return null;
+  if (response.status >= 400) {
+    throw createStatusError("ticketmaster_eventinfo_failed", response.status);
+  }
+
+  const parsed = parseTicketmasterEventInfoPrice(response.data, {
+    hostname: parsedTarget.hostname,
+    ticketUrl: target,
+  });
+  if (!parsed || !hasPriceSignal(parsed)) return null;
+
+  return {
+    ...parsed,
+    fetchedUrl: apiUrl,
+    matchedBy: "ticketmaster_eventinfo",
+  };
+}
+
 function pickBestPriceCandidate(candidates) {
   let best = null;
   for (const candidate of candidates) {
@@ -1960,6 +2110,15 @@ async function extractPriceFromEventUrl({
     });
     if (ticketmasterApiPrice && hasPriceSignal(ticketmasterApiPrice)) {
       return ticketmasterApiPrice;
+    }
+
+    const ticketmasterEventInfoPrice = await extractTicketmasterEventInfoApiPrice({
+      targetUrl: target,
+      timeoutMs,
+      userAgent,
+    });
+    if (ticketmasterEventInfoPrice && hasPriceSignal(ticketmasterEventInfoPrice)) {
+      return ticketmasterEventInfoPrice;
     }
   }
 

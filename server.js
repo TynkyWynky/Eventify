@@ -175,12 +175,24 @@ function normalizeOrigin(rawOrigin) {
 }
 
 const configuredCorsOrigins = parseDelimitedList(process.env.CORS_ORIGINS).map(normalizeOrigin);
+const allowLocalhostAnyPort = toBool(process.env.CORS_ALLOW_LOCALHOST_ANY_PORT, false);
 const defaultDevCorsOrigins = [
   "http://localhost:5173",
   "http://127.0.0.1:5173",
   "http://localhost:4173",
   "http://127.0.0.1:4173",
 ].map(normalizeOrigin);
+
+function isLoopbackOrigin(rawOrigin) {
+  try {
+    const u = new URL(String(rawOrigin || ""));
+    if (!["http:", "https:"].includes(u.protocol)) return false;
+    return u.hostname === "localhost" || u.hostname === "127.0.0.1";
+  } catch {
+    return false;
+  }
+}
+
 const allowedCorsOrigins = new Set(
   configuredCorsOrigins.length > 0
     ? configuredCorsOrigins
@@ -201,6 +213,7 @@ app.use(
       if (!origin) return callback(null, true);
       const normalized = normalizeOrigin(origin);
       if (allowedCorsOrigins.has(normalized)) return callback(null, true);
+      if (allowLocalhostAnyPort && isLoopbackOrigin(origin)) return callback(null, true);
       return callback(new Error("Origin not allowed by CORS"));
     },
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
@@ -3038,6 +3051,12 @@ async function enrichEventPriceOnDemand(event) {
     ...current,
     ...payload,
   });
+  if (cleanText(current?.source)?.toLowerCase() === "ticketmaster") {
+    const sample = toTicketmasterInferenceSample(merged);
+    if (sample) {
+      rememberTicketmasterPriceSample(ticketmasterPriceKnowledge, merged, sample);
+    }
+  }
   return { event: merged, enriched: hasAnyPriceSignal(merged), blockedHostSkip: false };
 }
 
@@ -3693,6 +3712,578 @@ function extractTicketmasterPrice(event) {
   };
 }
 
+const TICKETMASTER_PRICE_INFERENCE_CONFIG = {
+  enabled: toBool(process.env.TICKETMASTER_PRICE_INFERENCE_ENABLED, true),
+  maxSamplesPerKey: Math.max(
+    4,
+    toPositiveInt(process.env.TICKETMASTER_PRICE_INFERENCE_MAX_SAMPLES_PER_KEY, 24)
+  ),
+  maxKeysPerBucket: Math.max(
+    100,
+    toPositiveInt(process.env.TICKETMASTER_PRICE_INFERENCE_MAX_KEYS_PER_BUCKET, 600)
+  ),
+  minVenueSamples: Math.max(
+    2,
+    toPositiveInt(process.env.TICKETMASTER_PRICE_INFERENCE_MIN_VENUE_SAMPLES, 2)
+  ),
+  minPromoterSamples: Math.max(
+    2,
+    toPositiveInt(process.env.TICKETMASTER_PRICE_INFERENCE_MIN_PROMOTER_SAMPLES, 2)
+  ),
+  minCityCategorySamples: Math.max(
+    2,
+    toPositiveInt(process.env.TICKETMASTER_PRICE_INFERENCE_MIN_CITY_CATEGORY_SAMPLES, 3)
+  ),
+  minCategorySamples: Math.max(
+    2,
+    toPositiveInt(process.env.TICKETMASTER_PRICE_INFERENCE_MIN_CATEGORY_SAMPLES, 4)
+  ),
+  minCitySamples: Math.max(
+    2,
+    toPositiveInt(process.env.TICKETMASTER_PRICE_INFERENCE_MIN_CITY_SAMPLES, 4)
+  ),
+  minGlobalSamples: Math.max(
+    3,
+    toPositiveInt(process.env.TICKETMASTER_PRICE_INFERENCE_MIN_GLOBAL_SAMPLES, 6)
+  ),
+  dbSeedEnabled: toBool(process.env.TICKETMASTER_PRICE_INFERENCE_DB_SEED_ENABLED, true),
+  dbSeedTtlMs: Math.max(
+    30 * 1000,
+    toPositiveInt(process.env.TICKETMASTER_PRICE_INFERENCE_DB_SEED_TTL_MS, 10 * 60 * 1000)
+  ),
+  dbSeedMaxRows: Math.max(
+    100,
+    toPositiveInt(process.env.TICKETMASTER_PRICE_INFERENCE_DB_SEED_MAX_ROWS, 3000)
+  ),
+};
+
+const ticketmasterPriceKnowledge = {
+  byTitle: new Map(),
+  byArtist: new Map(),
+  byVenue: new Map(),
+  byPromoter: new Map(),
+  byCityCategory: new Map(),
+  byCategory: new Map(),
+  byCity: new Map(),
+  globalSamples: [],
+};
+const ticketmasterDbSeedState = {
+  hydratedAt: 0,
+  inFlight: null,
+};
+
+function normalizeTicketmasterInferenceToken(value) {
+  const text = cleanText(value);
+  if (!text) return "";
+  return text
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+function toTicketmasterInferenceSample(event) {
+  const price = normalizeEventPrice(event);
+  if (!price.hasAnyPrice) return null;
+
+  const sourceHint = cleanText(event?.priceSource || event?.metadata?.priceSource) || "";
+  if (sourceHint.startsWith("ticketmaster_inferred_")) return null;
+
+  let min = toNumberOrNull(price.priceMin);
+  let max = toNumberOrNull(price.priceMax);
+  const cost = toNumberOrNull(price.cost);
+
+  if (min == null && cost != null) min = cost;
+  if (max == null && cost != null) max = cost;
+  if (min == null && max != null) min = max;
+  if (max == null && min != null) max = min;
+
+  const isFree = price.isFree === true || (min === 0 && max === 0);
+  if (!isFree && min == null && max == null) return null;
+
+  const sampleId = cleanText(event?.sourceId || event?.ticketUrl || event?.url || event?.title);
+  if (!sampleId) return null;
+
+  return {
+    sampleId,
+    priceMin: min,
+    priceMax: max,
+    cost: cost != null ? cost : min,
+    isFree,
+    currency: normalizeCurrencyCode(price.currency),
+  };
+}
+
+function ticketmasterTitleKey(event) {
+  return normalizeTicketmasterInferenceToken(event?.title);
+}
+
+function ticketmasterArtistKey(event) {
+  return normalizeTicketmasterInferenceToken(event?.artistName);
+}
+
+function ticketmasterVenueKey(event) {
+  const city = normalizeTicketmasterInferenceToken(event?.city);
+  const venue = normalizeTicketmasterInferenceToken(event?.venue);
+  if (!venue) return "";
+  return city ? `${city}|${venue}` : venue;
+}
+
+function ticketmasterPromoterKey(event) {
+  return normalizeTicketmasterInferenceToken(
+    event?.organizerName || event?.metadata?.promoterName || event?.metadata?.promoter
+  );
+}
+
+function ticketmasterCategoryKey(event) {
+  return normalizeTicketmasterInferenceToken(
+    event?.genre ||
+      event?.category ||
+      event?.metadata?.primaryCategory ||
+      event?.metadata?.classificationName
+  );
+}
+
+function ticketmasterCityKey(event) {
+  return normalizeTicketmasterInferenceToken(event?.city);
+}
+
+function ticketmasterCityCategoryKey(event) {
+  const city = ticketmasterCityKey(event);
+  const category = ticketmasterCategoryKey(event);
+  if (!city || !category) return "";
+  return `${city}|${category}`;
+}
+
+function upsertTicketmasterSample(map, key, sample) {
+  if (!key || !sample) return;
+
+  const arr = Array.isArray(map.get(key)) ? map.get(key).slice() : [];
+  const existingIndex = arr.findIndex((entry) => entry?.sampleId === sample.sampleId);
+  if (existingIndex >= 0) {
+    arr[existingIndex] = sample;
+  } else {
+    arr.push(sample);
+  }
+
+  while (arr.length > TICKETMASTER_PRICE_INFERENCE_CONFIG.maxSamplesPerKey) {
+    arr.shift();
+  }
+
+  map.delete(key);
+  map.set(key, arr);
+  while (map.size > TICKETMASTER_PRICE_INFERENCE_CONFIG.maxKeysPerBucket) {
+    const firstKey = map.keys().next().value;
+    if (!firstKey) break;
+    map.delete(firstKey);
+  }
+}
+
+function upsertTicketmasterSampleList(list, sample, limit) {
+  const arr = Array.isArray(list) ? list.slice() : [];
+  if (!sample) return arr;
+  const existingIndex = arr.findIndex((entry) => entry?.sampleId === sample.sampleId);
+  if (existingIndex >= 0) {
+    arr[existingIndex] = sample;
+  } else {
+    arr.push(sample);
+  }
+  const maxSize = Math.max(4, Number(limit) || TICKETMASTER_PRICE_INFERENCE_CONFIG.maxSamplesPerKey);
+  while (arr.length > maxSize) {
+    arr.shift();
+  }
+  return arr;
+}
+
+function rememberTicketmasterPriceSample(bucket, event, sample) {
+  if (!bucket || !sample) return;
+  upsertTicketmasterSample(bucket.byTitle, ticketmasterTitleKey(event), sample);
+  upsertTicketmasterSample(bucket.byArtist, ticketmasterArtistKey(event), sample);
+  upsertTicketmasterSample(bucket.byVenue, ticketmasterVenueKey(event), sample);
+  upsertTicketmasterSample(bucket.byPromoter, ticketmasterPromoterKey(event), sample);
+  upsertTicketmasterSample(bucket.byCityCategory, ticketmasterCityCategoryKey(event), sample);
+  upsertTicketmasterSample(bucket.byCategory, ticketmasterCategoryKey(event), sample);
+  upsertTicketmasterSample(bucket.byCity, ticketmasterCityKey(event), sample);
+  bucket.globalSamples = upsertTicketmasterSampleList(
+    bucket.globalSamples,
+    sample,
+    TICKETMASTER_PRICE_INFERENCE_CONFIG.maxSamplesPerKey * 8
+  );
+}
+
+function isTicketmasterDbSeedFresh() {
+  if (!ticketmasterDbSeedState.hydratedAt) return false;
+  return Date.now() - ticketmasterDbSeedState.hydratedAt < TICKETMASTER_PRICE_INFERENCE_CONFIG.dbSeedTtlMs;
+}
+
+async function hydrateTicketmasterPriceKnowledgeFromDbOptional() {
+  if (!TICKETMASTER_PRICE_INFERENCE_CONFIG.dbSeedEnabled) return;
+  if (!pool) return;
+  if (isTicketmasterDbSeedFresh()) return;
+  if (ticketmasterDbSeedState.inFlight) {
+    await ticketmasterDbSeedState.inFlight;
+    return;
+  }
+
+  ticketmasterDbSeedState.inFlight = (async () => {
+    try {
+      const db = requireDb();
+      const limit = TICKETMASTER_PRICE_INFERENCE_CONFIG.dbSeedMaxRows;
+      const result = await db.query(
+        `
+          SELECT id, source_id, title, city, venue_name, category, tags,
+                 is_free, cost, price_min, price_max, currency, price_source
+          FROM events
+          WHERE LOWER(source) = 'ticketmaster'
+            AND (
+              is_free = TRUE
+              OR cost IS NOT NULL
+              OR price_min IS NOT NULL
+              OR price_max IS NOT NULL
+            )
+          ORDER BY updated_at DESC NULLS LAST, id DESC
+          LIMIT $1
+        `,
+        [limit]
+      );
+
+      for (const row of result.rows || []) {
+        const syntheticEvent = {
+          source: "ticketmaster",
+          sourceId: cleanText(row?.source_id) || `db:${row?.id || ""}`,
+          title: cleanText(row?.title),
+          city: cleanText(row?.city),
+          venue: cleanText(row?.venue_name),
+          category: cleanText(row?.category),
+          genre: cleanText(row?.category),
+          tags: Array.isArray(row?.tags) ? row.tags.filter(Boolean) : [],
+          isFree: row?.is_free === true,
+          cost: toNumberOrNull(row?.cost),
+          priceMin: toNumberOrNull(row?.price_min),
+          priceMax: toNumberOrNull(row?.price_max),
+          currency: normalizeCurrencyCode(row?.currency),
+          priceSource: cleanText(row?.price_source) || "db_sync",
+        };
+        const sample = toTicketmasterInferenceSample(syntheticEvent);
+        if (!sample) continue;
+        rememberTicketmasterPriceSample(ticketmasterPriceKnowledge, syntheticEvent, sample);
+      }
+    } catch {
+      // Ignore DB-seed failures. Live API/scrape enrichment still runs.
+    } finally {
+      ticketmasterDbSeedState.hydratedAt = Date.now();
+      ticketmasterDbSeedState.inFlight = null;
+    }
+  })();
+
+  await ticketmasterDbSeedState.inFlight;
+}
+
+function mergeTicketmasterSamples(primary, secondary) {
+  const out = [];
+  const seen = new Set();
+  for (const source of [primary, secondary]) {
+    for (const sample of Array.isArray(source) ? source : []) {
+      const key = cleanText(sample?.sampleId);
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
+      out.push(sample);
+    }
+  }
+  return out;
+}
+
+function medianNumber(values) {
+  const list = (Array.isArray(values) ? values : [])
+    .map((value) => toNumberOrNull(value))
+    .filter((value) => typeof value === "number")
+    .sort((a, b) => a - b);
+  if (list.length === 0) return null;
+  const mid = Math.floor(list.length / 2);
+  if (list.length % 2 === 1) return list[mid];
+  return (list[mid - 1] + list[mid]) / 2;
+}
+
+function mostCommonCurrency(samples) {
+  const counts = new Map();
+  for (const sample of Array.isArray(samples) ? samples : []) {
+    const currency = normalizeCurrencyCode(sample?.currency);
+    if (!currency) continue;
+    counts.set(currency, (counts.get(currency) || 0) + 1);
+  }
+
+  let best = null;
+  let bestCount = 0;
+  for (const [currency, count] of counts.entries()) {
+    if (count > bestCount) {
+      best = currency;
+      bestCount = count;
+    }
+  }
+  return best;
+}
+
+function summarizeTicketmasterSamples(samples) {
+  const list = Array.isArray(samples) ? samples : [];
+  if (list.length === 0) return null;
+
+  const minValues = [];
+  const maxValues = [];
+  let freeVotes = 0;
+
+  for (const sample of list) {
+    const min = toNumberOrNull(sample?.priceMin);
+    const max = toNumberOrNull(sample?.priceMax);
+    const cost = toNumberOrNull(sample?.cost);
+    const resolvedMin = min != null ? min : cost != null ? cost : max;
+    const resolvedMax = max != null ? max : cost != null ? cost : min;
+
+    const hasPositive = (resolvedMin != null && resolvedMin > 0) || (resolvedMax != null && resolvedMax > 0);
+    if (hasPositive) {
+      if (resolvedMin != null && resolvedMin > 0) minValues.push(resolvedMin);
+      if (resolvedMax != null && resolvedMax > 0) maxValues.push(resolvedMax);
+      continue;
+    }
+
+    if (sample?.isFree === true || resolvedMin === 0 || resolvedMax === 0) {
+      freeVotes += 1;
+    }
+  }
+
+  const currency = mostCommonCurrency(list);
+  const medianMin = medianNumber(minValues.length > 0 ? minValues : maxValues);
+  const medianMax = medianNumber(maxValues.length > 0 ? maxValues : minValues);
+
+  if (medianMin != null || medianMax != null) {
+    let priceMin = medianMin != null ? medianMin : medianMax;
+    let priceMax = medianMax != null ? medianMax : medianMin;
+    if (priceMin != null && priceMax != null && priceMin > priceMax) {
+      const swap = priceMin;
+      priceMin = priceMax;
+      priceMax = swap;
+    }
+
+    return {
+      isFree: false,
+      cost: priceMin,
+      priceMin,
+      priceMax,
+      currency,
+      sampleSize: list.length,
+    };
+  }
+
+  if (freeVotes > 0) {
+    return {
+      isFree: true,
+      cost: 0,
+      priceMin: 0,
+      priceMax: 0,
+      currency,
+      sampleSize: list.length,
+    };
+  }
+
+  return null;
+}
+
+function inferTicketmasterPriceFromKnowledge(event, localKnowledge) {
+  const titleKey = ticketmasterTitleKey(event);
+  const artistKey = ticketmasterArtistKey(event);
+  const venueKey = ticketmasterVenueKey(event);
+  const promoterKey = ticketmasterPromoterKey(event);
+  const cityCategoryKey = ticketmasterCityCategoryKey(event);
+  const categoryKey = ticketmasterCategoryKey(event);
+  const cityKey = ticketmasterCityKey(event);
+
+  const titleSamples = mergeTicketmasterSamples(
+    localKnowledge.byTitle.get(titleKey),
+    ticketmasterPriceKnowledge.byTitle.get(titleKey)
+  );
+  const titleSummary = summarizeTicketmasterSamples(titleSamples);
+  if (titleSummary) {
+    return {
+      source: "ticketmaster_inferred_title",
+      basis: "title",
+      ...titleSummary,
+    };
+  }
+
+  const artistSamples = mergeTicketmasterSamples(
+    localKnowledge.byArtist.get(artistKey),
+    ticketmasterPriceKnowledge.byArtist.get(artistKey)
+  );
+  const artistSummary = summarizeTicketmasterSamples(artistSamples);
+  if (artistSummary) {
+    return {
+      source: "ticketmaster_inferred_artist",
+      basis: "artist",
+      ...artistSummary,
+    };
+  }
+
+  const venueSamples = mergeTicketmasterSamples(
+    localKnowledge.byVenue.get(venueKey),
+    ticketmasterPriceKnowledge.byVenue.get(venueKey)
+  );
+  if (venueSamples.length >= TICKETMASTER_PRICE_INFERENCE_CONFIG.minVenueSamples) {
+    const venueSummary = summarizeTicketmasterSamples(venueSamples);
+    if (venueSummary) {
+      return {
+        source: "ticketmaster_inferred_venue",
+        basis: "venue",
+        ...venueSummary,
+      };
+    }
+  }
+
+  const promoterSamples = mergeTicketmasterSamples(
+    localKnowledge.byPromoter.get(promoterKey),
+    ticketmasterPriceKnowledge.byPromoter.get(promoterKey)
+  );
+  if (promoterSamples.length >= TICKETMASTER_PRICE_INFERENCE_CONFIG.minPromoterSamples) {
+    const promoterSummary = summarizeTicketmasterSamples(promoterSamples);
+    if (promoterSummary) {
+      return {
+        source: "ticketmaster_inferred_promoter",
+        basis: "promoter",
+        ...promoterSummary,
+      };
+    }
+  }
+
+  const cityCategorySamples = mergeTicketmasterSamples(
+    localKnowledge.byCityCategory.get(cityCategoryKey),
+    ticketmasterPriceKnowledge.byCityCategory.get(cityCategoryKey)
+  );
+  if (cityCategorySamples.length >= TICKETMASTER_PRICE_INFERENCE_CONFIG.minCityCategorySamples) {
+    const cityCategorySummary = summarizeTicketmasterSamples(cityCategorySamples);
+    if (cityCategorySummary) {
+      return {
+        source: "ticketmaster_inferred_city_category",
+        basis: "city_category",
+        ...cityCategorySummary,
+      };
+    }
+  }
+
+  const categorySamples = mergeTicketmasterSamples(
+    localKnowledge.byCategory.get(categoryKey),
+    ticketmasterPriceKnowledge.byCategory.get(categoryKey)
+  );
+  if (categorySamples.length >= TICKETMASTER_PRICE_INFERENCE_CONFIG.minCategorySamples) {
+    const categorySummary = summarizeTicketmasterSamples(categorySamples);
+    if (categorySummary) {
+      return {
+        source: "ticketmaster_inferred_category",
+        basis: "category",
+        ...categorySummary,
+      };
+    }
+  }
+
+  const citySamples = mergeTicketmasterSamples(
+    localKnowledge.byCity.get(cityKey),
+    ticketmasterPriceKnowledge.byCity.get(cityKey)
+  );
+  if (citySamples.length >= TICKETMASTER_PRICE_INFERENCE_CONFIG.minCitySamples) {
+    const citySummary = summarizeTicketmasterSamples(citySamples);
+    if (citySummary) {
+      return {
+        source: "ticketmaster_inferred_city",
+        basis: "city",
+        ...citySummary,
+      };
+    }
+  }
+
+  const globalSamples = mergeTicketmasterSamples(
+    localKnowledge.globalSamples,
+    ticketmasterPriceKnowledge.globalSamples
+  );
+  if (globalSamples.length >= TICKETMASTER_PRICE_INFERENCE_CONFIG.minGlobalSamples) {
+    const globalSummary = summarizeTicketmasterSamples(globalSamples);
+    if (globalSummary) {
+      return {
+        source: "ticketmaster_inferred_global",
+        basis: "global",
+        ...globalSummary,
+      };
+    }
+  }
+
+  return null;
+}
+
+function applyTicketmasterPriceInference(events) {
+  const list = Array.isArray(events) ? events : [];
+  if (!TICKETMASTER_PRICE_INFERENCE_CONFIG.enabled || list.length === 0) {
+    return list;
+  }
+
+  const localKnowledge = {
+    byTitle: new Map(),
+    byArtist: new Map(),
+    byVenue: new Map(),
+    byPromoter: new Map(),
+    byCityCategory: new Map(),
+    byCategory: new Map(),
+    byCity: new Map(),
+    globalSamples: [],
+  };
+
+  for (const event of list) {
+    if (cleanText(event?.source)?.toLowerCase() !== "ticketmaster") continue;
+    const sample = toTicketmasterInferenceSample(event);
+    if (!sample) continue;
+    rememberTicketmasterPriceSample(localKnowledge, event, sample);
+    rememberTicketmasterPriceSample(ticketmasterPriceKnowledge, event, sample);
+  }
+
+  return list.map((event) => {
+    if (cleanText(event?.source)?.toLowerCase() !== "ticketmaster") return event;
+
+    const currentPrice = normalizeEventPrice(event);
+    if (currentPrice.hasAnyPrice) return event;
+
+    const inferred = inferTicketmasterPriceFromKnowledge(event, localKnowledge);
+    if (!inferred) return event;
+
+    const inferredCurrency =
+      normalizeCurrencyCode(inferred.currency) ||
+      normalizeCurrencyCode(event.currency) ||
+      (/\.ticketmaster\.be\//i.test(String(event.url || event.ticketUrl || "")) ? "EUR" : null);
+    const inferredConfidence =
+      inferred.basis === "city" ||
+      inferred.basis === "category" ||
+      inferred.basis === "city_category" ||
+      inferred.basis === "global"
+        ? "inferred_low"
+        : "inferred";
+
+    return enrichEventWithPriceInsights({
+      ...event,
+      cost: inferred.cost,
+      priceMin: inferred.priceMin,
+      priceMax: inferred.priceMax,
+      currency: inferredCurrency,
+      isFree: inferred.isFree === true,
+      priceSource: inferred.source,
+      priceConfidence: inferredConfidence,
+      metadata: {
+        ...(event.metadata && typeof event.metadata === "object" ? event.metadata : {}),
+        priceMin: inferred.priceMin,
+        priceMax: inferred.priceMax,
+        priceSource: inferred.source,
+        priceInferenceBasis: inferred.basis,
+        priceInferenceSampleSize: inferred.sampleSize,
+        priceInferenceConfidence: inferredConfidence,
+      },
+    });
+  });
+}
+
 function mapTicketmasterEvent(e, { classificationName = "music" } = {}) {
   const venue = e?._embedded?.venues?.[0];
   const attraction = e?._embedded?.attractions?.[0];
@@ -3723,6 +4314,14 @@ function mapTicketmasterEvent(e, { classificationName = "music" } = {}) {
   ]);
   const priceInfo = extractTicketmasterPrice(e);
   const ticketUrl = cleanText(e.url);
+  const hasApiPrice =
+    priceInfo.isFree === true ||
+    toNumberOrNull(priceInfo.min) != null ||
+    toNumberOrNull(priceInfo.max) != null ||
+    toNumberOrNull(priceInfo.cost) != null;
+  const normalizedCurrency =
+    normalizeCurrencyCode(priceInfo.currency) ||
+    (ticketUrl && /\.ticketmaster\.be\//i.test(ticketUrl) ? "EUR" : null);
   const start = e.dates?.start?.dateTime || e.dates?.start?.localDate || null;
 
   return {
@@ -3747,7 +4346,8 @@ function mapTicketmasterEvent(e, { classificationName = "music" } = {}) {
     cost: priceInfo.cost,
     priceMin: priceInfo.min,
     priceMax: priceInfo.max,
-    currency: priceInfo.currency,
+    currency: normalizedCurrency,
+    priceSource: hasApiPrice ? "ticketmaster_discovery" : "unknown",
     url: ticketUrl,
     ticketUrl,
     imageUrl: pickTicketmasterImage(e?.images),
@@ -3764,6 +4364,7 @@ function mapTicketmasterEvent(e, { classificationName = "music" } = {}) {
       ticketmasterStatus: cleanText(e?.dates?.status?.code),
       priceMin: priceInfo.min,
       priceMax: priceInfo.max,
+      priceSource: hasApiPrice ? "ticketmaster_discovery" : "unknown",
     },
   };
 }
@@ -3776,6 +4377,7 @@ async function fetchTicketmaster({
   size = 10,
   classificationName = "music",
 }) {
+  await hydrateTicketmasterPriceKnowledgeFromDbOptional();
   const url = "https://app.ticketmaster.com/discovery/v2/events.json";
 
   const latlong =
@@ -3798,7 +4400,8 @@ async function fetchTicketmaster({
   });
 
   const events = data?._embedded?.events ?? [];
-  return events.map((e) => mapTicketmasterEvent(e, { classificationName }));
+  const mapped = events.map((e) => mapTicketmasterEvent(e, { classificationName }));
+  return applyTicketmasterPriceInference(mapped);
 }
 
 async function fetchTicketmasterEventById({
@@ -4182,6 +4785,7 @@ app.get("/events", async (req, res) => {
 
     const priceResult = await enrichMissingPrices(events);
     events = priceResult.events;
+    events = applyTicketmasterPriceInference(events);
     const withAnyPrice = events.filter((event) => event?.hasAnyPrice).length;
     const unknownPrice = Math.max(0, events.length - withAnyPrice);
 
