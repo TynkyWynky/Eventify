@@ -176,6 +176,10 @@ function normalizeOrigin(rawOrigin) {
 
 const configuredCorsOrigins = parseDelimitedList(process.env.CORS_ORIGINS).map(normalizeOrigin);
 const allowLocalhostAnyPort = toBool(process.env.CORS_ALLOW_LOCALHOST_ANY_PORT, false);
+const allowVercelAppOrigins = toBool(
+  process.env.CORS_ALLOW_VERCEL_APP,
+  IS_PROD && String(process.env.VERCEL || "").trim() === "1"
+);
 const defaultDevCorsOrigins = [
   "http://localhost:5173",
   "http://127.0.0.1:5173",
@@ -188,6 +192,16 @@ function isLoopbackOrigin(rawOrigin) {
     const u = new URL(String(rawOrigin || ""));
     if (!["http:", "https:"].includes(u.protocol)) return false;
     return u.hostname === "localhost" || u.hostname === "127.0.0.1";
+  } catch {
+    return false;
+  }
+}
+
+function isVercelAppOrigin(rawOrigin) {
+  try {
+    const u = new URL(String(rawOrigin || ""));
+    if (u.protocol !== "https:") return false;
+    return u.hostname.endsWith(".vercel.app");
   } catch {
     return false;
   }
@@ -214,6 +228,7 @@ app.use(
       const normalized = normalizeOrigin(origin);
       if (allowedCorsOrigins.has(normalized)) return callback(null, true);
       if (allowLocalhostAnyPort && isLoopbackOrigin(origin)) return callback(null, true);
+      if (allowVercelAppOrigins && isVercelAppOrigin(origin)) return callback(null, true);
       return callback(new Error("Origin not allowed by CORS"));
     },
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],

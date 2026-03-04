@@ -224,6 +224,7 @@ Minimaal:
 - `JWT_SECRET` = sterke random string (>= 32 chars)
 - `CORS_ORIGINS` = frontend origin(s)
 - `CRON_SECRET` = random secret voor cron endpoint authenticatie
+- `CORS_ALLOW_VERCEL_APP=true` (handig voor Vercel preview/frontends op `*.vercel.app`)
 
 Optioneel maar aanbevolen:
 - `TICKETMASTER_API_KEY`

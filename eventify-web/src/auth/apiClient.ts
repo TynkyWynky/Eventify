@@ -1,5 +1,21 @@
-const ENV_BASE = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.trim();
-const RAW_BASE = ENV_BASE || (import.meta.env.DEV ? "http://localhost:3000" : "/api");
+function shouldUpgradeHttpBase(baseUrl: string): boolean {
+  if (!/^http:\/\//i.test(baseUrl)) return false;
+  if (typeof window === "undefined") return false;
+  if (window.location.protocol !== "https:") return false;
+  return !/^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?(\/|$)/i.test(baseUrl);
+}
+
+function resolveRawApiBaseUrl(): string {
+  const envBase = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.trim();
+  const fallbackBase = import.meta.env.DEV ? "http://localhost:3000" : "/api";
+  const candidate = envBase || fallbackBase;
+  if (shouldUpgradeHttpBase(candidate)) {
+    return candidate.replace(/^http:\/\//i, "https://");
+  }
+  return candidate;
+}
+
+const RAW_BASE = resolveRawApiBaseUrl();
 
 export const API_BASE_URL = RAW_BASE.replace(/\/+$/, "");
 
