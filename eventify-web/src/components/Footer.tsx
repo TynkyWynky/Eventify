@@ -39,12 +39,18 @@ export default function Footer() {
     setOpenSection((prev) => (prev === section ? null : section));
   }
 
+  function handleFooterLinkClick() {
+    if (typeof window === "undefined") return;
+    if (!window.matchMedia("(max-width: 760px)").matches) return;
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
   return (
     <footer className="siteFooter" role="contentinfo">
       <div className="footerInner">
         <div className="footerGrid">
           <div className="footerBrand">
-            <Link to="/" className="footerLogo" aria-label="Eventium home">
+            <Link to="/" className="footerLogo" aria-label="Eventium home" onClick={handleFooterLinkClick}>
               Eventium
             </Link>
 
@@ -77,20 +83,20 @@ export default function Footer() {
               id="footer-explore-links"
               className={`footerLinkList ${openSection === "explore" ? "isOpen" : ""}`}
             >
-              <li><Link className="footerLink" to="/">Discover</Link></li>
-              <li><Link className="footerLink" to="/my-events">My events</Link></li>
+              <li><Link className="footerLink" to="/" onClick={handleFooterLinkClick}>Discover</Link></li>
+              <li><Link className="footerLink" to="/my-events" onClick={handleFooterLinkClick}>My events</Link></li>
               <li>
                 {user ? (
-                  <Link className="footerLink" to="/account">Account</Link>
+                  <Link className="footerLink" to="/account" onClick={handleFooterLinkClick}>Account</Link>
                 ) : (
                   <div className="footerAuthStack">
-                    <Link className="footerLink" to="/login">Login</Link>
-                    <Link className="footerLink" to="/register">Sign up</Link>
+                    <Link className="footerLink" to="/login" onClick={handleFooterLinkClick}>Login</Link>
+                    <Link className="footerLink" to="/register" onClick={handleFooterLinkClick}>Sign up</Link>
                   </div>
                 )}
               </li>
               {user?.role === "admin" ? (
-                <li><Link className="footerLink" to="/admin">Admin</Link></li>
+                <li><Link className="footerLink" to="/admin" onClick={handleFooterLinkClick}>Admin</Link></li>
               ) : null}
             </ul>
           </nav>
@@ -112,10 +118,10 @@ export default function Footer() {
               id="footer-legal-links"
               className={`footerLinkList ${openSection === "legal" ? "isOpen" : ""}`}
             >
-              <li><Link className="footerLink" to="/privacy">Privacy (GDPR)</Link></li>
-              <li><Link className="footerLink" to="/terms">Terms</Link></li>
-              <li><Link className="footerLink" to="/cookies">Cookies</Link></li>
-              <li><Link className="footerLink" to="/legal">Legal notice</Link></li>
+              <li><Link className="footerLink" to="/privacy" onClick={handleFooterLinkClick}>Privacy (GDPR)</Link></li>
+              <li><Link className="footerLink" to="/terms" onClick={handleFooterLinkClick}>Terms</Link></li>
+              <li><Link className="footerLink" to="/cookies" onClick={handleFooterLinkClick}>Cookies</Link></li>
+              <li><Link className="footerLink" to="/legal" onClick={handleFooterLinkClick}>Legal notice</Link></li>
             </ul>
           </nav>
 
@@ -160,11 +166,11 @@ export default function Footer() {
           </div>
 
           <div className="footerTinyLinks" aria-label="Footer shortcuts">
-            <Link className="footerTinyLink" to="/privacy">Privacy</Link>
+            <Link className="footerTinyLink" to="/privacy" onClick={handleFooterLinkClick}>Privacy</Link>
             <span className="footerTinyDot">•</span>
-            <Link className="footerTinyLink" to="/terms">Terms</Link>
+            <Link className="footerTinyLink" to="/terms" onClick={handleFooterLinkClick}>Terms</Link>
             <span className="footerTinyDot">•</span>
-            <Link className="footerTinyLink" to="/cookies">Cookies</Link>
+            <Link className="footerTinyLink" to="/cookies" onClick={handleFooterLinkClick}>Cookies</Link>
           </div>
         </div>
       </div>
