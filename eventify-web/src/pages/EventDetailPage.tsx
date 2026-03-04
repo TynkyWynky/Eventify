@@ -5,7 +5,7 @@ import { eventsRepo } from "../data/events";
 import { getGenreFallbackImage } from "../data/events/genreImages";
 import { rememberViewedEvent } from "../data/events/recentlyViewedEventsStore";
 import { useAuth } from "../auth/AuthContext";
-import { API_BASE_URL, apiFetch } from "../auth/apiClient";
+import { apiBaseForUrlConstructor, apiFetch } from "../auth/apiClient";
 import { useNotifications } from "../components/NotificationProvider";
 import GroupPlansPanel from "./eventDetail/GroupPlansPanel";
 
@@ -552,8 +552,7 @@ export default function EventDetailPage() {
     }
 
     const controller = new AbortController();
-    const base = API_BASE_URL;
-    const url = new URL("setlists", base.endsWith("/") ? base : `${base}/`);
+    const url = new URL("setlists", apiBaseForUrlConstructor());
     url.searchParams.set("artistName", artist);
 
     setSetlistsLoading(true);
@@ -794,8 +793,7 @@ export default function EventDetailPage() {
 
     setTmEnrichAttemptedSourceId(sourceId);
     const controller = new AbortController();
-    const base = API_BASE_URL;
-    const url = new URL("events/enrich", base.endsWith("/") ? base : `${base}/`);
+    const url = new URL("events/enrich", apiBaseForUrlConstructor());
     url.searchParams.set("source", "ticketmaster");
     url.searchParams.set("sourceId", sourceId);
 

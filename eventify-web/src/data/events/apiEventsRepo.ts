@@ -5,7 +5,7 @@ import {
   listPublicOrganizerEvents,
 } from "./organizerEventsStore";
 import { getGenreFallbackImage } from "./genreImages";
-import { API_BASE_URL } from "../../auth/apiClient";
+import { apiBaseForUrlConstructor } from "../../auth/apiClient";
 
 type ApiEvent = {
   source?: string | null;
@@ -437,8 +437,7 @@ async function fetchRemoteEvents(
   params?: EventsListParams,
   opts?: { signal?: AbortSignal; sizeOverride?: number }
 ) {
-  const base = API_BASE_URL.endsWith("/") ? API_BASE_URL : `${API_BASE_URL}/`;
-  const url = new URL("events", base);
+  const url = new URL("events", apiBaseForUrlConstructor());
 
   const origin = resolveOrigin(params);
   const radiusKm =

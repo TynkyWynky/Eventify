@@ -1,4 +1,4 @@
-import { apiUrl } from "../../auth/apiClient";
+import { apiBaseForUrlConstructor } from "../../auth/apiClient";
 
 export type EventSuggestionsResponse = {
   ok: boolean;
@@ -17,7 +17,7 @@ export async function fetchEventSuggestions(
   },
   signal?: AbortSignal
 ): Promise<string[]> {
-  const url = new URL(apiUrl("/events/suggestions"));
+  const url = new URL("events/suggestions", apiBaseForUrlConstructor());
   url.searchParams.set("q", params.q.trim());
   url.searchParams.set("lat", String(params.lat));
   url.searchParams.set("lng", String(params.lng));

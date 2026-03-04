@@ -55,12 +55,24 @@ export function apiUrl(path: string): string {
   return `${API_BASE_URL}${safePath}`;
 }
 
+export function apiOrigin(): string {
+  if (/^https?:\/\//i.test(API_BASE_URL)) return API_BASE_URL.replace(/\/+$/, "");
+  if (typeof window !== "undefined") return window.location.origin;
+  return "http://localhost:3000";
+}
+
+export function apiBaseForUrlConstructor(): string {
+  if (/^https?:\/\//i.test(API_BASE_URL)) return `${API_BASE_URL.replace(/\/+$/, "")}/`;
+  const basePath = API_BASE_URL.startsWith("/") ? API_BASE_URL : `/${API_BASE_URL}`;
+  return `${apiOrigin()}${basePath.replace(/\/+$/, "")}/`;
+}
+
 
 export function buildSseUrl(
   path: string,
   params?: Record<string, string | number | boolean | null | undefined>
 ): string {
-  const url = new URL(apiUrl(path));
+  const url = new URL(path.startsWith("/") ? path.slice(1) : path, apiBaseForUrlConstructor());
   if (params) {
     for (const [k, v] of Object.entries(params)) {
       if (v === null || typeof v === "undefined") continue;
