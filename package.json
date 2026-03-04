@@ -4,6 +4,7 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
+    "build": "npm --prefix eventify-web run build",
     "sync": "node sync.js",
     "sync:once": "node sync.js --once",
     "sync:test": "node test-sync.js"
