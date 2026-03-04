@@ -42,6 +42,45 @@ function safeNum(n: number, fallback: number) {
   return Number.isFinite(n) ? n : fallback;
 }
 
+function toLocalDateTimeInputValue(date: Date): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  const hours = String(date.getHours()).padStart(2, "0");
+  const minutes = String(date.getMinutes()).padStart(2, "0");
+  return `${year}-${month}-${day}T${hours}:${minutes}`;
+}
+
+function formatDateLabelFromLocalInput(localDateTime: string): string {
+  if (!localDateTime.trim()) return "";
+  const d = new Date(localDateTime);
+  if (Number.isNaN(d.getTime())) return "";
+  return d.toLocaleString(undefined, {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
+}
+
+function parseDateLabelToLocalInput(label: string): string {
+  const raw = label.trim();
+  if (!raw || raw.toUpperCase() === "TBA") return "";
+
+  const isoLike = raw.match(/(\d{4}-\d{2}-\d{2})(?:\s*[T•]\s*(\d{2}:\d{2}))?/);
+  if (isoLike) {
+    const datePart = isoLike[1];
+    const timePart = isoLike[2] || "20:00";
+    return `${datePart}T${timePart}`;
+  }
+
+  const parsed = new Date(raw);
+  if (Number.isNaN(parsed.getTime())) return "";
+  return toLocalDateTimeInputValue(parsed);
+}
+
 function StatusPill({ status }: { status: OrganizerEvent["status"] }) {
   return <span className={`adminStatusPill adminStatus_${status}`}>{status}</span>;
 }
@@ -67,7 +106,8 @@ export default function MyEventsPage() {
   const [title, setTitle] = useState("");
   const [venue, setVenue] = useState("");
   const [city, setCity] = useState("Brussels");
-  const [dateLabel, setDateLabel] = useState("TBA");
+  const [eventDateTime, setEventDateTime] = useState("");
+  const [dateLabel, setDateLabel] = useState("");
   const [style, setStyle] = useState(styleOptions[0] ?? "Techno");
 
   const [imageUrl, setImageUrl] = useState(DEFAULT_IMAGE);
@@ -102,7 +142,8 @@ export default function MyEventsPage() {
     setTitle("");
     setVenue("");
     setCity("Brussels");
-    setDateLabel("TBA");
+    setEventDateTime("");
+    setDateLabel("");
     setStyle(styleOptions[0] ?? "Techno");
     setImageUrl(DEFAULT_IMAGE);
     setDescription("");
@@ -129,7 +170,8 @@ export default function MyEventsPage() {
     setTitle(e.title);
     setVenue(e.venue);
     setCity(e.city);
-    setDateLabel(e.dateLabel);
+    setEventDateTime(parseDateLabelToLocalInput(e.dateLabel));
+    setDateLabel(e.dateLabel === "TBA" ? "" : e.dateLabel);
     setStyle(e.tags[0] ?? (styleOptions[0] ?? "Techno"));
     setImageUrl(e.imageUrl || DEFAULT_IMAGE);
     setDescription(e.description);
@@ -222,7 +264,11 @@ export default function MyEventsPage() {
 
       const lat = safeNum(Number(latitude), DEFAULT_LAT);
       const lng = safeNum(Number(longitude), DEFAULT_LNG);
-      const start = dateLabel.trim();
+      const autoLabel = formatDateLabelFromLocalInput(eventDateTime);
+      const effectiveDateLabel = autoLabel || dateLabel.trim() || "TBA";
+      const start = eventDateTime
+        ? new Date(eventDateTime).toISOString()
+        : effectiveDateLabel;
 
       const draftEvent = {
         title: t,
@@ -328,11 +374,14 @@ export default function MyEventsPage() {
     const lat = safeNum(Number(latitude), DEFAULT_LAT);
     const lng = safeNum(Number(longitude), DEFAULT_LNG);
 
+    const autoLabel = formatDateLabelFromLocalInput(eventDateTime);
+    const effectiveDateLabel = autoLabel || dateLabel.trim() || "TBA";
+
     const payload = {
       title: t,
       venue: v,
       city: c,
-      dateLabel: dateLabel.trim() || "TBA",
+      dateLabel: effectiveDateLabel,
       tags: [style],
       imageUrl: imageUrl.trim() || DEFAULT_IMAGE,
 
@@ -365,6 +414,10 @@ export default function MyEventsPage() {
   const activePromos = useMemo(() => {
     return events.filter((e) => isPromotionActive(e)).length;
   }, [events]);
+
+  const effectiveDateLabelPreview = useMemo(() => {
+    return formatDateLabelFromLocalInput(eventDateTime) || dateLabel.trim() || "TBA";
+  }, [eventDateTime, dateLabel]);
 
   const topByViews = useMemo(() => {
     const copy = [...events];
@@ -495,13 +548,48 @@ export default function MyEventsPage() {
               </div>
 
               <div>
-                <div className="authLabel">Date label</div>
+                <div className="authLabel">Event date & time</div>
+                <input
+                  className="authInput"
+                  type="datetime-local"
+                  value={eventDateTime}
+                  onChange={(e) => setEventDateTime(e.target.value)}
+                />
+                <div className="myEventsDateQuickRow">
+                  <button
+                    className="btn btnSecondary myEventsDateQuickBtn"
+                    type="button"
+                    onClick={() => {
+                      const d = new Date();
+                      d.setHours(20, 0, 0, 0);
+                      setEventDateTime(toLocalDateTimeInputValue(d));
+                    }}
+                  >
+                    Tonight 20:00
+                  </button>
+                  <button
+                    className="btn btnSecondary myEventsDateQuickBtn"
+                    type="button"
+                    onClick={() => {
+                      const d = new Date();
+                      d.setDate(d.getDate() + 7);
+                      d.setHours(20, 0, 0, 0);
+                      setEventDateTime(toLocalDateTimeInputValue(d));
+                    }}
+                  >
+                    +7 days 20:00
+                  </button>
+                </div>
+                <div className="authLabel myEventsDateLabelTop">Custom date label (optional)</div>
                 <input
                   className="authInput"
                   value={dateLabel}
                   onChange={(e) => setDateLabel(e.target.value)}
-                  placeholder="e.g. 2026-03-12 • 21:00"
+                  placeholder="Only if you want to override the picker label"
                 />
+                <div className="sectionHint myEventsDatePreview">
+                  Preview: <b>{effectiveDateLabelPreview}</b>
+                </div>
               </div>
             </div>
 
@@ -845,13 +933,48 @@ export default function MyEventsPage() {
             </div>
 
             <div>
-              <div className="authLabel">Date label</div>
+              <div className="authLabel">Event date & time</div>
+              <input
+                className="authInput"
+                type="datetime-local"
+                value={eventDateTime}
+                onChange={(e) => setEventDateTime(e.target.value)}
+              />
+              <div className="myEventsDateQuickRow">
+                <button
+                  className="btn btnSecondary myEventsDateQuickBtn"
+                  type="button"
+                  onClick={() => {
+                    const d = new Date();
+                    d.setHours(20, 0, 0, 0);
+                    setEventDateTime(toLocalDateTimeInputValue(d));
+                  }}
+                >
+                  Tonight 20:00
+                </button>
+                <button
+                  className="btn btnSecondary myEventsDateQuickBtn"
+                  type="button"
+                  onClick={() => {
+                    const d = new Date();
+                    d.setDate(d.getDate() + 7);
+                    d.setHours(20, 0, 0, 0);
+                    setEventDateTime(toLocalDateTimeInputValue(d));
+                  }}
+                >
+                  +7 days 20:00
+                </button>
+              </div>
+              <div className="authLabel myEventsDateLabelTop">Custom date label (optional)</div>
               <input
                 className="authInput"
                 value={dateLabel}
                 onChange={(e) => setDateLabel(e.target.value)}
-                placeholder="e.g. 2026-03-12 • 21:00"
+                placeholder="Only if you want to override the picker label"
               />
+              <div className="sectionHint myEventsDatePreview">
+                Preview: <b>{effectiveDateLabelPreview}</b>
+              </div>
             </div>
           </div>
 
