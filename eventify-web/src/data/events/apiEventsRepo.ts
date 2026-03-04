@@ -287,7 +287,20 @@ const DEFAULT_LNG = toEnvNum(import.meta.env.VITE_DEFAULT_LNG, 4.3517);
 const DEFAULT_RADIUS_KM = 50;
 const DEFAULT_FETCH_SIZE = Math.max(
   1,
-  Math.floor(toEnvNum(import.meta.env.VITE_EVENTS_FETCH_SIZE, 60))
+  Math.floor(toEnvNum(import.meta.env.VITE_EVENTS_FETCH_SIZE, 40))
+);
+const EVENTS_FETCH_TIMEOUT_MS = Math.max(
+  1200,
+  Math.floor(toEnvNum(import.meta.env.VITE_EVENTS_FETCH_TIMEOUT_MS, 4500))
+);
+const EVENTS_CACHE_TTL_MS = Math.max(
+  3000,
+  Math.floor(toEnvNum(import.meta.env.VITE_EVENTS_CACHE_TTL_MS, 60000))
+);
+const INCLUDE_SCRAPED = !["0", "false", "no", "off"].includes(
+  String(import.meta.env.VITE_EVENTS_INCLUDE_SCRAPED ?? "1")
+    .trim()
+    .toLowerCase()
 );
 
 function resolveOrigin(params?: EventsListParams) {
@@ -300,11 +313,13 @@ function resolveOrigin(params?: EventsListParams) {
 }
 
 const remoteById = new Map<string, EventItem>();
+let lastRemoteListCache: { at: number; items: EventItem[] } | null = null;
 
 function remember(items: EventItem[]) {
   for (const item of items) {
     remoteById.set(item.id, item);
   }
+  lastRemoteListCache = { at: Date.now(), items: items.map((item) => ({ ...item })) };
 }
 
 function mergeUnique(organizerEvents: EventItem[], remoteEvents: EventItem[]) {
@@ -455,11 +470,22 @@ async function fetchRemoteEvents(
   url.searchParams.set("radiusKm", String(radiusKm));
   url.searchParams.set("size", String(size));
   url.searchParams.set("maxResults", String(size));
-  url.searchParams.set("includeScraped", "1");
+  url.searchParams.set("includeScraped", INCLUDE_SCRAPED ? "1" : "0");
   url.searchParams.set("includeSetlists", "0");
   if (keyword) url.searchParams.set("keyword", keyword);
 
-  const res = await fetch(url.toString(), { signal: opts?.signal });
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), EVENTS_FETCH_TIMEOUT_MS);
+  const onAbort = () => controller.abort();
+  opts?.signal?.addEventListener("abort", onAbort, { once: true });
+
+  let res: Response;
+  try {
+    res = await fetch(url.toString(), { signal: controller.signal });
+  } finally {
+    window.clearTimeout(timeout);
+    opts?.signal?.removeEventListener("abort", onAbort);
+  }
   if (!res.ok) {
     throw new Error(`Events API request failed (${res.status})`);
   }
@@ -484,12 +510,21 @@ async function fetchRemoteEvents(
 export const apiEventsRepo: EventsRepo = {
   async list(params, opts) {
     const origin = resolveOrigin(params);
-    const organizerEvents = await listPublicOrganizerEvents({
-      originLat: origin.lat,
-      originLng: origin.lng,
-    });
-
-    const remoteEvents = await fetchRemoteEvents(params, { signal: opts?.signal });
+    const [organizerEvents, remoteEvents] = await Promise.all([
+      listPublicOrganizerEvents({
+        originLat: origin.lat,
+        originLng: origin.lng,
+      }),
+      fetchRemoteEvents(params, { signal: opts?.signal }).catch(() => {
+        if (
+          lastRemoteListCache &&
+          Date.now() - lastRemoteListCache.at <= EVENTS_CACHE_TTL_MS
+        ) {
+          return lastRemoteListCache.items.map((item) => ({ ...item }));
+        }
+        return [] as EventItem[];
+      }),
+    ]);
 
     const merged = mergeUnique(organizerEvents, remoteEvents);
     return applyFilters(merged, params);

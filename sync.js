@@ -14,9 +14,14 @@ const CONFIG = {
   DEFAULT_LNG: process.env.DEFAULT_LNG || "4.3517",
   DEFAULT_RADIUS_KM: process.env.DEFAULT_RADIUS_KM || "50",
   FETCH_SIZE: process.env.FETCH_SIZE || "50",
+  SYNC_INCLUDE_SCRAPED: process.env.SYNC_INCLUDE_SCRAPED || "1",
   
   // Database
-  DATABASE_URL: process.env.DATABASE_URL,
+  DATABASE_URL:
+    process.env.DATABASE_URL ||
+    process.env.POSTGRES_URL ||
+    process.env.POSTGRES_PRISMA_URL ||
+    "",
   
   // Sync user (for organizer_id field)
   SYNC_USER_ID: process.env.SYNC_USER_ID || 1,
@@ -164,12 +169,24 @@ function buildSourceId(apiEvent, source) {
 
 const pool = new Pool({
   connectionString: CONFIG.DATABASE_URL,
-  ssl: parseDbSsl(CONFIG.DATABASE_SSL) ? { rejectUnauthorized: false } : false,
+  ssl:
+    parseDbSsl(CONFIG.DATABASE_SSL) || /(?:[?&]sslmode=require)(?:&|$)/i.test(CONFIG.DATABASE_URL)
+      ? { rejectUnauthorized: false }
+      : false,
 });
+
+function requirePool() {
+  if (!CONFIG.DATABASE_URL) {
+    throw new Error(
+      "DATABASE_URL is not configured for sync. Set DATABASE_URL (or POSTGRES_URL/POSTGRES_PRISMA_URL) in environment variables."
+    );
+  }
+  return pool;
+}
 
 async function testConnection() {
   try {
-    const client = await pool.connect();
+    const client = await requirePool().connect();
     console.log(" Database connected successfully");
     client.release();
     return true;
@@ -197,6 +214,7 @@ async function fetchEventsFromAPI({
   console.log(`   Params: lat=${lat}, lng=${lng}, radius=${radiusKm}km, size=${size}`);
   
   try {
+    const includeScraped = toBool(CONFIG.SYNC_INCLUDE_SCRAPED, true) ? 1 : 0;
     const { data } = await axios.get(url, {
       params: {
         lat,
@@ -204,7 +222,7 @@ async function fetchEventsFromAPI({
         radiusKm,
         size,
         maxResults: size,
-        includeScraped: 1,
+        includeScraped,
         keyword: keyword || undefined,
       },
       timeout: 30000,
@@ -316,7 +334,7 @@ function mapApiEventToDb(apiEvent) {
  * Ensure source tracking columns exist
  */
 async function ensureSourceColumns() {
-  const client = await pool.connect();
+  const client = await requirePool().connect();
   try {
     await client.query(`
       ALTER TABLE events 
@@ -354,7 +372,7 @@ async function ensureSourceColumns() {
  * Upsert (insert or update) an event
  */
 async function upsertEvent(eventData) {
-  const client = await pool.connect();
+  const client = await requirePool().connect();
   try {
     const query = `
       INSERT INTO events (
@@ -456,7 +474,7 @@ async function upsertEvent(eventData) {
  * Mark old events as completed
  */
 async function markCompletedEvents() {
-  const client = await pool.connect();
+  const client = await requirePool().connect();
   try {
     const result = await client.query(`
       UPDATE events 
@@ -481,7 +499,7 @@ async function markCompletedEvents() {
  * Get sync statistics
  */
 async function getSyncStats() {
-  const client = await pool.connect();
+  const client = await requirePool().connect();
   try {
     const totalResult = await client.query(`
       SELECT COUNT(*) as total FROM events WHERE source IS NOT NULL
@@ -514,7 +532,7 @@ async function getSyncStats() {
  * Duplicate key: lower(title) + start_datetime + lower(city) + lower(venue_name)
  */
 async function cleanupDuplicateSyncedEvents() {
-  const client = await pool.connect();
+  const client = await requirePool().connect();
   try {
     await client.query("BEGIN");
 
@@ -790,7 +808,9 @@ async function runSyncOnce({ apiBaseUrl, skipConnectionTest = false } = {}) {
 }
 
 async function closePool() {
-  await pool.end();
+  if (CONFIG.DATABASE_URL) {
+    await pool.end();
+  }
 }
 
 function registerSignalHandlers() {

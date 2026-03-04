@@ -125,8 +125,9 @@ function markOrganizerPublicApiMissing() {
 function errorLooksLikeMissingPublicApi(err: unknown) {
   const message = err instanceof Error ? err.message : String(err || "");
   return (
-    message.includes("/organizer/events/public") &&
-    (message.includes("(404)") || message.includes("(405)"))
+    (message.includes("/organizer/events/public") ||
+      message.includes("/organizer/events/")) &&
+    (message.includes("(404)") || message.includes("(405)") || message.includes("(501)"))
   );
 }
 
@@ -316,6 +317,12 @@ export async function getPublicOrganizerEventById(
 ): Promise<EventItem | undefined> {
   const origin = toOrigin(opts);
 
+  if (!shouldTryOrganizerPublicApi()) {
+    const local = loadAllLocal().find((e) => e.id === eventId && e.status === "approved");
+    if (!local) return undefined;
+    return applyOriginDistanceAndTrending([local], origin)[0];
+  }
+
   // Try API first (faster than fetching whole list)
   try {
     const q = buildQuery({
@@ -334,7 +341,10 @@ export async function getPublicOrganizerEventById(
 
     const withFix = applyOriginDistanceAndTrending([coerced], origin);
     return withFix[0];
-  } catch {
+  } catch (err: unknown) {
+    if (errorLooksLikeMissingPublicApi(err)) {
+      markOrganizerPublicApiMissing();
+    }
     const local = loadAllLocal().find((e) => e.id === eventId && e.status === "approved");
     if (!local) return undefined;
     return applyOriginDistanceAndTrending([local], origin)[0];
