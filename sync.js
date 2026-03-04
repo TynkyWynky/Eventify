@@ -15,6 +15,7 @@ const CONFIG = {
   DEFAULT_RADIUS_KM: process.env.DEFAULT_RADIUS_KM || "50",
   FETCH_SIZE: process.env.FETCH_SIZE || "50",
   SYNC_INCLUDE_SCRAPED: process.env.SYNC_INCLUDE_SCRAPED || "1",
+  SCRAPE_SYNC_WAIT_MS: process.env.SCRAPE_SYNC_WAIT_MS || "25000",
   
   // Database
   DATABASE_URL:
@@ -223,6 +224,7 @@ async function fetchEventsFromAPI({
         size,
         maxResults: size,
         includeScraped,
+        scrapeWaitMs: CONFIG.SCRAPE_SYNC_WAIT_MS,
         keyword: keyword || undefined,
         // Sync must fetch fresh upstream data, not the DB-first view.
         preferDb: 0,
@@ -232,7 +234,7 @@ async function fetchEventsFromAPI({
         // Lets API handlers skip bootstrap-sync recursion for internal sync calls.
         "x-eventify-sync-internal": "1",
       },
-      timeout: 30000,
+      timeout: 70000,
     });
 
     if (!data.ok) {

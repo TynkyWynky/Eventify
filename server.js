@@ -2978,6 +2978,10 @@ const SCRAPE_CACHE_CONFIG = {
   ttlMs: toPositiveInt(process.env.SCRAPE_CACHE_TTL_MS, 15 * 60 * 1000),
   requestWaitMs: toPositiveInt(process.env.SCRAPE_REQUEST_WAIT_MS, 2500),
 };
+const SCRAPE_SYNC_WAIT_MS = Math.max(
+  SCRAPE_CACHE_CONFIG.requestWaitMs,
+  toPositiveInt(process.env.SCRAPE_SYNC_WAIT_MS, 25000)
+);
 
 const scrapeCache = {
   events: [],
@@ -3493,9 +3497,14 @@ function startScrapeRefresh() {
   return scrapeCache.inFlight;
 }
 
-async function getScrapedEventsForRequest() {
+async function getScrapedEventsForRequest({ waitMsOverride } = {}) {
+  const waitMs = Math.max(
+    250,
+    toPositiveInt(waitMsOverride, SCRAPE_CACHE_CONFIG.requestWaitMs)
+  );
+
   if (!SCRAPE_CONFIG.enabled || SCRAPE_CONFIG.sourceUrls.length === 0) {
-    return { events: [], cacheMode: "disabled", ageMs: null, timedOut: false };
+    return { events: [], cacheMode: "disabled", ageMs: null, timedOut: false, waitMs };
   }
 
   if (isScrapeCacheFresh()) {
@@ -3505,6 +3514,7 @@ async function getScrapedEventsForRequest() {
       ageMs: getScrapeCacheAgeMs(),
       timedOut: false,
       lastError: scrapeCache.lastError,
+      waitMs,
     };
   }
 
@@ -3522,6 +3532,7 @@ async function getScrapedEventsForRequest() {
       ageMs: getScrapeCacheAgeMs(),
       timedOut: false,
       lastError: scrapeCache.lastError,
+      waitMs,
     };
   }
 
@@ -3534,7 +3545,7 @@ async function getScrapedEventsForRequest() {
         setTimeout(() => {
           timedOut = true;
           reject(new Error("scrape_wait_timeout"));
-        }, SCRAPE_CACHE_CONFIG.requestWaitMs)
+        }, waitMs)
       ),
     ]);
   } catch (err) {
@@ -3555,6 +3566,7 @@ async function getScrapedEventsForRequest() {
     ageMs: getScrapeCacheAgeMs(),
     timedOut,
     lastError: scrapeCache.lastError,
+    waitMs,
   };
 }
 
@@ -5417,6 +5429,7 @@ app.get("/events", async (req, res) => {
       includeSetlists = "0",
       setlistsPerArtist = "3",
       maxArtists = "5",
+      scrapeWaitMs = "",
       preferDb = "1",
       allowLiveFetch = "1",
     } = req.query;
@@ -5435,6 +5448,11 @@ app.get("/events", async (req, res) => {
     }
 
     const sourceErrors = [];
+    const isInternalSyncRequest =
+      String(req.headers["x-eventify-sync-internal"] || "").trim() === "1";
+    const scrapeWaitMsResolved = isInternalSyncRequest
+      ? toPositiveInt(scrapeWaitMs, SCRAPE_SYNC_WAIT_MS)
+      : toPositiveInt(scrapeWaitMs, SCRAPE_CACHE_CONFIG.requestWaitMs);
     const preferDbFirst = toBool(preferDb, true);
     const allowLiveFetchBool = toBool(allowLiveFetch, true);
 
@@ -5471,7 +5489,7 @@ app.get("/events", async (req, res) => {
               ageMs: null,
               timedOut: false,
               ttlMs: SCRAPE_CACHE_CONFIG.ttlMs,
-              waitMs: SCRAPE_CACHE_CONFIG.requestWaitMs,
+              waitMs: scrapeWaitMsResolved,
             },
             priceCoverage: {
               total: events.length,
@@ -5508,7 +5526,7 @@ app.get("/events", async (req, res) => {
           ageMs: null,
           timedOut: false,
           ttlMs: SCRAPE_CACHE_CONFIG.ttlMs,
-          waitMs: SCRAPE_CACHE_CONFIG.requestWaitMs,
+          waitMs: scrapeWaitMsResolved,
         },
         priceCoverage: {
           total: 0,
@@ -5540,13 +5558,16 @@ app.get("/events", async (req, res) => {
       SCRAPE_CONFIG.sourceUrls.length > 0;
 
     const scrapePromise = wantScraped
-      ? getScrapedEventsForRequest().catch((err) => {
+      ? getScrapedEventsForRequest({
+          waitMsOverride: scrapeWaitMsResolved,
+        }).catch((err) => {
           sourceErrors.push({ source: "webscrape", error: String(err.message || err) });
           return {
             events: [],
             cacheMode: "error",
             ageMs: null,
             timedOut: false,
+            waitMs: scrapeWaitMsResolved,
             lastError: String(err.message || err),
           };
         })
@@ -5555,6 +5576,7 @@ app.get("/events", async (req, res) => {
           cacheMode: "disabled",
           ageMs: null,
           timedOut: false,
+          waitMs: scrapeWaitMsResolved,
           lastError: null,
         });
 
@@ -5663,7 +5685,7 @@ app.get("/events", async (req, res) => {
         ageMs: scrapeResult.ageMs,
         timedOut: scrapeResult.timedOut,
         ttlMs: SCRAPE_CACHE_CONFIG.ttlMs,
-        waitMs: SCRAPE_CACHE_CONFIG.requestWaitMs,
+        waitMs: scrapeResult.waitMs ?? scrapeWaitMsResolved,
       },
       includeSetlists: wantSetlists,
       sourceCounts: summarizeSources(events),

@@ -68,6 +68,8 @@ De backend kan nu events uit extra websites scrapen en samenvoegen met Ticketmas
 - `SCRAPE_MAX_LINKS_PER_SOURCE=20`
 - `SCRAPE_TIMEOUT_MS=12000`
 - `SCRAPE_SOURCE_CONCURRENCY=3`
+- `SCRAPE_REQUEST_WAIT_MS=2500` (hoe lang `/events` op first-run op scrape-cache wacht)
+- `SCRAPE_SYNC_WAIT_MS=25000` (extra wachttijd voor interne sync-calls naar `/events`)
 - `SCRAPE_EVENTBRITE_DETAIL_LOOKUP=true`
 - `SCRAPE_EVENTBRITE_DETAIL_ENRICH_LIMIT=8`
 - `SCRAPE_EVENTBRITE_DETAIL_TIMEOUT_MS=10000`
