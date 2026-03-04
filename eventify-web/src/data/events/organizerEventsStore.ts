@@ -47,8 +47,11 @@ const AUTH_STORAGE_KEY = "eventify_auth_v2";
 
 const STORAGE_KEY = "eventify_organizer_events_v1"; // legacy/local fallback + cache
 const EVENTS_CHANGED_EVENT = "eventify:organizer-events-changed";
+const ORGANIZER_PUBLIC_API_RETRY_MS = 5 * 60 * 1000;
 
 const BRUSSELS = { lat: 50.8466, lng: 4.3528 };
+let organizerPublicApiMissing = false;
+let organizerPublicApiMissingAt = 0;
 
 type JsonRecord = Record<string, unknown>;
 function isRecord(v: unknown): v is JsonRecord {
@@ -107,6 +110,24 @@ function requireToken(): string {
   const { token } = getAuthFromStorage();
   if (!token) throw new Error("Not authenticated");
   return token;
+}
+
+function shouldTryOrganizerPublicApi() {
+  if (!organizerPublicApiMissing) return true;
+  return Date.now() - organizerPublicApiMissingAt > ORGANIZER_PUBLIC_API_RETRY_MS;
+}
+
+function markOrganizerPublicApiMissing() {
+  organizerPublicApiMissing = true;
+  organizerPublicApiMissingAt = Date.now();
+}
+
+function errorLooksLikeMissingPublicApi(err: unknown) {
+  const message = err instanceof Error ? err.message : String(err || "");
+  return (
+    message.includes("/organizer/events/public") &&
+    (message.includes("(404)") || message.includes("(405)"))
+  );
 }
 
 /** ---------- Distance + Promotion helpers ---------- */
@@ -254,6 +275,10 @@ export async function listPublicOrganizerEvents(opts?: {
   originLng?: number;
 }): Promise<EventItem[]> {
   const origin = toOrigin(opts);
+  if (!shouldTryOrganizerPublicApi()) {
+    const local = loadAllLocal().filter((e) => e.status === "approved");
+    return applyOriginDistanceAndTrending(local, origin);
+  }
 
   // Try API first
   try {
@@ -275,7 +300,10 @@ export async function listPublicOrganizerEvents(opts?: {
     // Ensure public-only in case server returns more
     const approvedOnly = items.filter((e) => e.status === "approved");
     return applyOriginDistanceAndTrending(approvedOnly, origin);
-  } catch {
+  } catch (err) {
+    if (errorLooksLikeMissingPublicApi(err)) {
+      markOrganizerPublicApiMissing();
+    }
     // Fallback: local storage
     const local = loadAllLocal().filter((e) => e.status === "approved");
     return applyOriginDistanceAndTrending(local, origin);

@@ -5003,6 +5003,207 @@ async function resolveEventsForAi({ events, query = {} } = {}) {
 // Endpoints
 // -----------------------------
 
+function parseSourceMetadataObject(value) {
+  if (value && typeof value === "object" && !Array.isArray(value)) return value;
+  if (typeof value === "string") {
+    try {
+      const parsed = JSON.parse(value);
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) return parsed;
+    } catch {
+      // Ignore invalid metadata payloads.
+    }
+  }
+  return {};
+}
+
+function resolveOrganizerReviewStatus(row) {
+  const metadata = parseSourceMetadataObject(row?.source_metadata);
+  const explicit = cleanText(metadata.reviewStatus || metadata.review_status || metadata.status);
+  const explicitNormalized = explicit ? explicit.toLowerCase() : null;
+  if (explicitNormalized === "approved") return "approved";
+  if (explicitNormalized === "rejected") return "rejected";
+  if (explicitNormalized === "pending") return "pending";
+
+  const dbStatus = cleanText(row?.status)?.toLowerCase();
+  if (dbStatus === "published") return "approved";
+  if (dbStatus === "cancelled") return "rejected";
+  return "pending";
+}
+
+function formatOrganizerDateLabel(startIso) {
+  const value = cleanText(startIso);
+  if (!value) return "TBA";
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return value;
+  return d.toLocaleString(undefined, {
+    day: "2-digit",
+    month: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
+}
+
+function mapDbOrganizerEventToPublicDto(row, { originLat = null, originLng = null } = {}) {
+  const metadata = parseSourceMetadataObject(row?.source_metadata);
+  const reviewStatus = resolveOrganizerReviewStatus(row);
+
+  const latitude = toNumberOrNull(row?.latitude);
+  const longitude = toNumberOrNull(row?.longitude);
+  const canComputeDistance =
+    latitude != null &&
+    longitude != null &&
+    originLat != null &&
+    originLng != null &&
+    Number.isFinite(originLat) &&
+    Number.isFinite(originLng);
+
+  const tags = Array.isArray(row?.tags)
+    ? row.tags.map((entry) => cleanText(entry)).filter(Boolean)
+    : Array.isArray(metadata?.tags)
+    ? metadata.tags.map((entry) => cleanText(entry)).filter(Boolean)
+    : [];
+
+  const imageUrl =
+    cleanText(row?.cover_image_url) ||
+    cleanText(metadata?.imageUrl) ||
+    cleanText(metadata?.coverImageUrl) ||
+    "https://images.unsplash.com/photo-1501386761578-eac5c94b800a?w=1400&q=80";
+
+  const ownerId =
+    cleanText(row?.organizer_id) ||
+    cleanText(metadata?.ownerId) ||
+    cleanText(metadata?.owner_id) ||
+    "0";
+
+  return {
+    id: cleanText(row?.source_id) || cleanText(row?.id) || `org_${Math.abs(Number(row?.id) || 0)}`,
+    title: cleanText(row?.title) || "Untitled event",
+    venue: cleanText(row?.venue_name) || "Venue",
+    city: cleanText(row?.city) || "City",
+    dateLabel: formatOrganizerDateLabel(row?.start_datetime),
+    distanceKm: canComputeDistance ? haversineKm(originLat, originLng, latitude, longitude) : 0,
+    imageUrl,
+    tags: tags.length > 0 ? tags : ["All"],
+    trending: false,
+    addressLine: cleanText(row?.address) || cleanText(metadata?.addressLine) || "—",
+    postalCode: cleanText(row?.postal_code) || cleanText(metadata?.postalCode) || "—",
+    country: cleanText(row?.country) || cleanText(metadata?.country) || "Belgium",
+    latitude: latitude != null ? latitude : 50.8466,
+    longitude: longitude != null ? longitude : 4.3528,
+    description: cleanText(row?.description) || cleanText(metadata?.description) || "—",
+    ownerId,
+    createdAt: cleanText(row?.created_at) || new Date().toISOString(),
+    updatedAt: cleanText(row?.updated_at) || new Date().toISOString(),
+    status: reviewStatus,
+    reviewedAt: cleanText(metadata?.reviewedAt || metadata?.reviewed_at) || undefined,
+    reviewedBy:
+      cleanText(metadata?.reviewedBy || metadata?.reviewed_by || metadata?.reviewerId) ||
+      undefined,
+    promotedUntil: cleanText(metadata?.promotedUntil || metadata?.promoted_until) || undefined,
+    promotionPlan:
+      metadata?.promotionPlan === "24h" || metadata?.promotionPlan === "7d"
+        ? metadata.promotionPlan
+        : undefined,
+    promotionAmount: toNumberOrNull(metadata?.promotionAmount) || undefined,
+  };
+}
+
+/**
+ * GET /organizer/events/public
+ * Public organizer events used by dashboard merge (approved only).
+ */
+app.get("/organizer/events/public", async (req, res) => {
+  try {
+    if (!pool) return res.json({ ok: true, events: [] });
+
+    const db = requireDb();
+    const originLat = toNumberOrNull(req.query?.originLat);
+    const originLng = toNumberOrNull(req.query?.originLng);
+    const limit = Math.max(1, Math.min(250, Number(req.query?.limit) || 120));
+
+    const result = await db.query(
+      `
+        SELECT id, source_id, title, description, start_datetime, venue_name, city,
+               address, postal_code, country, latitude, longitude, tags,
+               cover_image_url, organizer_id, status, source_metadata,
+               created_at, updated_at
+        FROM events
+        WHERE (
+          LOWER(COALESCE(source, '')) IN ('organizer', 'organiser', 'user_submission')
+          OR COALESCE(source_id, '') ILIKE 'org_%'
+        )
+        ORDER BY start_datetime ASC NULLS LAST, created_at DESC
+        LIMIT $1
+      `,
+      [limit]
+    );
+
+    const mapped = (result.rows || []).map((row) =>
+      mapDbOrganizerEventToPublicDto(row, { originLat, originLng })
+    );
+    const approvedOnly = mapped.filter((event) => event.status === "approved");
+    return res.json({ ok: true, events: approvedOnly });
+  } catch (err) {
+    return res.status(500).json({ ok: false, error: String(err?.message || err) });
+  }
+});
+
+/**
+ * GET /organizer/events/:id/public
+ * Public organizer event detail by id/source_id (approved only).
+ */
+app.get("/organizer/events/:id/public", async (req, res) => {
+  try {
+    if (!pool) return res.status(404).json({ ok: false, error: "Organizer event not found." });
+
+    const db = requireDb();
+    const rawId = cleanText(req.params?.id);
+    if (!rawId) return res.status(400).json({ ok: false, error: "Missing organizer event id." });
+
+    const aliasIds = new Set([rawId]);
+    const prefixed = rawId.match(/^org[_:-]?(\d+)$/i);
+    if (prefixed?.[1]) aliasIds.add(prefixed[1]);
+
+    const ids = [...aliasIds];
+    const result = await db.query(
+      `
+        SELECT id, source_id, title, description, start_datetime, venue_name, city,
+               address, postal_code, country, latitude, longitude, tags,
+               cover_image_url, organizer_id, status, source_metadata,
+               created_at, updated_at
+        FROM events
+        WHERE (
+          LOWER(COALESCE(source, '')) IN ('organizer', 'organiser', 'user_submission')
+          OR COALESCE(source_id, '') ILIKE 'org_%'
+        )
+          AND (
+            CAST(id AS TEXT) = ANY($1::text[])
+            OR COALESCE(source_id, '') = ANY($1::text[])
+          )
+        ORDER BY created_at DESC
+        LIMIT 1
+      `,
+      [ids]
+    );
+
+    if (result.rowCount === 0) {
+      return res.status(404).json({ ok: false, error: "Organizer event not found." });
+    }
+
+    const originLat = toNumberOrNull(req.query?.originLat);
+    const originLng = toNumberOrNull(req.query?.originLng);
+    const event = mapDbOrganizerEventToPublicDto(result.rows[0], { originLat, originLng });
+    if (event.status !== "approved") {
+      return res.status(404).json({ ok: false, error: "Organizer event not found." });
+    }
+
+    return res.json({ ok: true, event });
+  } catch (err) {
+    return res.status(500).json({ ok: false, error: String(err?.message || err) });
+  }
+});
+
 /**
  * GET /events
  * Query params:
