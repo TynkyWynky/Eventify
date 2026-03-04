@@ -4,7 +4,7 @@ export default function TermsPage() {
       <header className="legalHeader">
         <h1 className="legalTitle">Terms of Service</h1>
         <p className="legalLead">
-          Basic rules for using Eventify. This is a student project and provided “as is”.
+          Basic rules for using Eventium. This is a student project and provided “as is”.
         </p>
       </header>
 
@@ -19,7 +19,7 @@ export default function TermsPage() {
         <h2>2) Event information</h2>
         <p>
           Event listings can change or be inaccurate. Always verify details with the organizer/venue.
-          Eventify is not responsible for cancellations, changes, or third-party content.
+          Eventium is not responsible for cancellations, changes, or third-party content.
         </p>
 
         <h2>3) Intellectual property</h2>
@@ -30,7 +30,7 @@ export default function TermsPage() {
 
         <h2>4) Limitation of liability</h2>
         <p>
-          To the maximum extent permitted by law, Eventify is provided without warranties.
+          To the maximum extent permitted by law, Eventium is provided without warranties.
           We are not liable for indirect damages, loss of data, or issues caused by third-party links.
         </p>
 

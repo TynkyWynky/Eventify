@@ -141,7 +141,7 @@ export default function TopNavigationBar() {
     <header className="navBar">
       <div className="navInner">
         <Link className="brandTitle" to="/">
-          Eventify
+          Eventium
         </Link>
 
         <div className="navSearchWrap" ref={searchWrapRef}>

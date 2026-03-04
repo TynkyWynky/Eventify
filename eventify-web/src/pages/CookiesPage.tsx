@@ -4,7 +4,7 @@ export default function CookiesPage() {
       <header className="legalHeader">
         <h1 className="legalTitle">Cookies & Local Storage</h1>
         <p className="legalLead">
-          Eventify mainly uses browser storage to keep you logged in and save preferences.
+          Eventium mainly uses browser storage to keep you logged in and save preferences.
         </p>
       </header>
 

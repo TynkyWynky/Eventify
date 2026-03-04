@@ -10,7 +10,7 @@ export default function LegalNoticePage() {
 
       <div className="legalCard">
         <h2>Project</h2>
-        <p><b>Eventify</b> — a hyper-local event discovery app.</p>
+        <p><b>Eventium</b> — a hyper-local event discovery app.</p>
 
         <h2>Responsible / contact</h2>
         <ul className="legalList">
@@ -21,7 +21,7 @@ export default function LegalNoticePage() {
 
         <h2>Disclaimer</h2>
         <p>
-          Eventify aggregates and displays event information that can originate from public sources.
+          Eventium aggregates and displays event information that can originate from public sources.
           We try to keep it correct, but information can change at any time.
           If you are an organizer/rights holder and want content removed or corrected, contact us.
         </p>

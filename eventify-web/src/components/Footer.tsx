@@ -38,8 +38,8 @@ export default function Footer() {
       <div className="footerInner">
         <div className="footerGrid">
           <div className="footerBrand">
-            <Link to="/" className="footerLogo" aria-label="Eventify home">
-              Eventify
+            <Link to="/" className="footerLogo" aria-label="Eventium home">
+              Eventium
             </Link>
 
             <p className="footerTagline">
@@ -98,7 +98,7 @@ export default function Footer() {
 
         <div className="footerBottom">
           <div className="footerFineprint">
-            © {year} Eventify. Event data and images may come from public sources
+            © {year} Eventium. Event data and images may come from public sources
             and remain the property of their respective owners. If you want an
             event or image removed/updated, contact us.
           </div>

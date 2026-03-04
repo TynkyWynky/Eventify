@@ -522,7 +522,7 @@ export default function CopilotWidget() {
   return (
     <div className="copilotWrap" ref={wrapRef}>
       {isOpen && (
-        <section className="copilotPanel" aria-label="Eventify assistant">
+        <section className="copilotPanel" aria-label="Eventium assistant">
           <header className="aiHeader">
             <div className="aiHeaderLeft">
               <div className="aiBrand">

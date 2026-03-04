@@ -6,14 +6,14 @@ export default function PrivacyPage() {
       <header className="legalHeader">
         <h1 className="legalTitle">Privacy Policy</h1>
         <p className="legalLead">
-          This page explains what data Eventify collects, why we collect it, and your rights under GDPR.
+          This page explains what data Eventium collects, why we collect it, and your rights under GDPR.
         </p>
       </header>
 
       <div className="legalCard">
         <h2>1) Who we are</h2>
         <p>
-          Eventify is a student project. See the <Link to="/legal">Legal notice</Link> for contact details.
+          Eventium is a student project. See the <Link to="/legal">Legal notice</Link> for contact details.
         </p>
 
         <h2>2) Data we collect</h2>
