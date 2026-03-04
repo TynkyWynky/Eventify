@@ -362,10 +362,6 @@ export default function MyEventsPage() {
     return events.reduce((sum, e) => sum + getViews(e.id), 0);
   }, [events]);
 
-  const totalGoings = useMemo(() => {
-    return events.reduce((sum, e) => sum + (goingsMap[e.id] ?? 0), 0);
-  }, [events, goingsMap]);
-
   const activePromos = useMemo(() => {
     return events.filter((e) => isPromotionActive(e)).length;
   }, [events]);
@@ -739,7 +735,6 @@ export default function MyEventsPage() {
         {[
           ["Events", String(events.length)],
           ["Views", String(totalViews)],
-          ["Goings", String(totalGoings)],
           ["Active boosts", String(activePromos)],
         ].map(([k, v]) => (
           <div key={k} className="myEventsKpiCard">
@@ -769,12 +764,10 @@ export default function MyEventsPage() {
 
               return (
                 <div key={e.id} className="myEventsTopRow">
-                  <div className="myEventsTopRowHeader">
-                    <div className="myEventsTopTitle">{e.title}</div>
-                    <div className="sectionHint">
-                      {v} views • {goingsMap[e.id] ?? 0} going
+                    <div className="myEventsTopRowHeader">
+                      <div className="myEventsTopTitle">{e.title}</div>
+                      <div className="sectionHint">{v} views</div>
                     </div>
-                  </div>
 
                   <div className="myEventsTopBar">
                     <div className="myEventsTopBarFill" style={fillStyle} />
@@ -1022,7 +1015,6 @@ export default function MyEventsPage() {
             events.map((e) => {
               const active = isPromotionActive(e);
               const views = getViews(e.id);
-              const goings = goingsMap[e.id] ?? 0;
 
               return (
                 <div key={e.id} className="myEventsEventCard">
@@ -1038,7 +1030,7 @@ export default function MyEventsPage() {
                         {e.venue} • {e.city} • {e.dateLabel}
                       </div>
                       <div className="sectionHint myEventsEventStats">
-                        {views} views • {goings} going
+                        {views} views
                         {active ? " • BOOSTED (Trending)" : ""}
                       </div>
                     </div>

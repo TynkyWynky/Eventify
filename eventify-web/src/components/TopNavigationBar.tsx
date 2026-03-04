@@ -9,6 +9,74 @@ import { useAuth } from "../auth/AuthContext";
 import type { NotificationItem } from "../auth/authTypes";
 import { useInstallPrompt } from "../hooks/useInstallPrompt";
 import { useNavSearch } from "../hooks/useNavSearch";
+import { getOrigin, subscribeOriginChanged } from "../data/location/locationStore";
+
+const MAX_RECENT_SEARCHES = 8;
+
+type InstallPromptEvent = Event & {
+  prompt: () => Promise<void>;
+  userChoice: Promise<{ outcome: "accepted" | "dismissed"; platform: string }>;
+};
+
+function normalizeSearchText(value: string) {
+  return value
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function clearRecentSearches() {
+  return [] as string[];
+}
+
+function rememberRecentSearch(term: string, current: string[]) {
+  const clean = term.trim();
+  if (!clean) return current.slice(0, MAX_RECENT_SEARCHES);
+  const deduped = current.filter(
+    (item) => normalizeSearchText(item) !== normalizeSearchText(clean)
+  );
+  deduped.unshift(clean);
+  return deduped.slice(0, MAX_RECENT_SEARCHES);
+}
+
+function levenshtein(a: string, b: string) {
+  if (a === b) return 0;
+  if (!a.length) return b.length;
+  if (!b.length) return a.length;
+  const dp: number[] = Array.from({ length: b.length + 1 }, (_, i) => i);
+  for (let i = 1; i <= a.length; i += 1) {
+    let prev = i - 1;
+    dp[0] = i;
+    for (let j = 1; j <= b.length; j += 1) {
+      const tmp = dp[j];
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      dp[j] = Math.min(dp[j] + 1, dp[j - 1] + 1, prev + cost);
+      prev = tmp;
+    }
+  }
+  return dp[b.length];
+}
+
+function isFuzzyMatch(query: string, candidate: string) {
+  const q = normalizeSearchText(query);
+  const c = normalizeSearchText(candidate);
+  if (!q || !c) return false;
+  if (c.includes(q)) return true;
+
+  const qWords = q.split(" ").filter(Boolean);
+  const cWords = c.split(" ").filter(Boolean);
+
+  return qWords.every((qWord) =>
+    cWords.some((cWord) => {
+      if (cWord.startsWith(qWord)) return true;
+      const maxDistance = qWord.length <= 4 ? 1 : 2;
+      return levenshtein(qWord, cWord.slice(0, qWord.length)) <= maxDistance;
+    })
+  );
+}
 
 function BellIcon() {
   return (
@@ -65,6 +133,17 @@ export default function TopNavigationBar() {
   const navigate = useNavigate();
 
   const latest = useMemo(() => notifications.slice(0, 6), [notifications]);
+  const qFromUrl = searchParams.get("q") ?? "";
+  const [query, setQuery] = useState(qFromUrl);
+  const [isSearchOpen, setSearchOpen] = useState(false);
+  const [recentSearches, setRecentSearches] = useState<string[]>([]);
+  const [serverSuggestions, setServerSuggestions] = useState<string[]>([]);
+  const [installPromptEvent, setInstallPromptEvent] = useState<InstallPromptEvent | null>(null);
+  const [isInstallReady, setInstallReady] = useState(false);
+  const [isStandalone, setStandalone] = useState(() =>
+    window.matchMedia("(display-mode: standalone)").matches
+  );
+  const [origin, setOrigin] = useState(() => getOrigin());
 
   useEffect(() => {
     function onPointerDown(e: PointerEvent) {
@@ -90,6 +169,135 @@ export default function TopNavigationBar() {
     document.addEventListener("pointerdown", onPointerDown, true);
     return () => document.removeEventListener("pointerdown", onPointerDown, true);
   }, [isNotifOpen, isProfileOpen, isSearchOpen, setSearchOpen]);
+  }, [isNotifOpen, isProfileOpen, isSearchOpen]);
+
+  // Sync input when URL changes (back/forward, clicks, etc.)
+  useEffect(() => {
+    setQuery(qFromUrl);
+  }, [qFromUrl]);
+
+  useEffect(() => {
+    return subscribeOriginChanged(() => setOrigin(getOrigin()));
+  }, []);
+
+  useEffect(() => {
+    const q = query.trim();
+    if (!q) {
+      setServerSuggestions([]);
+      return;
+    }
+
+    const controller = new AbortController();
+    const base = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.trim() || "http://localhost:3000";
+    const url = new URL("/events/suggestions", base.endsWith("/") ? base : `${base}/`);
+    url.searchParams.set("q", q);
+    url.searchParams.set("lat", String(origin.lat));
+    url.searchParams.set("lng", String(origin.lng));
+    url.searchParams.set("radiusKm", "1000");
+    url.searchParams.set("limit", "10");
+
+    const id = window.setTimeout(() => {
+      fetch(url.toString(), { signal: controller.signal })
+        .then(async (res) => {
+          if (!res.ok) throw new Error(`Suggestions request failed (${res.status})`);
+          const payload = (await res.json()) as { ok?: boolean; suggestions?: string[] };
+          const list = Array.isArray(payload.suggestions) ? payload.suggestions : [];
+          setServerSuggestions(list.slice(0, 10));
+        })
+        .catch((err: unknown) => {
+          if (err instanceof DOMException && err.name === "AbortError") return;
+          setServerSuggestions([]);
+        });
+    }, 220);
+
+    return () => {
+      window.clearTimeout(id);
+      controller.abort();
+    };
+  }, [origin.lat, origin.lng, query]);
+
+  useEffect(() => {
+    const onPrompt = (event: Event) => {
+      event.preventDefault();
+      setInstallPromptEvent(event as InstallPromptEvent);
+      setInstallReady(true);
+    };
+    const onInstalled = () => {
+      setInstallPromptEvent(null);
+      setInstallReady(false);
+      setStandalone(true);
+    };
+    window.addEventListener("beforeinstallprompt", onPrompt);
+    window.addEventListener("appinstalled", onInstalled);
+    return () => {
+      window.removeEventListener("beforeinstallprompt", onPrompt);
+      window.removeEventListener("appinstalled", onInstalled);
+    };
+  }, []);
+
+  const commitQuery = useCallback(
+    (nextValue: string, opts?: { persistHistory?: boolean }) => {
+      const trimmed = nextValue.trim();
+      if (trimmed && opts?.persistHistory) {
+        setRecentSearches(rememberRecentSearch(trimmed, recentSearches));
+      }
+
+      const next = new URLSearchParams(searchParams);
+      if (trimmed) next.set("q", trimmed);
+      else next.delete("q");
+
+      const nextSearch = next.toString();
+      const searchStr = nextSearch ? `?${nextSearch}` : "";
+
+      // If user is not on dashboard and they start searching, send them to dashboard
+      if (location.pathname !== "/" && trimmed) {
+        navigate({ pathname: "/", search: searchStr }, { replace: true });
+        return;
+      }
+
+      setSearchParams(next, { replace: true });
+    },
+    [location.pathname, navigate, recentSearches, searchParams, setSearchParams]
+  );
+
+  const searchSuggestions = useMemo(() => {
+    const qNorm = normalizeSearchText(query);
+    if (!qNorm) {
+      return recentSearches.map((item) => ({ label: item, source: "recent" as const })).slice(0, 8);
+    }
+
+    const fromRecent = recentSearches
+      .filter((item) => isFuzzyMatch(qNorm, item))
+      .map((item) => ({ label: item, source: "recent" as const }));
+
+    const seen = new Set(fromRecent.map((item) => normalizeSearchText(item.label)));
+    const fromCatalog = serverSuggestions
+      .filter((item) => !seen.has(normalizeSearchText(item)) && isFuzzyMatch(qNorm, item))
+      .slice(0, 8)
+      .map((item) => ({ label: item, source: "catalog" as const }));
+
+    return [...fromRecent, ...fromCatalog].slice(0, 8);
+  }, [query, recentSearches, serverSuggestions]);
+
+  const handleInstallClick = useCallback(async () => {
+    if (!installPromptEvent) return;
+    await installPromptEvent.prompt();
+    const choice = await installPromptEvent.userChoice;
+    if (choice.outcome === "accepted") {
+      setInstallReady(false);
+    }
+  }, [installPromptEvent]);
+
+  // Debounce: avoid updating URL on every single keystroke instantly
+  useEffect(() => {
+    if (query.trim() === qFromUrl) return;
+
+    const id = window.setTimeout(() => {
+      commitQuery(query, { persistHistory: false });
+    }, 300);
+
+    return () => window.clearTimeout(id);
+  }, [commitQuery, qFromUrl, query]);
 
   const resolveNotificationTarget = useCallback((n: NotificationItem): To | null => {
     const payload = n.payload && typeof n.payload === "object" ? n.payload : null;

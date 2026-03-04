@@ -69,6 +69,32 @@ function toCardEvent(item: RecentlyViewedEvent): EventItem {
   };
 }
 
+function formatCompactPrice(event: EventItem) {
+  const explicit = (event.priceLabel || "").trim();
+  if (explicit && explicit.toLowerCase() !== "price unknown") return explicit;
+  if (event.isFree) return "Free";
+  const min = typeof event.priceMin === "number" ? event.priceMin : null;
+  const max = typeof event.priceMax === "number" ? event.priceMax : null;
+  const cost = typeof event.cost === "number" ? event.cost : null;
+  const currency = (event.currency || "").trim().toUpperCase();
+  const amount = (value: number) => {
+    const rounded = Number.isInteger(value)
+      ? String(Math.round(value))
+      : value.toFixed(2).replace(/\.00$/, "");
+    return !currency || currency === "EUR" ? `€${rounded}` : `${currency} ${rounded}`;
+  };
+
+  if (min != null && max != null) {
+    const a = Math.min(min, max);
+    const b = Math.max(min, max);
+    return Math.abs(a - b) < 0.01 ? amount(a) : `${amount(a)}–${amount(b)}`;
+  }
+  if (cost != null) return amount(cost);
+  if (min != null) return amount(min);
+  if (max != null) return amount(max);
+  return null;
+}
+
 function EventCard({
   event,
   search,
@@ -86,6 +112,7 @@ function EventCard({
     event.venue,
     `${event.distanceKm.toFixed(1)} km`,
   ].filter(Boolean);
+  const priceBadge = formatCompactPrice(event);
 
   return (
     <Link to={`/events/${event.id}${search}`} className="eventCardLink">
@@ -124,6 +151,10 @@ function EventCard({
             <span className="eventSocialPill eventSocialTrend">Trending</span>
           </div>
         ) : null}
+        <div className="eventSocialRow">
+          {event.trending ? <span className="eventSocialPill eventSocialTrend">Trending</span> : null}
+          {priceBadge ? <span className="eventSocialPill eventSocialPrice">{priceBadge}</span> : null}
+        </div>
       </article>
     </Link>
   );

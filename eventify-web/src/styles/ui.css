@@ -1161,6 +1161,12 @@ textarea.input { min-height: 110px; resize: vertical; }
   color: rgba(255, 208, 140, 0.95);
 }
 
+.eventSocialPrice {
+  border-color: rgba(178,106,168,.38);
+  color: rgba(240,214,236,.96);
+  background: rgba(178,106,168,.14);
+}
+
 /* =========================
    DASHBOARD — ORGANIZER CTA
    ========================= */

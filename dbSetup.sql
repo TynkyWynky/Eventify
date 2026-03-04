@@ -52,7 +52,11 @@ CREATE TABLE events (
     -- Cost
     is_free         BOOLEAN DEFAULT FALSE,
     cost            DECIMAL(10, 2),
+    price_min       DECIMAL(10, 2),
+    price_max       DECIMAL(10, 2),
     currency        VARCHAR(3) DEFAULT 'USD',
+    price_tier      VARCHAR(16),
+    price_source    VARCHAR(32),
     ticket_url      VARCHAR(500),
     
     -- Organization

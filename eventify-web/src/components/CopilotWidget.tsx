@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { apiFetch } from "../auth/apiClient";
 import { useAuth } from "../auth/AuthContext";
@@ -21,6 +21,15 @@ type CopilotSuggestion = {
   reasons?: string[];
   imageUrl?: string | null;
   tags?: string[];
+  cost?: number | null;
+  priceMin?: number | null;
+  priceMax?: number | null;
+  currency?: string | null;
+  isFree?: boolean | null;
+  priceTier?: "free" | "low" | "mid" | "high" | "premium" | null;
+  priceLabel?: string | null;
+  priceConfidence?: string | null;
+  ticketUrl?: string | null;
 };
 
 type ChatMessage = {
@@ -55,36 +64,14 @@ function uid(prefix = "m") {
   return `${prefix}_${Math.random().toString(16).slice(2)}_${Date.now().toString(16)}`;
 }
 
-/* =========================
-   Per-user chat persistence
-   ========================= */
-const WIDGET_STORAGE_VERSION = "v2";
-
 function defaultMessages(): ChatMessage[] {
   return [
     {
       id: uid(),
       role: "assistant",
-      text:
-        "Yo 👋 Beschrijf je avond zoals tegen een vriend:\n" +
-        "“Vrijdag Brussel • techno/house • max 25km • niet te duur • 2 vrienden”\n\n" +
-        "Ik drop meteen 3–5 matches met waarom + je kan direct Going/Save/Invite.",
+      text: "Zeg kort: dag, stad, vibe, km en budget. Ik geef direct 3 ideeën.",
     },
   ];
-}
-
-function storageKeyFor(userId?: string | number | null) {
-  const u = userId ? String(userId) : "anon";
-  return `eventify:vibe:${WIDGET_STORAGE_VERSION}:${u}`;
-}
-
-function safeJsonParse<T>(raw: string | null): T | null {
-  if (!raw) return null;
-  try {
-    return JSON.parse(raw) as T;
-  } catch {
-    return null;
-  }
 }
 
 function formatStartIso(startIso?: string | null) {
@@ -99,6 +86,40 @@ function formatStartIso(startIso?: string | null) {
     minute: "2-digit",
     hour12: false,
   });
+}
+
+function formatPriceChip(s: CopilotSuggestion) {
+  const explicit = (s.priceLabel || "").trim();
+  if (explicit && explicit.toLowerCase() !== "price unknown") {
+    return s.priceTier ? `${explicit} (${s.priceTier})` : explicit;
+  }
+  if (s.isFree === true) return "Free";
+
+  const toNum = (v: unknown) => {
+    const n = typeof v === "number" ? v : Number(v);
+    return Number.isFinite(n) ? n : null;
+  };
+  const min = toNum(s.priceMin);
+  const max = toNum(s.priceMax);
+  const cost = toNum(s.cost);
+  const currency = (s.currency || "").trim().toUpperCase();
+  const amount = (value: number) => {
+    const rounded = Number.isInteger(value)
+      ? String(Math.round(value))
+      : value.toFixed(2).replace(/\.00$/, "");
+    return !currency || currency === "EUR" ? `€${rounded}` : `${currency} ${rounded}`;
+  };
+
+  if (min != null && max != null) {
+    const a = Math.min(min, max);
+    const b = Math.max(min, max);
+    const label = Math.abs(a - b) < 0.01 ? amount(a) : `${amount(a)}–${amount(b)}`;
+    return s.priceTier ? `${label} (${s.priceTier})` : label;
+  }
+  if (cost != null) return s.priceTier ? `${amount(cost)} (${s.priceTier})` : amount(cost);
+  if (min != null) return s.priceTier ? `${amount(min)} (${s.priceTier})` : amount(min);
+  if (max != null) return s.priceTier ? `${amount(max)} (${s.priceTier})` : amount(max);
+  return null;
 }
 
 function WaveIcon() {
@@ -158,8 +179,6 @@ export default function CopilotWidget() {
   const navigate = useNavigate();
   const location = useLocation();
 
-  const storageKey = useMemo(() => storageKeyFor(user?.id), [user?.id]);
-
   const [isOpen, setIsOpen] = useState(false);
   const [draft, setDraft] = useState("");
   const [loading, setLoading] = useState(false);
@@ -202,42 +221,6 @@ export default function CopilotWidget() {
   useEffect(() => {
     return subscribeFavoritesChanged(() => setFavTick((t) => t + 1));
   }, []);
-
-  // Load per-user chat (fix: switching users keeps their own convo)
-  useEffect(() => {
-    const saved = safeJsonParse<{
-      messages?: ChatMessage[];
-      inviteTargets?: string[];
-      inviteOpen?: boolean;
-    }>(window.localStorage.getItem(storageKey));
-
-    if (saved?.messages && Array.isArray(saved.messages) && saved.messages.length > 0) {
-      setMessages(saved.messages);
-    } else {
-      setMessages(defaultMessages());
-    }
-
-    setInviteTargets(Array.isArray(saved?.inviteTargets) ? saved!.inviteTargets : []);
-    setInviteOpen(Boolean(saved?.inviteOpen));
-    setInvitePickId("");
-    setDraft("");
-    setSocialByKey({});
-    setGoingBusy({});
-    setInviteBusy({});
-  }, [storageKey]);
-
-  // Persist per user
-  useEffect(() => {
-    const trimmed = messages.slice(-30);
-    window.localStorage.setItem(
-      storageKey,
-      JSON.stringify({
-        messages: trimmed,
-        inviteTargets,
-        inviteOpen,
-      })
-    );
-  }, [storageKey, messages, inviteTargets, inviteOpen]);
 
   // Load friends (for Invite)
   useEffect(() => {
@@ -300,15 +283,6 @@ export default function CopilotWidget() {
     window.setTimeout(() => inputRef.current?.focus(), 0);
   }, [isOpen]);
 
-  const quickPrompts = useMemo(
-    () => [
-      "Vrijdag Brussel, techno/house, max 25km, niet te duur, 2 vrienden",
-      "Dit weekend Gent, indie/rock, max 15km",
-      "Zaterdag Antwerpen, house, max 20km, laat beginnen",
-    ],
-    []
-  );
-
   function requireLogin() {
     navigate("/login", { state: { from: location.pathname + location.search } });
   }
@@ -355,7 +329,6 @@ export default function CopilotWidget() {
   }
 
   function resetChat() {
-    window.localStorage.removeItem(storageKey);
     setMessages(defaultMessages());
     setInviteTargets([]);
     setInvitePickId("");
@@ -376,22 +349,30 @@ export default function CopilotWidget() {
 
     try {
       const origin = getOrigin();
+      const controller = new AbortController();
+      const timer = window.setTimeout(() => controller.abort(), 15000);
 
-      const data = await apiFetch<CopilotResponse>("/copilot", {
-        method: "POST",
-        token,
-        body: {
-          message: text,
-          originLat: origin.lat,
-          originLng: origin.lng,
-          originLabel: origin.label,
-          clientNowIso: new Date().toISOString(),
-        },
-      });
+      let data: CopilotResponse;
+      try {
+        data = await apiFetch<CopilotResponse>("/chatbot", {
+          method: "POST",
+          token,
+          signal: controller.signal,
+          body: {
+            message: text,
+            originLat: origin.lat,
+            originLng: origin.lng,
+            originLabel: origin.label,
+            clientNowIso: new Date().toISOString(),
+          },
+        });
+      } finally {
+        window.clearTimeout(timer);
+      }
 
       const answer =
-        (typeof data?.answer === "string" && data.answer.trim()) || "Oké — dit zijn mijn beste matches.";
-      const suggestions = Array.isArray(data?.suggestions) ? data.suggestions.slice(0, 5) : [];
+        (typeof data?.answer === "string" && data.answer.trim()) || "Hier zijn snelle ideeën.";
+      const suggestions = Array.isArray(data?.suggestions) ? data.suggestions.slice(0, 3) : [];
 
       setMessages((prev) => [
         ...prev,
@@ -405,13 +386,16 @@ export default function CopilotWidget() {
 
       if (suggestions.length) void loadSocialFor(suggestions.map((s) => s.eventKey));
     } catch (e) {
+      const isAbort = e instanceof DOMException && e.name === "AbortError";
       const msg = (e as Error)?.message || "unknown error";
       setMessages((prev) => [
         ...prev,
         {
           id: uid(),
           role: "assistant",
-          text: `Ik kan je matches nog niet laden.\nCheck backend + /copilot.\n\nError: ${msg}`,
+          text: isAbort
+            ? "De chat duurde te lang. Probeer een kortere prompt."
+            : `Ik kan je chat nu niet laden.\nCheck backend + /chatbot.\n\nError: ${msg}`,
         },
       ]);
     } finally {
@@ -561,22 +545,6 @@ export default function CopilotWidget() {
           </header>
 
           <div className="aiBody">
-            <div className="aiQuickRow" aria-label="Quick prompts">
-              {quickPrompts.map((p) => (
-                <button
-                  key={p}
-                  className="aiQuickChip"
-                  type="button"
-                  onClick={() => {
-                    setDraft(p);
-                    inputRef.current?.focus();
-                  }}
-                >
-                  {p}
-                </button>
-              ))}
-            </div>
-
             <div className="aiToolbar">
               <button
                 className={`aiMiniBtn ${inviteOpen ? "aiMiniBtnActive" : ""}`}
@@ -668,13 +636,12 @@ export default function CopilotWidget() {
                         {m.suggestions.map((s) => {
                           const social = socialByKey[s.eventKey];
                           const isGoing = social?.myGoing ?? false;
-                          const goingCount = social?.goingCount ?? null;
-                          const friendsGoingCount = social?.friendsGoingCount ?? null;
                           const isFav = user ? isUserFavorite(user.id, s.eventKey) : false;
 
                           const when = formatStartIso(s.startIso || null);
                           const where = [s.venue, s.city].filter(Boolean).join(" — ");
                           const dist = typeof s.distanceKm === "number" ? `${Math.round(s.distanceKm)}km` : null;
+                          const priceChip = formatPriceChip(s);
                           const eventLink = `/events/${encodeURIComponent(s.eventKey)}`;
 
                           return (
@@ -692,10 +659,7 @@ export default function CopilotWidget() {
                                 </div>
 
                                 <div className="aiStats">
-                                  {typeof goingCount === "number" ? <span className="aiStat">{goingCount} going</span> : null}
-                                  {typeof friendsGoingCount === "number" && friendsGoingCount > 0 ? (
-                                    <span className="aiStat">{friendsGoingCount} friend(s)</span>
-                                  ) : null}
+                                  {priceChip ? <span className="aiStat">{priceChip}</span> : null}
                                 </div>
                               </div>
 
@@ -740,6 +704,17 @@ export default function CopilotWidget() {
                                 <button className="aiBtn aiBtnGhost" type="button" onClick={() => void copyPitch(s)}>
                                   Copy pitch
                                 </button>
+
+                                {s.ticketUrl ? (
+                                  <a
+                                    className="aiBtn aiBtnGhost"
+                                    href={s.ticketUrl}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                  >
+                                    Tickets
+                                  </a>
+                                ) : null}
 
                                 <Link className="aiBtn aiBtnGhost" to={eventLink}>
                                   Open
