@@ -197,3 +197,50 @@ POST /ai/success-predictor
   }
 }
 ```
+
+---
+
+## Deploy op Vercel + Managed Postgres
+
+Postgres draait niet op Vercel. Gebruik een managed DB (Neon, Supabase, Render, RDS, ...).
+
+### 1) Backend deployen (deze map `Eventify/`)
+
+- Vercel config staat in `vercel.json`
+- API draait als Node Serverless Functions:
+  - `api/[...all].js` -> Express app
+  - `api/cron/sync.js` -> scheduled sync endpoint
+- Belangrijke runtime routes:
+  - `GET /api/health`
+  - `GET /api/events`
+  - `POST /api/chatbot`
+  - `POST /api/copilot`
+
+### 2) Environment variables in Vercel
+
+Minimaal:
+- `DATABASE_URL` = managed Postgres connection string
+- `DATABASE_SSL=require` (meestal nodig bij managed providers)
+- `JWT_SECRET` = sterke random string (>= 32 chars)
+- `CORS_ORIGINS` = frontend origin(s)
+- `CRON_SECRET` = random secret voor cron endpoint authenticatie
+
+Optioneel maar aanbevolen:
+- `TICKETMASTER_API_KEY`
+- `SETLISTFM_API_KEY`
+- `OLLAMA_ENABLED=false` op Vercel (tenzij je Ollama extern host)
+- `API_BASE_URL=https://<jouw-app>.vercel.app/api` (of leeg laten voor auto-detect in cron)
+
+### 3) Scheduled sync (Vercel Cron)
+
+- `vercel.json` bevat standaard een hourly cron:
+  - `path: /api/cron/sync`
+  - `schedule: 0 * * * *`
+- Endpoint verwacht `CRON_SECRET` (Bearer token of query `?secret=` voor manuele test).
+- Manueel testen:
+  - `GET https://<jouw-app>.vercel.app/api/cron/sync?secret=<CRON_SECRET>`
+
+### 4) Frontend koppelen
+
+- Voor aparte frontend deploy: zet `VITE_API_BASE_URL=https://<backend>.vercel.app/api`
+- Voor frontend + backend in dezelfde Vercel app: zet `VITE_API_BASE_URL=/api`

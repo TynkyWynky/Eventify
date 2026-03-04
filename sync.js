@@ -6,7 +6,7 @@ require("dotenv").config();
 
 const CONFIG = {
 
-  API_BASE_URL: process.env.API_BASE_URL || "http://localhost:3000",
+  API_BASE_URL: process.env.API_BASE_URL || "",
   
   // Sync settings
   SYNC_INTERVAL: process.env.SYNC_INTERVAL || "0 * * * *", 
@@ -34,6 +34,26 @@ function cleanText(value) {
   if (value == null) return null;
   const text = String(value).replace(/\s+/g, " ").trim();
   return text || null;
+}
+
+function trimTrailingSlashes(value) {
+  return String(value || "").replace(/\/+$/, "");
+}
+
+function inferApiBaseUrlFromEnv() {
+  const explicit = cleanText(CONFIG.API_BASE_URL);
+  if (explicit) return trimTrailingSlashes(explicit);
+
+  const vercelUrl = cleanText(process.env.VERCEL_URL);
+  if (vercelUrl) return `https://${trimTrailingSlashes(vercelUrl)}/api`;
+
+  return "http://localhost:3000";
+}
+
+function resolveApiBaseUrl(rawBaseUrl) {
+  const explicit = cleanText(rawBaseUrl);
+  if (explicit) return trimTrailingSlashes(explicit);
+  return inferApiBaseUrlFromEnv();
 }
 
 function toBool(value, fallback = false) {
@@ -168,8 +188,10 @@ async function fetchEventsFromAPI({
   radiusKm = CONFIG.DEFAULT_RADIUS_KM,
   size = CONFIG.FETCH_SIZE,
   keyword = "",
+  apiBaseUrl,
 } = {}) {
-  const url = `${CONFIG.API_BASE_URL}/events`;
+  const baseUrl = resolveApiBaseUrl(apiBaseUrl);
+  const url = `${baseUrl}/events`;
   
   console.log(` Fetching events from API: ${url}`);
   console.log(`   Params: lat=${lat}, lng=${lng}, radius=${radiusKm}km, size=${size}`);
@@ -649,7 +671,7 @@ async function cleanupDuplicateSyncedEvents() {
   }
 }
 
-async function syncEvents() {
+async function syncEvents({ apiBaseUrl } = {}) {
   const startTime = Date.now();
   console.log("\n" + "=".repeat(60));
   console.log(` SYNC STARTED at ${new Date().toISOString()}`);
@@ -658,15 +680,29 @@ async function syncEvents() {
   let inserted = 0;
   let updated = 0;
   let failed = 0;
+  let fetched = 0;
 
   try {
     await ensureSourceColumns();
 
-    const apiEvents = await fetchEventsFromAPI();
+    const apiEvents = await fetchEventsFromAPI({ apiBaseUrl });
+    fetched = apiEvents.length;
 
     if (apiEvents.length === 0) {
       console.log(" No events fetched from API");
-      return;
+      const durationSeconds = Number(((Date.now() - startTime) / 1000).toFixed(2));
+      return {
+        fetched: 0,
+        inserted: 0,
+        updated: 0,
+        failed: 0,
+        dedupeRemoved: 0,
+        mergedRegistrations: 0,
+        totalSynced: null,
+        upcomingEvents: null,
+        bySource: [],
+        durationSeconds,
+      };
     }
 
     console.log(`\n Processing ${apiEvents.length} events...`);
@@ -708,6 +744,19 @@ async function syncEvents() {
     console.log(`   By source: ${stats.bySource.map(s => `${s.source}=${s.count}`).join(', ')}`);
     console.log("=".repeat(60) + "\n");
 
+    return {
+      fetched,
+      inserted,
+      updated,
+      failed,
+      dedupeRemoved: dedupeResult.removed || 0,
+      mergedRegistrations: dedupeResult.mergedRegistrations || 0,
+      totalSynced: stats.totalSynced,
+      upcomingEvents: stats.upcomingEvents,
+      bySource: stats.bySource,
+      durationSeconds: Number(duration),
+    };
+
   } catch (err) {
     console.error("\n SYNC FAILED:", err.message);
     console.error(err.stack);
@@ -730,47 +779,82 @@ function startScheduler() {
 }
 
 
-async function runManualSync() {
-  try {
+async function runSyncOnce({ apiBaseUrl, skipConnectionTest = false } = {}) {
+  if (!skipConnectionTest) {
     const connected = await testConnection();
     if (!connected) {
-      process.exit(1);
+      throw new Error("Database connection failed");
     }
-    await syncEvents();
-    process.exit(0);
-  } catch (err) {
-    console.error("Manual sync failed:", err);
-    process.exit(1);
   }
+  return syncEvents({ apiBaseUrl });
 }
 
+async function closePool() {
+  await pool.end();
+}
 
-async function main() {
+function registerSignalHandlers() {
+  let shuttingDown = false;
+  const shutdown = async () => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    console.log("\n Shutting down gracefully...");
+    await closePool();
+    process.exit(0);
+  };
+
+  process.on("SIGINT", () => {
+    shutdown().catch((err) => {
+      console.error("Failed to close DB pool on SIGINT:", err);
+      process.exit(1);
+    });
+  });
+
+  process.on("SIGTERM", () => {
+    shutdown().catch((err) => {
+      console.error("Failed to close DB pool on SIGTERM:", err);
+      process.exit(1);
+    });
+  });
+}
+
+async function main(args = process.argv.slice(2)) {
   const connected = await testConnection();
   if (!connected) {
-    process.exit(1);
+    throw new Error("Database connection failed");
   }
-
-  const args = process.argv.slice(2);
   
   if (args.includes('--once') || args.includes('-o')) {
     console.log(" Running one-time sync...");
-    await runManualSync();
+    const summary = await runSyncOnce({ skipConnectionTest: true });
+    await closePool();
+    return summary;
   } else {
     startScheduler();
+    return null;
   }
 }
 
-process.on('SIGINT', async () => {
-  console.log('\n Shutting down gracefully...');
-  await pool.end();
-  process.exit(0);
-});
+if (require.main === module) {
+  registerSignalHandlers();
+  main().catch(async (err) => {
+    console.error("Sync service failed:", err);
+    try {
+      await closePool();
+    } catch {
+      // Ignore pool-close errors on fatal path.
+    }
+    process.exitCode = 1;
+  });
+}
 
-process.on('SIGTERM', async () => {
-  console.log('\n Shutting down gracefully...');
-  await pool.end();
-  process.exit(0);
-});
-
-main().catch(console.error);
+module.exports = {
+  CONFIG,
+  fetchEventsFromAPI,
+  mapApiEventToDb,
+  syncEvents,
+  runSyncOnce,
+  startScheduler,
+  testConnection,
+  closePool,
+};

@@ -95,6 +95,25 @@ function formatCompactPrice(event: EventItem) {
   return null;
 }
 
+function resolvePriceQuality(event: EventItem): "verified" | "estimated" | null {
+  const source = (event.priceSource || "").trim().toLowerCase();
+  const confidence = (event.priceConfidence || "").trim().toLowerCase();
+  if (!source && !confidence) return null;
+  if (source === "unknown" || confidence === "unknown") return null;
+
+  if (
+    source.startsWith("ticketmaster_inferred_") ||
+    confidence.includes("inferred") ||
+    source === "scraped_text" ||
+    source === "scraped_proxy" ||
+    confidence === "scraped_text"
+  ) {
+    return "estimated";
+  }
+
+  return "verified";
+}
+
 function EventCard({
   event,
   search,
@@ -113,6 +132,7 @@ function EventCard({
     `${event.distanceKm.toFixed(1)} km`,
   ].filter(Boolean);
   const priceBadge = formatCompactPrice(event);
+  const priceQuality = priceBadge ? resolvePriceQuality(event) : null;
 
   return (
     <Link to={`/events/${event.id}${search}`} className="eventCardLink">
@@ -149,6 +169,18 @@ function EventCard({
         {priceBadge ? (
           <div className="eventSocialRow">
             <span className="eventSocialPill eventSocialPrice">{priceBadge}</span>
+            {priceQuality ? (
+              <span
+                className={`eventSocialPill eventSocialPriceQuality ${
+                  priceQuality === "verified"
+                    ? "eventSocialPriceVerified"
+                    : "eventSocialPriceEstimated"
+                }`}
+                title={priceQuality === "verified" ? "Prijs bevestigd via brondata" : "Prijs is een schatting"}
+              >
+                {priceQuality === "verified" ? "Verified" : "Estimated"}
+              </span>
+            ) : null}
           </div>
         ) : null}
       </article>
