@@ -445,9 +445,6 @@ export default function MyEventsPage() {
             </Link>
           </div>
 
-          <p className="authHint myEventsAuthHintBottom">
-            Demo admin: <b>admin@eventify.local</b> / <b>password123</b>
-          </p>
         </div>
       </div>
     );
