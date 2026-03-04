@@ -18,11 +18,14 @@ export default function AppShellLayout() {
     location.pathname === "/account/settings" ||
     location.pathname === "/login" ||
     location.pathname === "/register";
+  const isExtraWidePage = location.pathname === "/my-events";
 
   return (
     <div className="appShell">
       <TopNavigationBar />
-      <main className={`appPage ${isWidePage ? "appPageWide" : ""}`}>
+      <main
+        className={`appPage ${isWidePage ? "appPageWide" : ""} ${isExtraWidePage ? "appPageXWide" : ""}`}
+      >
         <Outlet />
       </main>
 
