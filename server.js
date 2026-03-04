@@ -141,17 +141,24 @@ function parseDbSsl(value) {
   return normalized === "1" || normalized === "true" || normalized === "require";
 }
 
-const DATABASE_URL = (process.env.DATABASE_URL || "").trim();
+const DATABASE_URL = (
+  process.env.DATABASE_URL ||
+  process.env.POSTGRES_URL ||
+  process.env.POSTGRES_PRISMA_URL ||
+  ""
+).trim();
+const DATABASE_SSL_ENABLED =
+  parseDbSsl(process.env.DATABASE_SSL) || /(?:[?&]sslmode=require)(?:&|$)/i.test(DATABASE_URL);
 const pool = DATABASE_URL
   ? new Pool({
       connectionString: DATABASE_URL,
-      ssl: parseDbSsl(process.env.DATABASE_SSL) ? { rejectUnauthorized: false } : false,
+      ssl: DATABASE_SSL_ENABLED ? { rejectUnauthorized: false } : false,
     })
   : null;
 
 if (!DATABASE_URL) {
   console.warn(
-    "⚠️  DATABASE_URL is not set. Auth + admin endpoints will not work until you configure it."
+    "⚠️  DATABASE_URL/POSTGRES_URL is not set. Auth + admin endpoints will not work until you configure it."
   );
 }
 
