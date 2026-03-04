@@ -1,4 +1,10 @@
-import { useEffect, useMemo, useState, type CSSProperties } from "react";
+import {
+  useEffect,
+  useMemo,
+  useState,
+  type ChangeEvent,
+  type CSSProperties,
+} from "react";
 import { Link } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
 import { MUSIC_STYLES } from "../events/eventsStore";
@@ -111,6 +117,7 @@ export default function MyEventsPage() {
   const [style, setStyle] = useState(styleOptions[0] ?? "Techno");
 
   const [imageUrl, setImageUrl] = useState(DEFAULT_IMAGE);
+  const [imageError, setImageError] = useState<string | null>(null);
   const [description, setDescription] = useState("");
 
   const [addressLine, setAddressLine] = useState("");
@@ -159,6 +166,7 @@ export default function MyEventsPage() {
     setDateLabel("");
     setStyle(styleOptions[0] ?? "Techno");
     setImageUrl(DEFAULT_IMAGE);
+    setImageError(null);
     setDescription("");
     setAddressLine("");
     setPostalCode("");
@@ -188,6 +196,7 @@ export default function MyEventsPage() {
     setDateLabel(e.dateLabel === "TBA" ? "" : e.dateLabel);
     setStyle(e.tags[0] ?? (styleOptions[0] ?? "Techno"));
     setImageUrl(e.imageUrl || DEFAULT_IMAGE);
+    setImageError(null);
     setDescription(e.description);
 
     setAddressLine(e.addressLine);
@@ -464,6 +473,50 @@ export default function MyEventsPage() {
     );
   }
 
+  function fileToDataUrl(file: File): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const result = typeof reader.result === "string" ? reader.result : "";
+        if (!result) {
+          reject(new Error("Could not read selected image."));
+          return;
+        }
+        resolve(result);
+      };
+      reader.onerror = () => reject(new Error("Could not read selected image."));
+      reader.readAsDataURL(file);
+    });
+  }
+
+  async function handleImageFileChange(e: ChangeEvent<HTMLInputElement>) {
+    setImageError(null);
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (!file.type.startsWith("image/")) {
+      setImageError("Please select a valid image file.");
+      e.target.value = "";
+      return;
+    }
+
+    const MAX_MB = 5;
+    if (file.size > MAX_MB * 1024 * 1024) {
+      setImageError(`Image is too large. Maximum ${MAX_MB}MB.`);
+      e.target.value = "";
+      return;
+    }
+
+    try {
+      const dataUrl = await fileToDataUrl(file);
+      setImageUrl(dataUrl);
+    } catch (err: unknown) {
+      setImageError(err instanceof Error ? err.message : "Could not load selected image.");
+    } finally {
+      e.target.value = "";
+    }
+  }
+
   // NORMAL USER: request flow
   if (!isOrganizer) {
     const pendingCount = events.filter((e) => e.status === "pending").length;
@@ -593,9 +646,23 @@ export default function MyEventsPage() {
                   <input
                     className="authInput"
                     value={imageUrl}
-                    onChange={(e) => setImageUrl(e.target.value)}
+                    onChange={(e) => {
+                      setImageError(null);
+                      setImageUrl(e.target.value);
+                    }}
                     placeholder="https://images.unsplash.com/..."
                   />
+                  <div className="authHint">Or upload an image from your device:</div>
+                  <input
+                    className="authInput myEventsFileInput"
+                    type="file"
+                    accept="image/*"
+                    onChange={handleImageFileChange}
+                  />
+                  {imageError ? <div className="authHint authHintError">{imageError}</div> : null}
+                  {imageUrl ? (
+                    <img className="myEventsImagePreview" src={imageUrl} alt="Event preview" loading="lazy" />
+                  ) : null}
                 </div>
 
                 <div className="myEventsActionsRow">
@@ -974,9 +1041,23 @@ export default function MyEventsPage() {
                 <input
                   className="authInput"
                   value={imageUrl}
-                  onChange={(e) => setImageUrl(e.target.value)}
+                  onChange={(e) => {
+                    setImageError(null);
+                    setImageUrl(e.target.value);
+                  }}
                   placeholder="https://images.unsplash.com/..."
                 />
+                <div className="authHint">Or upload an image from your device:</div>
+                <input
+                  className="authInput myEventsFileInput"
+                  type="file"
+                  accept="image/*"
+                  onChange={handleImageFileChange}
+                />
+                {imageError ? <div className="authHint authHintError">{imageError}</div> : null}
+                {imageUrl ? (
+                  <img className="myEventsImagePreview" src={imageUrl} alt="Event preview" loading="lazy" />
+                ) : null}
               </div>
 
               <div className="myEventsActionsRow">
