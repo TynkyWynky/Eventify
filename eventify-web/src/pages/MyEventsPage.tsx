@@ -415,10 +415,6 @@ export default function MyEventsPage() {
     return events.filter((e) => isPromotionActive(e)).length;
   }, [events]);
 
-  const effectiveDateLabelPreview = useMemo(() => {
-    return formatDateLabelFromLocalInput(eventDateTime) || dateLabel.trim() || "TBA";
-  }, [eventDateTime, dateLabel]);
-
   const topByViews = useMemo(() => {
     const copy = [...events];
     copy.sort((a, b) => getViews(b.id) - getViews(a.id));
@@ -554,42 +550,8 @@ export default function MyEventsPage() {
                   type="datetime-local"
                   value={eventDateTime}
                   onChange={(e) => setEventDateTime(e.target.value)}
+                  placeholder="mm/dd/yyyy --:--"
                 />
-                <div className="myEventsDateQuickRow">
-                  <button
-                    className="btn btnSecondary myEventsDateQuickBtn"
-                    type="button"
-                    onClick={() => {
-                      const d = new Date();
-                      d.setHours(20, 0, 0, 0);
-                      setEventDateTime(toLocalDateTimeInputValue(d));
-                    }}
-                  >
-                    Tonight 20:00
-                  </button>
-                  <button
-                    className="btn btnSecondary myEventsDateQuickBtn"
-                    type="button"
-                    onClick={() => {
-                      const d = new Date();
-                      d.setDate(d.getDate() + 7);
-                      d.setHours(20, 0, 0, 0);
-                      setEventDateTime(toLocalDateTimeInputValue(d));
-                    }}
-                  >
-                    +7 days 20:00
-                  </button>
-                </div>
-                <div className="authLabel myEventsDateLabelTop">Custom date label (optional)</div>
-                <input
-                  className="authInput"
-                  value={dateLabel}
-                  onChange={(e) => setDateLabel(e.target.value)}
-                  placeholder="Only if you want to override the picker label"
-                />
-                <div className="sectionHint myEventsDatePreview">
-                  Preview: <b>{effectiveDateLabelPreview}</b>
-                </div>
               </div>
             </div>
 
@@ -939,42 +901,8 @@ export default function MyEventsPage() {
                 type="datetime-local"
                 value={eventDateTime}
                 onChange={(e) => setEventDateTime(e.target.value)}
+                placeholder="mm/dd/yyyy --:--"
               />
-              <div className="myEventsDateQuickRow">
-                <button
-                  className="btn btnSecondary myEventsDateQuickBtn"
-                  type="button"
-                  onClick={() => {
-                    const d = new Date();
-                    d.setHours(20, 0, 0, 0);
-                    setEventDateTime(toLocalDateTimeInputValue(d));
-                  }}
-                >
-                  Tonight 20:00
-                </button>
-                <button
-                  className="btn btnSecondary myEventsDateQuickBtn"
-                  type="button"
-                  onClick={() => {
-                    const d = new Date();
-                    d.setDate(d.getDate() + 7);
-                    d.setHours(20, 0, 0, 0);
-                    setEventDateTime(toLocalDateTimeInputValue(d));
-                  }}
-                >
-                  +7 days 20:00
-                </button>
-              </div>
-              <div className="authLabel myEventsDateLabelTop">Custom date label (optional)</div>
-              <input
-                className="authInput"
-                value={dateLabel}
-                onChange={(e) => setDateLabel(e.target.value)}
-                placeholder="Only if you want to override the picker label"
-              />
-              <div className="sectionHint myEventsDatePreview">
-                Preview: <b>{effectiveDateLabelPreview}</b>
-              </div>
             </div>
           </div>
 

@@ -2258,10 +2258,6 @@ a.accountFriendAction {
 .myEventsGrid2 { display: grid; gap: 12px; grid-template-columns: 1fr 1fr; }
 
 .myEventsActionsRow { display: flex; gap: 10px; flex-wrap: wrap; }
-.myEventsDateQuickRow { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
-.myEventsDateQuickBtn { padding: 8px 10px; font-size: 12px; }
-.myEventsDateLabelTop { margin-top: 10px; }
-.myEventsDatePreview { margin-top: 6px; }
 
 .myEventsFormGrid input[type="datetime-local"].authInput {
   color-scheme: dark;
