@@ -2241,6 +2241,43 @@ function toNumberOrNull(value) {
   return Number.isFinite(n) ? n : null;
 }
 
+function pickFirstNumber(values = []) {
+  for (const value of values) {
+    const n = toNumberOrNull(value);
+    if (n != null) return n;
+  }
+  return null;
+}
+
+function parsePriceBoundsFromText(value) {
+  const text = cleanText(value);
+  if (!text) return null;
+
+  const lowered = text.toLowerCase();
+  let currency = null;
+  if (/[€]|\beur\b|\beuro\b/.test(lowered)) currency = "EUR";
+  else if (/[$]|\busd\b|\bdollar/.test(lowered)) currency = "USD";
+  else if (/[£]|\bgbp\b|\bpound/.test(lowered)) currency = "GBP";
+
+  const isFreeHint = /\b(free|gratis|gratuit|kosteloos)\b/i.test(lowered);
+  const rawNumbers = text.match(/\d{1,4}(?:[.,]\d{1,2})?/g) || [];
+  const numbers = rawNumbers
+    .map((entry) => Number(String(entry).replace(",", ".")))
+    .filter((entry) => Number.isFinite(entry) && entry >= 0 && entry <= 5000);
+
+  if (numbers.length === 0) {
+    if (!isFreeHint) return null;
+    return { min: 0, max: 0, currency, isFreeHint: true };
+  }
+
+  return {
+    min: Math.min(...numbers),
+    max: Math.max(...numbers),
+    currency,
+    isFreeHint,
+  };
+}
+
 function normalizeCurrencyCode(value) {
   const text = cleanText(value);
   if (!text) return null;
@@ -2312,11 +2349,98 @@ function formatPriceLabel({ priceMin, priceMax, cost, currency, isFree }) {
 }
 
 function normalizeEventPrice(event) {
-  const topPriceMin = toNumberOrNull(event?.priceMin);
-  const topPriceMax = toNumberOrNull(event?.priceMax);
-  const metaPriceMin = toNumberOrNull(event?.metadata?.priceMin);
-  const metaPriceMax = toNumberOrNull(event?.metadata?.priceMax);
-  const topCost = toNumberOrNull(event?.cost);
+  const metadata =
+    event?.metadata && typeof event.metadata === "object" ? event.metadata : {};
+  const sourceMetadata =
+    event?.sourceMetadata && typeof event.sourceMetadata === "object"
+      ? event.sourceMetadata
+      : event?.source_metadata && typeof event.source_metadata === "object"
+      ? event.source_metadata
+      : {};
+
+  const priceTextHints = [
+    event?.priceLabel,
+    event?.priceText,
+    event?.price,
+    metadata?.priceLabel,
+    metadata?.priceText,
+    metadata?.price,
+    sourceMetadata?.priceLabel,
+    sourceMetadata?.priceText,
+    sourceMetadata?.price,
+  ]
+    .map((entry) => parsePriceBoundsFromText(entry))
+    .filter(Boolean);
+
+  const hintPriceMin = pickFirstNumber(priceTextHints.map((entry) => entry?.min));
+  const hintPriceMax = pickFirstNumber(priceTextHints.map((entry) => entry?.max));
+  const hintCurrency =
+    priceTextHints.map((entry) => normalizeCurrencyCode(entry?.currency)).find(Boolean) || null;
+  const hintIsFree = priceTextHints.some((entry) => entry?.isFreeHint === true);
+
+  const topPriceMin = pickFirstNumber([
+    event?.priceMin,
+    event?.price_min,
+    event?.minPrice,
+    event?.minimumPrice,
+    event?.price?.min,
+    event?.price?.low,
+    event?.price?.from,
+  ]);
+  const topPriceMax = pickFirstNumber([
+    event?.priceMax,
+    event?.price_max,
+    event?.maxPrice,
+    event?.maximumPrice,
+    event?.price?.max,
+    event?.price?.high,
+    event?.price?.to,
+  ]);
+  const metaPriceMin = pickFirstNumber([
+    metadata?.priceMin,
+    metadata?.price_min,
+    metadata?.minPrice,
+    metadata?.minimumPrice,
+    metadata?.price?.min,
+    metadata?.price?.low,
+    sourceMetadata?.priceMin,
+    sourceMetadata?.price_min,
+    sourceMetadata?.minPrice,
+    sourceMetadata?.minimumPrice,
+    sourceMetadata?.price?.min,
+    sourceMetadata?.price?.low,
+    hintPriceMin,
+  ]);
+  const metaPriceMax = pickFirstNumber([
+    metadata?.priceMax,
+    metadata?.price_max,
+    metadata?.maxPrice,
+    metadata?.maximumPrice,
+    metadata?.price?.max,
+    metadata?.price?.high,
+    sourceMetadata?.priceMax,
+    sourceMetadata?.price_max,
+    sourceMetadata?.maxPrice,
+    sourceMetadata?.maximumPrice,
+    sourceMetadata?.price?.max,
+    sourceMetadata?.price?.high,
+    hintPriceMax,
+  ]);
+  const topCost = pickFirstNumber([
+    event?.cost,
+    event?.priceAmount,
+    event?.priceValue,
+    event?.amount,
+    metadata?.cost,
+    metadata?.priceAmount,
+    metadata?.priceValue,
+    metadata?.amount,
+    sourceMetadata?.cost,
+    sourceMetadata?.priceAmount,
+    sourceMetadata?.priceValue,
+    sourceMetadata?.amount,
+    hintPriceMin,
+  ]);
 
   let priceMin = topPriceMin != null ? topPriceMin : metaPriceMin;
   let priceMax = topPriceMax != null ? topPriceMax : metaPriceMax;
@@ -2340,15 +2464,31 @@ function normalizeEventPrice(event) {
 
   const currency =
     normalizeCurrencyCode(event?.currency) ||
+    normalizeCurrencyCode(event?.currencyCode) ||
+    normalizeCurrencyCode(event?.priceCurrency) ||
+    normalizeCurrencyCode(event?.price?.currency) ||
     normalizeCurrencyCode(event?.metadata?.currency) ||
-    normalizeCurrencyCode(event?.metadata?.priceCurrency);
+    normalizeCurrencyCode(event?.metadata?.currencyCode) ||
+    normalizeCurrencyCode(event?.metadata?.priceCurrency) ||
+    normalizeCurrencyCode(event?.metadata?.price?.currency) ||
+    normalizeCurrencyCode(sourceMetadata?.currency) ||
+    normalizeCurrencyCode(sourceMetadata?.currencyCode) ||
+    normalizeCurrencyCode(sourceMetadata?.priceCurrency) ||
+    normalizeCurrencyCode(sourceMetadata?.price?.currency) ||
+    hintCurrency;
+
+  const hasFreeHint =
+    hintIsFree ||
+    event?.isFree === true ||
+    metadata?.isFree === true ||
+    sourceMetadata?.isFree === true;
 
   const hasPaidSignal =
     (priceMin != null && priceMin > 0) ||
     (priceMax != null && priceMax > 0) ||
     (cost != null && cost > 0);
   const hasZeroSignal =
-    priceMin === 0 || priceMax === 0 || cost === 0 || event?.isFree === true;
+    priceMin === 0 || priceMax === 0 || cost === 0 || hasFreeHint;
   const isFree = hasPaidSignal ? false : hasZeroSignal;
   const hasAnyPrice = hasPaidSignal || hasZeroSignal;
 
@@ -6203,21 +6343,66 @@ function setCachedChatbotReply(cacheKey, { answer, suggestions = [] }) {
   });
 }
 
+function formatFallbackBudgetLabel(value) {
+  if (value === "cheap") return "budgetvriendelijk";
+  if (typeof value === "number" && Number.isFinite(value) && value > 0) {
+    return `max €${Math.round(value)}`;
+  }
+  return "budget flexibel";
+}
+
 function buildChatbotFallbackReply({ message, originLabel, suggestions = [] }) {
   const normalized = copilotNormalize(message);
-  const place = cleanText(originLabel) || "je locatie";
+  const city = findCity(message);
+  const dateRange = parseDateRange(message);
+  const styles = parseRequestedStyles(message);
+  const budget = parseBudget(message);
+  const maxKm = parseMaxKm(message);
+  const place = city?.name || cleanText(originLabel) || "je locatie";
   const list = Array.isArray(suggestions) ? suggestions.slice(0, 5) : [];
   if (list.length > 0) {
     const lines = [`Top ideeën rond ${place}:`];
     for (let i = 0; i < list.length; i += 1) {
       const item = list[i];
-      const price = cleanText(item?.priceLabel);
+      let price = cleanText(item?.priceLabel);
+      if (!price || price.toLowerCase() === "price unknown") {
+        const computed = cleanText(formatPriceLabel(item || {}));
+        if (computed && computed.toLowerCase() !== "price unknown") {
+          price = computed;
+        } else if (item?.isFree === true) {
+          price = "Free";
+        }
+      }
       const city = cleanText(item?.city);
       lines.push(
         `${i + 1}. ${item.title}${city ? ` (${city})` : ""}${price ? ` - ${price}` : ""}`
       );
     }
     return lines.join("\n");
+  }
+
+  const hasConstraints =
+    city != null ||
+    dateRange != null ||
+    styles.length > 0 ||
+    budget != null ||
+    typeof maxKm === "number";
+  if (hasConstraints) {
+    const styleLabel = styles.length > 0 ? styles.slice(0, 2).join(" / ") : "open vibe";
+    const dayLabel = cleanText(dateRange?.label) || "komende dagen";
+    const kmLabel =
+      typeof maxKm === "number" && Number.isFinite(maxKm) && maxKm > 0
+        ? `binnen ${Math.round(maxKm)}km`
+        : "radius flexibel";
+    const budgetLabel = formatFallbackBudgetLabel(budget);
+    return (
+      `Ik vind nu geen sterke live matches rond ${place} (${dayLabel}).\n` +
+      "Snelle alternatieve ideeën:\n" +
+      `1. Clubnacht met ${styleLabel}\n` +
+      `2. Mid-size concertzaal ${kmLabel}\n` +
+      `3. Late set met ${budgetLabel}\n` +
+      `Filters gebruikt: ${dayLabel} • ${styleLabel} • ${kmLabel} • ${budgetLabel}.`
+    );
   }
 
   if (containsCheapBudgetHint(normalized)) {
@@ -6229,6 +6414,7 @@ function buildChatbotFallbackReply({ message, originLabel, suggestions = [] }) {
       "Tip: geef dag + max km voor scherpere picks."
     );
   }
+
   return (
     `Snelle ideeën rond ${place}:\n` +
     "1. Clubnacht met elektronische line-up\n" +
@@ -6444,7 +6630,7 @@ async function buildFastChatbotSuggestions({
   const queryTokens = extractChatbotQueryTokens(safeMessage, city);
   const dateRange = parseDateRange(safeMessage, clientNowIso);
   const budget = parseBudget(safeMessage);
-  const maxKm = parseMaxKm(safeMessage) ?? 30;
+  const maxKm = parseMaxKm(safeMessage) ?? 45;
   const maxResults = Math.max(1, Math.min(3, limit));
 
   const fallbackLat = Number.isFinite(originLat) ? originLat : 50.8503;

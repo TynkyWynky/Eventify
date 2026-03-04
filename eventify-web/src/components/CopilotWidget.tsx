@@ -69,7 +69,7 @@ function defaultMessages(): ChatMessage[] {
     {
       id: uid(),
       role: "assistant",
-      text: "Zeg kort: dag, stad, vibe, km en budget. Ik geef direct 3 ideeën.",
+      text: "Typ bv: vrijdag Brussel, techno, max 25km, budget €30. Ik geef 3 concrete ideeën met prijs.",
     },
   ];
 }
@@ -90,7 +90,11 @@ function formatStartIso(startIso?: string | null) {
 
 function formatPriceChip(s: CopilotSuggestion) {
   const explicit = (s.priceLabel || "").trim();
-  if (explicit && explicit.toLowerCase() !== "price unknown") {
+  if (explicit) {
+    const normalized = explicit.toLowerCase();
+    if (normalized === "price unknown" || normalized === "unknown") {
+      return s.priceTier ? `Price n/a (${s.priceTier})` : "Price n/a";
+    }
     return s.priceTier ? `${explicit} (${s.priceTier})` : explicit;
   }
   if (s.isFree === true) return "Free";
@@ -119,7 +123,7 @@ function formatPriceChip(s: CopilotSuggestion) {
   if (cost != null) return s.priceTier ? `${amount(cost)} (${s.priceTier})` : amount(cost);
   if (min != null) return s.priceTier ? `${amount(min)} (${s.priceTier})` : amount(min);
   if (max != null) return s.priceTier ? `${amount(max)} (${s.priceTier})` : amount(max);
-  return null;
+  return s.priceTier ? `Price n/a (${s.priceTier})` : "Price n/a";
 }
 
 function WaveIcon() {
