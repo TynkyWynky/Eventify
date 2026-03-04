@@ -2,15 +2,12 @@
   "version": 2,
   "functions": {
     "api/index.js": {
-      "runtime": "nodejs20.x",
       "maxDuration": 60
     },
     "api/[...all].js": {
-      "runtime": "nodejs20.x",
       "maxDuration": 60
     },
     "api/cron/sync.js": {
-      "runtime": "nodejs20.x",
       "maxDuration": 60
     }
   },
