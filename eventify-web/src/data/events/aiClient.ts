@@ -1,4 +1,5 @@
 import type { EventItem } from "../../events/eventsStore";
+import { API_BASE_URL } from "../../auth/apiClient";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -99,16 +100,11 @@ function toEnvNum(raw: string | undefined, fallback: number) {
   return Number.isFinite(n) ? n : fallback;
 }
 
-function getApiBaseUrl() {
-  const raw = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.trim();
-  return raw || "http://localhost:3002";
-}
-
 export const DEFAULT_USER_LAT = toEnvNum(import.meta.env.VITE_DEFAULT_LAT, 50.8503);
 export const DEFAULT_USER_LNG = toEnvNum(import.meta.env.VITE_DEFAULT_LNG, 4.3517);
 
 async function postJson<T>(path: string, body: unknown, signal?: AbortSignal): Promise<T> {
-  const base = getApiBaseUrl();
+  const base = API_BASE_URL;
   const endpoint = `${base.replace(/\/$/, "")}${path}`;
   const res = await fetch(endpoint, {
     method: "POST",

@@ -5,6 +5,7 @@ import {
   listPublicOrganizerEvents,
 } from "./organizerEventsStore";
 import { getGenreFallbackImage } from "./genreImages";
+import { API_BASE_URL } from "../../auth/apiClient";
 
 type ApiEvent = {
   source?: string | null;
@@ -281,9 +282,6 @@ function applyFilters(items: EventItem[], params?: EventsListParams) {
   });
 }
 
-const API_BASE_URL =
-  (import.meta.env.VITE_API_BASE_URL as string | undefined)?.trim() ||
-  "http://localhost:3002";
 const DEFAULT_LAT = toEnvNum(import.meta.env.VITE_DEFAULT_LAT, 50.8503);
 const DEFAULT_LNG = toEnvNum(import.meta.env.VITE_DEFAULT_LNG, 4.3517);
 const DEFAULT_RADIUS_KM = 50;

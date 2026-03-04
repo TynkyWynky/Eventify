@@ -1,7 +1,25 @@
-const ENV_BASE = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.trim();
-const RAW_BASE = ENV_BASE || (import.meta.env.DEV ? "http://localhost:3000" : "/api");
+function resolveApiBaseUrl() {
+  const envBase = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.trim();
+  const fallback = import.meta.env.DEV ? "http://localhost:3000" : "/api";
 
-export const API_BASE_URL = RAW_BASE.replace(/\/+$/, "");
+  if (!envBase) return fallback;
+
+  if (!import.meta.env.DEV) {
+    // Protect production builds from accidental localhost env values on Vercel.
+    try {
+      const parsed = new URL(envBase, window.location.origin);
+      if (parsed.hostname === "localhost" || parsed.hostname === "127.0.0.1") {
+        return "/api";
+      }
+    } catch {
+      // Keep non-URL values such as "/api" as-is.
+    }
+  }
+
+  return envBase;
+}
+
+export const API_BASE_URL = resolveApiBaseUrl().replace(/\/+$/, "");
 
 type ApiErrorPayload = { error?: string; message?: string };
 
