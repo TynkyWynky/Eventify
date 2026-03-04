@@ -23,10 +23,25 @@ function resolveApiBaseUrl(): string {
   let resolvedBase = envBase;
 
   if (!import.meta.env.DEV) {
+    const allowCrossOriginApiBase = ["1", "true", "yes", "on"].includes(
+      String(import.meta.env.VITE_API_BASE_URL_ALLOW_CROSS_ORIGIN ?? "")
+        .trim()
+        .toLowerCase()
+    );
+
     // Protect production builds from accidental localhost env values on Vercel.
     try {
       const parsed = new URL(resolvedBase, window.location.origin);
       if (parsed.hostname === "localhost" || parsed.hostname === "127.0.0.1") {
+        return "/api";
+      }
+      // Single-project safety: if API host differs from current app host, prefer same-origin /api.
+      // This avoids accidental pointing to protected/stale preview deployments after merges.
+      if (
+        !allowCrossOriginApiBase &&
+        /^https?:\/\//i.test(resolvedBase) &&
+        parsed.host !== window.location.host
+      ) {
         return "/api";
       }
     } catch {
