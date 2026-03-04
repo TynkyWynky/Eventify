@@ -440,6 +440,18 @@ body::before {
   gap: var(--space-2);
 }
 
+.navQuickLinks {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.navQuickActive {
+  border-color: rgba(178,106,168,.65);
+  background: rgba(178,106,168,.18);
+  box-shadow: var(--glow);
+}
+
 .navInstallBtn {
   height: 40px;
   border-radius: var(--radius);
@@ -1120,6 +1132,15 @@ textarea.input { min-height: 110px; resize: vertical; }
   white-space: nowrap;
 }
 
+.eventCardDate {
+  font-size: 12px;
+  font-weight: 800;
+  color: rgba(226, 206, 236, 0.95);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .eventCardAiReason {
   margin-top: 2px;
   font-size: 11px;
@@ -1182,6 +1203,31 @@ textarea.input { min-height: 110px; resize: vertical; }
   border-color: rgba(255, 201, 102, 0.42);
   color: rgba(255, 234, 183, 0.96);
   background: rgba(185, 129, 46, 0.18);
+}
+
+.dashboardStatusRow {
+  margin-top: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.dashboardRetryBtn {
+  min-width: 96px;
+}
+
+.dashboardErrorRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.dashboardErrorAction {
+  min-width: 110px;
 }
 
 /* =========================
@@ -1344,6 +1390,15 @@ textarea.input { min-height: 110px; resize: vertical; }
 .authInput:focus {
   border-color: rgba(178, 106, 168, 0.65);
   box-shadow: var(--glow);
+}
+
+.authInputInvalid {
+  border-color: rgba(255, 120, 160, 0.62);
+}
+
+.authHintError {
+  margin-top: 6px;
+  color: rgba(255, 176, 176, 0.95);
 }
 
 .authPrimaryButton {
@@ -2259,6 +2314,37 @@ a.accountFriendAction {
 
 .myEventsActionsRow { display: flex; gap: 10px; flex-wrap: wrap; }
 
+.myEventsStepTabs {
+  display: inline-flex;
+  gap: 8px;
+}
+
+.myEventsStepTab {
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: rgba(255,255,255,.04);
+  color: var(--text);
+  padding: 7px 12px;
+  font-size: 12px;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.myEventsStepTab:hover {
+  border-color: var(--borderHover);
+}
+
+.myEventsStepTab.isActive {
+  border-color: rgba(178,106,168,.65);
+  background: rgba(178,106,168,.16);
+  box-shadow: var(--glow);
+}
+
+.myEventsStepTab:disabled {
+  opacity: .5;
+  cursor: not-allowed;
+}
+
 .myEventsFormGrid input[type="datetime-local"].authInput {
   color-scheme: dark;
 }
@@ -2377,8 +2463,13 @@ a.accountFriendAction {
     order: 3;
   }
 
-  .navActions {
+  .navQuickLinks {
     order: 2;
+    width: 100%;
+  }
+
+  .navActions {
+    order: 4;
     margin-left: auto;
   }
 
@@ -2399,6 +2490,10 @@ a.accountFriendAction {
   .navActions {
     flex-wrap: wrap;
     justify-content: flex-end;
+  }
+
+  .navQuickLinks {
+    display: none;
   }
 
   .navPill { height: 38px; padding: 0 12px; }

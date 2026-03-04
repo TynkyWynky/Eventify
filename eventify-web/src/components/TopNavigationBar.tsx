@@ -144,6 +144,26 @@ export default function TopNavigationBar() {
           Eventium
         </Link>
 
+        <nav className="navQuickLinks" aria-label="Primary">
+          <NavLink
+            to="/"
+            end
+            className={({ isActive }) =>
+              `dashboardNavBtn ${isActive ? "active navQuickActive" : ""}`
+            }
+          >
+            Discover
+          </NavLink>
+          <NavLink
+            to="/my-events"
+            className={({ isActive }) =>
+              `dashboardNavBtn ${isActive ? "active navQuickActive" : ""}`
+            }
+          >
+            My events
+          </NavLink>
+        </nav>
+
         <div className="navSearchWrap" ref={searchWrapRef}>
           <input
             className="searchBar"
@@ -203,10 +223,18 @@ export default function TopNavigationBar() {
           ) : null}
           {!user ? (
             <>
-              <NavLink className="navPill" to="/login">
+              <NavLink
+                className={({ isActive }) => `navPill ${isActive ? "active" : ""}`}
+                to="/login"
+              >
                 Login
               </NavLink>
-              <NavLink className="navPill navPillPrimary" to="/register">
+              <NavLink
+                className={({ isActive }) =>
+                  `navPill navPillPrimary ${isActive ? "active" : ""}`
+                }
+                to="/register"
+              >
                 Sign up
               </NavLink>
             </>

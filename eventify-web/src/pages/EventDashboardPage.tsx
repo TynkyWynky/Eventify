@@ -126,11 +126,8 @@ function EventCard({
     : [];
   const aiReason =
     reasonList.find((reason) => !/\bkm\b/i.test(reason)) || reasonList[0] || null;
-  const metaParts = [
-    event.artistName || null,
-    event.venue,
-    `${event.distanceKm.toFixed(1)} km`,
-  ].filter(Boolean);
+  const styleTag = event.tags.find((tag) => tag && tag !== "All") || "Music";
+  const locationLine = [event.venue, event.city].filter(Boolean).join(" • ");
   const priceBadge = formatCompactPrice(event);
   const priceQuality = priceBadge ? resolvePriceQuality(event) : null;
 
@@ -157,32 +154,36 @@ function EventCard({
             <div className="eventCardTitle" title={event.title}>
               {event.title}
             </div>
-            <div className="eventCardMeta">{metaParts.join(" • ")}</div>
+            <div className="eventCardDate">{event.dateLabel}</div>
+            <div className="eventCardMeta">{locationLine}</div>
             {aiReason ? (
               <div className="eventCardAiReason" title={aiReason}>
                 {aiReason}
               </div>
             ) : null}
           </div>
-          <div className="eventFooterRight">{event.dateLabel}</div>
         </div>
-        {priceBadge ? (
-          <div className="eventSocialRow">
-            <span className="eventSocialPill eventSocialPrice">{priceBadge}</span>
-            {priceQuality ? (
-              <span
-                className={`eventSocialPill eventSocialPriceQuality ${
-                  priceQuality === "verified"
-                    ? "eventSocialPriceVerified"
-                    : "eventSocialPriceEstimated"
-                }`}
-                title={priceQuality === "verified" ? "Prijs bevestigd via brondata" : "Prijs is een schatting"}
-              >
-                {priceQuality === "verified" ? "Verified" : "Estimated"}
-              </span>
-            ) : null}
-          </div>
-        ) : null}
+        <div className="eventSocialRow">
+          <span className="eventSocialPill">{styleTag}</span>
+          <span className="eventSocialPill">{event.distanceKm.toFixed(1)} km</span>
+          {priceBadge ? (
+            <>
+              <span className="eventSocialPill eventSocialPrice">{priceBadge}</span>
+              {priceQuality ? (
+                <span
+                  className={`eventSocialPill eventSocialPriceQuality ${
+                    priceQuality === "verified"
+                      ? "eventSocialPriceVerified"
+                      : "eventSocialPriceEstimated"
+                  }`}
+                  title={priceQuality === "verified" ? "Prijs bevestigd via brondata" : "Prijs is een schatting"}
+                >
+                  {priceQuality === "verified" ? "Verified" : "Estimated"}
+                </span>
+              ) : null}
+            </>
+          ) : null}
+        </div>
       </article>
     </Link>
   );
@@ -287,6 +288,7 @@ export default function EventDashboardPage() {
   const [mapEvents, setMapEvents] = useState<EventItem[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [lastLoadedAt, setLastLoadedAt] = useState<number | null>(null);
   const [isOffline, setIsOffline] = useState(
     typeof navigator !== "undefined" ? !navigator.onLine : false
   );
@@ -333,7 +335,10 @@ export default function EventDashboardPage() {
         },
         { signal: controller.signal }
       )
-      .then(setEvents)
+      .then((next) => {
+        setEvents(next);
+        setLastLoadedAt(Date.now());
+      })
       .catch((err: unknown) => {
         if (err instanceof DOMException && err.name === "AbortError") return;
         setError(err instanceof Error ? err.message : String(err));
@@ -626,6 +631,7 @@ export default function EventDashboardPage() {
 
   const showRecommended =
     Boolean(userId) && prefTags.length > 0 && recommendedEvents.length > 0;
+  const resultCount = eventsWithAi.length;
 
   return (
     <div>
@@ -695,10 +701,37 @@ export default function EventDashboardPage() {
               </div>
             </div>
 
-            {isLoading ? <div className="sectionHint">Loading…</div> : null}
+            <div className="dashboardStatusRow">
+              <div className="sectionHint">
+                {isLoading
+                  ? "Loading events…"
+                  : `${resultCount} event${resultCount === 1 ? "" : "s"} found`}
+                {lastLoadedAt
+                  ? ` • Updated ${new Date(lastLoadedAt).toLocaleTimeString([], {
+                      hour: "2-digit",
+                      minute: "2-digit",
+                    })}`
+                  : ""}
+              </div>
+              <button
+                type="button"
+                className="btn btnSecondary dashboardRetryBtn"
+                onClick={() => setReloadTick((t) => t + 1)}
+                disabled={isLoading}
+              >
+                Retry
+              </button>
+            </div>
             {error ? (
-              <div className="authError" style={{ marginTop: 10 }}>
-                {error}
+              <div className="authError dashboardErrorRow" style={{ marginTop: 10 }}>
+                <span>{error}</span>
+                <button
+                  type="button"
+                  className="btn btnSecondary dashboardErrorAction"
+                  onClick={() => setReloadTick((t) => t + 1)}
+                >
+                  Retry now
+                </button>
               </div>
             ) : null}
           </div>

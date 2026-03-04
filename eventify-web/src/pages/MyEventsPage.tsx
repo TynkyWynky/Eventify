@@ -136,8 +136,21 @@ export default function MyEventsPage() {
     primaryGenre?: string;
     notes?: string[];
   } | null>(null);
+  const [formStep, setFormStep] = useState<"basic" | "details">("basic");
+
+  const fieldErrors = useMemo(() => {
+    return {
+      title: title.trim().length === 0,
+      venue: venue.trim().length === 0,
+      city: city.trim().length === 0,
+      eventDateTime: eventDateTime.trim().length === 0,
+    };
+  }, [city, eventDateTime, title, venue]);
+
+  const basicStepValid = !fieldErrors.title && !fieldErrors.venue && !fieldErrors.city && !fieldErrors.eventDateTime;
 
   function resetForm() {
+    setFormStep("basic");
     setEditingId(null);
     setTitle("");
     setVenue("");
@@ -166,6 +179,7 @@ export default function MyEventsPage() {
   function startEdit(e: OrganizerEvent) {
     if (!isOrganizer) return;
 
+    setFormStep("basic");
     setEditingId(e.id);
     setTitle(e.title);
     setVenue(e.venue);
@@ -334,9 +348,10 @@ export default function MyEventsPage() {
     const v = venue.trim();
     const c = city.trim();
 
-    if (!t) return setError("Title is required.");
-    if (!v) return setError("Venue is required.");
-    if (!c) return setError("City is required.");
+    if (!t || !v || !c || !eventDateTime.trim()) {
+      setFormStep("basic");
+      return setError("Title, venue, city and event date & time are required.");
+    }
 
     const latNum = Number(latitude);
     const lngNum = Number(longitude);
@@ -438,13 +453,12 @@ export default function MyEventsPage() {
 
           <div className="myEventsAuthButtons">
             <Link className="btn btnPrimary" to="/login">
-              Login
-            </Link>
-            <Link className="btn btnSecondary" to="/register">
-              Create account
+              Login to continue
             </Link>
           </div>
-
+          <div className="authHint myEventsAuthHintBottom">
+            No account yet? <Link to="/register">Create one</Link>
+          </div>
         </div>
       </div>
     );
@@ -492,210 +506,240 @@ export default function MyEventsPage() {
           {geoError ? <div className="authError myEventsError">{geoError}</div> : null}
 
           <div className="myEventsFormGrid">
-            <div className="myEventsGrid2_1">
-              <div>
-                <div className="authLabel">Title</div>
-                <input
-                  className="authInput"
-                  value={title}
-                  onChange={(e) => setTitle(e.target.value)}
-                  placeholder="e.g. Techno Night @ Mons"
-                />
-              </div>
-
-              <div>
-                <div className="authLabel">Style</div>
-                <select
-                  className="authInput"
-                  value={style}
-                  onChange={(e) => setStyle(e.target.value)}
-                >
-                  {styleOptions.map((s) => (
-                    <option key={s} value={s}>
-                      {s}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            </div>
-
-            <div className="myEventsGrid3">
-              <div>
-                <div className="authLabel">Venue</div>
-                <input
-                  className="authInput"
-                  value={venue}
-                  onChange={(e) => setVenue(e.target.value)}
-                  placeholder="e.g. WayRoad"
-                />
-              </div>
-
-              <div>
-                <div className="authLabel">City</div>
-                <input
-                  className="authInput"
-                  value={city}
-                  onChange={(e) => setCity(e.target.value)}
-                  placeholder="e.g. Mons"
-                />
-              </div>
-
-              <div>
-                <div className="authLabel">Event date & time</div>
-                <input
-                  className="authInput"
-                  type="datetime-local"
-                  value={eventDateTime}
-                  onChange={(e) => setEventDateTime(e.target.value)}
-                  placeholder="mm/dd/yyyy --:--"
-                />
-              </div>
-            </div>
-
-            <div>
-              <div className="authLabel">Image URL</div>
-              <input
-                className="authInput"
-                value={imageUrl}
-                onChange={(e) => setImageUrl(e.target.value)}
-                placeholder="https://images.unsplash.com/..."
-              />
-            </div>
-
-            <div className="myEventsGrid2_1_1">
-              <div>
-                <div className="authLabel">Address line</div>
-                <input
-                  className="authInput"
-                  value={addressLine}
-                  onChange={(e) => {
-                    setAddressLine(e.target.value);
-                    setGeoStatus(null);
-                  }}
-                  placeholder="e.g. WayRoad 7"
-                />
-              </div>
-
-              <div>
-                <div className="authLabel">Postal code</div>
-                <input
-                  className="authInput"
-                  value={postalCode}
-                  onChange={(e) => {
-                    setPostalCode(e.target.value);
-                    setGeoStatus(null);
-                  }}
-                  placeholder="e.g. 7860"
-                />
-              </div>
-
-              <div>
-                <div className="authLabel">Country</div>
-                <input
-                  className="authInput"
-                  value={country}
-                  onChange={(e) => {
-                    setCountry(e.target.value);
-                    setGeoStatus(null);
-                  }}
-                  placeholder="e.g. Belgium"
-                />
-              </div>
-            </div>
-
-            <div className="myEventsActionsRow">
+            <div className="myEventsStepTabs">
               <button
-                className="btn btnSecondary"
                 type="button"
-                onClick={handleAutoLocate}
-                disabled={isGeocoding}
+                className={`myEventsStepTab ${formStep === "basic" ? "isActive" : ""}`}
+                onClick={() => setFormStep("basic")}
               >
-                {isGeocoding ? "Locating…" : "Auto-locate from address"}
+                1. Basic
               </button>
+              <button
+                type="button"
+                className={`myEventsStepTab ${formStep === "details" ? "isActive" : ""}`}
+                onClick={() => setFormStep("details")}
+                disabled={!basicStepValid}
+              >
+                2. Details
+              </button>
+            </div>
 
-              {geoStatus ? (
-                <div className="sectionHint myEventsPromoHint">
-                  {geoStatus} (lat: {Number(latitude).toFixed(5)}, lng:{" "}
-                  {Number(longitude).toFixed(5)})
+            {formStep === "basic" ? (
+              <>
+                <div className="myEventsGrid2_1">
+                  <div>
+                    <div className="authLabel">Title</div>
+                    <input
+                      className={`authInput ${fieldErrors.title ? "authInputInvalid" : ""}`}
+                      value={title}
+                      onChange={(e) => setTitle(e.target.value)}
+                      placeholder="e.g. Techno Night @ Mons"
+                    />
+                    {fieldErrors.title ? <div className="authHint authHintError">Title is required.</div> : null}
+                  </div>
+
+                  <div>
+                    <div className="authLabel">Style</div>
+                    <select className="authInput" value={style} onChange={(e) => setStyle(e.target.value)}>
+                      {styleOptions.map((s) => (
+                        <option key={s} value={s}>
+                          {s}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
                 </div>
-              ) : (
-                <div className="sectionHint myEventsPromoHint">
-                  Tip: use “Street + number” (e.g. “WayRoad 7”), then click Auto-locate.
+
+                <div className="myEventsGrid3">
+                  <div>
+                    <div className="authLabel">Venue</div>
+                    <input
+                      className={`authInput ${fieldErrors.venue ? "authInputInvalid" : ""}`}
+                      value={venue}
+                      onChange={(e) => setVenue(e.target.value)}
+                      placeholder="e.g. WayRoad"
+                    />
+                    {fieldErrors.venue ? <div className="authHint authHintError">Venue is required.</div> : null}
+                  </div>
+
+                  <div>
+                    <div className="authLabel">City</div>
+                    <input
+                      className={`authInput ${fieldErrors.city ? "authInputInvalid" : ""}`}
+                      value={city}
+                      onChange={(e) => setCity(e.target.value)}
+                      placeholder="e.g. Mons"
+                    />
+                    {fieldErrors.city ? <div className="authHint authHintError">City is required.</div> : null}
+                  </div>
+
+                  <div>
+                    <div className="authLabel">Event date & time</div>
+                    <input
+                      className={`authInput ${fieldErrors.eventDateTime ? "authInputInvalid" : ""}`}
+                      type="datetime-local"
+                      value={eventDateTime}
+                      onChange={(e) => setEventDateTime(e.target.value)}
+                      placeholder="mm/dd/yyyy --:--"
+                    />
+                    {fieldErrors.eventDateTime ? (
+                      <div className="authHint authHintError">Date and time are required.</div>
+                    ) : null}
+                  </div>
                 </div>
-              )}
-            </div>
 
-            <div>
-              <div className="authLabel">Description</div>
-              <textarea
-                className="authInput"
-                rows={4}
-                value={description}
-                onChange={(e) => setDescription(e.target.value)}
-                placeholder="What should people expect? Line-up, vibe, tickets…"
-              />
-            </div>
-
-            <div className="myEventsActionsRow">
-              <button
-                className="btn btnSecondary"
-                type="button"
-                onClick={handlePredictSuccess}
-                disabled={isGeocoding || successPredictLoading}
-              >
-                {successPredictLoading ? "Predicting…" : "AI predict success"}
-              </button>
-
-              <button
-                className="btn btnPrimary"
-                type="button"
-                onClick={handleSave}
-                disabled={isGeocoding}
-              >
-                Submit request
-              </button>
-
-              <button
-                className="btn btnSecondary"
-                type="button"
-                onClick={resetForm}
-                disabled={isGeocoding}
-              >
-                Reset
-              </button>
-            </div>
-
-            {successPredictError ? (
-              <div className="sectionHint myEventsAiError">
-                Predictor unavailable: {successPredictError}
-              </div>
-            ) : null}
-            {successPredict ? (
-              <div className="myEventsAiCard">
-                <div className="myEventsStrongTitle">AI Success Predictor</div>
-                <div className="myEventsAiStats">
-                  <span>
-                    Chance of high turnout: <b>{successPredict.probabilityHighAttendance ?? "?"}%</b>
-                  </span>
-                  <span>
-                    Expected attendance: <b>{successPredict.expectedAttendance ?? "?"}</b>
-                  </span>
-                  <span>
-                    Best promo day: <b>{successPredict.bestPromotionDay ?? "—"}</b>
-                  </span>
-                  <span>
-                    Target audience: <b>{successPredict.targetAudienceAgeRange ?? "—"}</b>
-                  </span>
+                <div>
+                  <div className="authLabel">Image URL</div>
+                  <input
+                    className="authInput"
+                    value={imageUrl}
+                    onChange={(e) => setImageUrl(e.target.value)}
+                    placeholder="https://images.unsplash.com/..."
+                  />
                 </div>
-                {successPredict.notes && successPredict.notes.length > 0 ? (
-                  <ul className="myEventsAiNotes">
-                    {successPredict.notes.slice(0, 4).map((note) => (
-                      <li key={note}>{note}</li>
-                    ))}
-                  </ul>
+
+                <div className="myEventsActionsRow">
+                  <button
+                    className="btn btnPrimary"
+                    type="button"
+                    onClick={() => setFormStep("details")}
+                    disabled={!basicStepValid}
+                  >
+                    Continue to details
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="myEventsGrid2_1_1">
+                  <div>
+                    <div className="authLabel">Address line</div>
+                    <input
+                      className="authInput"
+                      value={addressLine}
+                      onChange={(e) => {
+                        setAddressLine(e.target.value);
+                        setGeoStatus(null);
+                      }}
+                      placeholder="e.g. WayRoad 7"
+                    />
+                  </div>
+
+                  <div>
+                    <div className="authLabel">Postal code</div>
+                    <input
+                      className="authInput"
+                      value={postalCode}
+                      onChange={(e) => {
+                        setPostalCode(e.target.value);
+                        setGeoStatus(null);
+                      }}
+                      placeholder="e.g. 7860"
+                    />
+                  </div>
+
+                  <div>
+                    <div className="authLabel">Country</div>
+                    <input
+                      className="authInput"
+                      value={country}
+                      onChange={(e) => {
+                        setCountry(e.target.value);
+                        setGeoStatus(null);
+                      }}
+                      placeholder="e.g. Belgium"
+                    />
+                  </div>
+                </div>
+
+                <div className="myEventsActionsRow">
+                  <button
+                    className="btn btnSecondary"
+                    type="button"
+                    onClick={handleAutoLocate}
+                    disabled={isGeocoding}
+                  >
+                    {isGeocoding ? "Locating…" : "Auto-locate from address"}
+                  </button>
+
+                  {geoStatus ? (
+                    <div className="sectionHint myEventsPromoHint">
+                      {geoStatus} (lat: {Number(latitude).toFixed(5)}, lng:{" "}
+                      {Number(longitude).toFixed(5)})
+                    </div>
+                  ) : (
+                    <div className="sectionHint myEventsPromoHint">
+                      Tip: use “Street + number” (e.g. “WayRoad 7”), then click Auto-locate.
+                    </div>
+                  )}
+                </div>
+
+                <div>
+                  <div className="authLabel">Description</div>
+                  <textarea
+                    className="authInput"
+                    rows={4}
+                    value={description}
+                    onChange={(e) => setDescription(e.target.value)}
+                    placeholder="What should people expect? Line-up, vibe, tickets…"
+                  />
+                </div>
+
+                <div className="myEventsActionsRow">
+                  <button className="btn btnSecondary" type="button" onClick={() => setFormStep("basic")}>
+                    Back
+                  </button>
+                  <button
+                    className="btn btnSecondary"
+                    type="button"
+                    onClick={handlePredictSuccess}
+                    disabled={isGeocoding || successPredictLoading}
+                  >
+                    {successPredictLoading ? "Predicting…" : "AI predict success"}
+                  </button>
+
+                  <button className="btn btnPrimary" type="button" onClick={handleSave} disabled={isGeocoding}>
+                    Submit request
+                  </button>
+
+                  <button className="btn btnSecondary" type="button" onClick={resetForm} disabled={isGeocoding}>
+                    Reset
+                  </button>
+                </div>
+
+                {successPredictError ? (
+                  <div className="sectionHint myEventsAiError">
+                    Predictor unavailable: {successPredictError}
+                  </div>
                 ) : null}
-              </div>
-            ) : null}
+                {successPredict ? (
+                  <div className="myEventsAiCard">
+                    <div className="myEventsStrongTitle">AI Success Predictor</div>
+                    <div className="myEventsAiStats">
+                      <span>
+                        Chance of high turnout: <b>{successPredict.probabilityHighAttendance ?? "?"}%</b>
+                      </span>
+                      <span>
+                        Expected attendance: <b>{successPredict.expectedAttendance ?? "?"}</b>
+                      </span>
+                      <span>
+                        Best promo day: <b>{successPredict.bestPromotionDay ?? "—"}</b>
+                      </span>
+                      <span>
+                        Target audience: <b>{successPredict.targetAudienceAgeRange ?? "—"}</b>
+                      </span>
+                    </div>
+                    {successPredict.notes && successPredict.notes.length > 0 ? (
+                      <ul className="myEventsAiNotes">
+                        {successPredict.notes.slice(0, 4).map((note) => (
+                          <li key={note}>{note}</li>
+                        ))}
+                      </ul>
+                    ) : null}
+                  </div>
+                ) : null}
+              </>
+            )}
           </div>
         </div>
 
@@ -843,210 +887,240 @@ export default function MyEventsPage() {
         {geoError ? <div className="authError myEventsError">{geoError}</div> : null}
 
         <div className="myEventsFormGrid">
-          <div className="myEventsGrid2_1">
-            <div>
-              <div className="authLabel">Title</div>
-              <input
-                className="authInput"
-                value={title}
-                onChange={(e) => setTitle(e.target.value)}
-                placeholder="e.g. Techno Night @ Mons"
-              />
-            </div>
-
-            <div>
-              <div className="authLabel">Style</div>
-              <select
-                className="authInput"
-                value={style}
-                onChange={(e) => setStyle(e.target.value)}
-              >
-                {styleOptions.map((s) => (
-                  <option key={s} value={s}>
-                    {s}
-                  </option>
-                ))}
-              </select>
-            </div>
-          </div>
-
-          <div className="myEventsGrid3">
-            <div>
-              <div className="authLabel">Venue</div>
-              <input
-                className="authInput"
-                value={venue}
-                onChange={(e) => setVenue(e.target.value)}
-                placeholder="e.g. WayRoad"
-              />
-            </div>
-
-            <div>
-              <div className="authLabel">City</div>
-              <input
-                className="authInput"
-                value={city}
-                onChange={(e) => setCity(e.target.value)}
-                placeholder="e.g. Mons"
-              />
-            </div>
-
-            <div>
-              <div className="authLabel">Event date & time</div>
-              <input
-                className="authInput"
-                type="datetime-local"
-                value={eventDateTime}
-                onChange={(e) => setEventDateTime(e.target.value)}
-                placeholder="mm/dd/yyyy --:--"
-              />
-            </div>
-          </div>
-
-          <div>
-            <div className="authLabel">Image URL</div>
-            <input
-              className="authInput"
-              value={imageUrl}
-              onChange={(e) => setImageUrl(e.target.value)}
-              placeholder="https://images.unsplash.com/..."
-            />
-          </div>
-
-          <div className="myEventsGrid2_1_1">
-            <div>
-              <div className="authLabel">Address line</div>
-              <input
-                className="authInput"
-                value={addressLine}
-                onChange={(e) => {
-                  setAddressLine(e.target.value);
-                  setGeoStatus(null);
-                }}
-                placeholder="e.g. WayRoad 7"
-              />
-            </div>
-
-            <div>
-              <div className="authLabel">Postal code</div>
-              <input
-                className="authInput"
-                value={postalCode}
-                onChange={(e) => {
-                  setPostalCode(e.target.value);
-                  setGeoStatus(null);
-                }}
-                placeholder="e.g. 7860"
-              />
-            </div>
-
-            <div>
-              <div className="authLabel">Country</div>
-              <input
-                className="authInput"
-                value={country}
-                onChange={(e) => {
-                  setCountry(e.target.value);
-                  setGeoStatus(null);
-                }}
-                placeholder="e.g. Belgium"
-              />
-            </div>
-          </div>
-
-          <div className="myEventsActionsRow">
+          <div className="myEventsStepTabs">
             <button
-              className="btn btnSecondary"
               type="button"
-              onClick={handleAutoLocate}
-              disabled={isGeocoding}
+              className={`myEventsStepTab ${formStep === "basic" ? "isActive" : ""}`}
+              onClick={() => setFormStep("basic")}
             >
-              {isGeocoding ? "Locating…" : "Auto-locate from address"}
+              1. Basic
             </button>
+            <button
+              type="button"
+              className={`myEventsStepTab ${formStep === "details" ? "isActive" : ""}`}
+              onClick={() => setFormStep("details")}
+              disabled={!basicStepValid}
+            >
+              2. Details
+            </button>
+          </div>
 
-            {geoStatus ? (
-              <div className="sectionHint myEventsPromoHint">
-                {geoStatus} (lat: {Number(latitude).toFixed(5)}, lng:{" "}
-                {Number(longitude).toFixed(5)})
+          {formStep === "basic" ? (
+            <>
+              <div className="myEventsGrid2_1">
+                <div>
+                  <div className="authLabel">Title</div>
+                  <input
+                    className={`authInput ${fieldErrors.title ? "authInputInvalid" : ""}`}
+                    value={title}
+                    onChange={(e) => setTitle(e.target.value)}
+                    placeholder="e.g. Techno Night @ Mons"
+                  />
+                  {fieldErrors.title ? <div className="authHint authHintError">Title is required.</div> : null}
+                </div>
+
+                <div>
+                  <div className="authLabel">Style</div>
+                  <select className="authInput" value={style} onChange={(e) => setStyle(e.target.value)}>
+                    {styleOptions.map((s) => (
+                      <option key={s} value={s}>
+                        {s}
+                      </option>
+                    ))}
+                  </select>
+                </div>
               </div>
-            ) : (
-              <div className="sectionHint myEventsPromoHint">
-                Tip: use “Street + number” (e.g. “WayRoad 7”), then click Auto-locate.
+
+              <div className="myEventsGrid3">
+                <div>
+                  <div className="authLabel">Venue</div>
+                  <input
+                    className={`authInput ${fieldErrors.venue ? "authInputInvalid" : ""}`}
+                    value={venue}
+                    onChange={(e) => setVenue(e.target.value)}
+                    placeholder="e.g. WayRoad"
+                  />
+                  {fieldErrors.venue ? <div className="authHint authHintError">Venue is required.</div> : null}
+                </div>
+
+                <div>
+                  <div className="authLabel">City</div>
+                  <input
+                    className={`authInput ${fieldErrors.city ? "authInputInvalid" : ""}`}
+                    value={city}
+                    onChange={(e) => setCity(e.target.value)}
+                    placeholder="e.g. Mons"
+                  />
+                  {fieldErrors.city ? <div className="authHint authHintError">City is required.</div> : null}
+                </div>
+
+                <div>
+                  <div className="authLabel">Event date & time</div>
+                  <input
+                    className={`authInput ${fieldErrors.eventDateTime ? "authInputInvalid" : ""}`}
+                    type="datetime-local"
+                    value={eventDateTime}
+                    onChange={(e) => setEventDateTime(e.target.value)}
+                    placeholder="mm/dd/yyyy --:--"
+                  />
+                  {fieldErrors.eventDateTime ? (
+                    <div className="authHint authHintError">Date and time are required.</div>
+                  ) : null}
+                </div>
               </div>
-            )}
-          </div>
 
-          <div>
-            <div className="authLabel">Description</div>
-            <textarea
-              className="authInput"
-              rows={4}
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              placeholder="What should people expect? Line-up, vibe, tickets…"
-            />
-          </div>
-
-          <div className="myEventsActionsRow">
-            <button
-              className="btn btnSecondary"
-              type="button"
-              onClick={handlePredictSuccess}
-              disabled={isGeocoding || successPredictLoading}
-            >
-              {successPredictLoading ? "Predicting…" : "AI predict success"}
-            </button>
-
-            <button
-              className="btn btnPrimary"
-              type="button"
-              onClick={handleSave}
-              disabled={isGeocoding}
-            >
-              {editing ? "Save changes" : "Create event"}
-            </button>
-
-            <button
-              className="btn btnSecondary"
-              type="button"
-              onClick={resetForm}
-              disabled={isGeocoding}
-            >
-              Reset
-            </button>
-          </div>
-
-          {successPredictError ? (
-            <div className="sectionHint myEventsAiError">
-              Predictor unavailable: {successPredictError}
-            </div>
-          ) : null}
-          {successPredict ? (
-            <div className="myEventsAiCard">
-              <div className="myEventsStrongTitle">AI Success Predictor</div>
-              <div className="myEventsAiStats">
-                <span>
-                  Chance of high turnout: <b>{successPredict.probabilityHighAttendance ?? "?"}%</b>
-                </span>
-                <span>
-                  Expected attendance: <b>{successPredict.expectedAttendance ?? "?"}</b>
-                </span>
-                <span>
-                  Best promo day: <b>{successPredict.bestPromotionDay ?? "—"}</b>
-                </span>
-                <span>
-                  Target audience: <b>{successPredict.targetAudienceAgeRange ?? "—"}</b>
-                </span>
+              <div>
+                <div className="authLabel">Image URL</div>
+                <input
+                  className="authInput"
+                  value={imageUrl}
+                  onChange={(e) => setImageUrl(e.target.value)}
+                  placeholder="https://images.unsplash.com/..."
+                />
               </div>
-              {successPredict.notes && successPredict.notes.length > 0 ? (
-                <ul className="myEventsAiNotes">
-                  {successPredict.notes.slice(0, 4).map((note) => (
-                    <li key={note}>{note}</li>
-                  ))}
-                </ul>
+
+              <div className="myEventsActionsRow">
+                <button
+                  className="btn btnPrimary"
+                  type="button"
+                  onClick={() => setFormStep("details")}
+                  disabled={!basicStepValid}
+                >
+                  Continue to details
+                </button>
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="myEventsGrid2_1_1">
+                <div>
+                  <div className="authLabel">Address line</div>
+                  <input
+                    className="authInput"
+                    value={addressLine}
+                    onChange={(e) => {
+                      setAddressLine(e.target.value);
+                      setGeoStatus(null);
+                    }}
+                    placeholder="e.g. WayRoad 7"
+                  />
+                </div>
+
+                <div>
+                  <div className="authLabel">Postal code</div>
+                  <input
+                    className="authInput"
+                    value={postalCode}
+                    onChange={(e) => {
+                      setPostalCode(e.target.value);
+                      setGeoStatus(null);
+                    }}
+                    placeholder="e.g. 7860"
+                  />
+                </div>
+
+                <div>
+                  <div className="authLabel">Country</div>
+                  <input
+                    className="authInput"
+                    value={country}
+                    onChange={(e) => {
+                      setCountry(e.target.value);
+                      setGeoStatus(null);
+                    }}
+                    placeholder="e.g. Belgium"
+                  />
+                </div>
+              </div>
+
+              <div className="myEventsActionsRow">
+                <button
+                  className="btn btnSecondary"
+                  type="button"
+                  onClick={handleAutoLocate}
+                  disabled={isGeocoding}
+                >
+                  {isGeocoding ? "Locating…" : "Auto-locate from address"}
+                </button>
+
+                {geoStatus ? (
+                  <div className="sectionHint myEventsPromoHint">
+                    {geoStatus} (lat: {Number(latitude).toFixed(5)}, lng:{" "}
+                    {Number(longitude).toFixed(5)})
+                  </div>
+                ) : (
+                  <div className="sectionHint myEventsPromoHint">
+                    Tip: use “Street + number” (e.g. “WayRoad 7”), then click Auto-locate.
+                  </div>
+                )}
+              </div>
+
+              <div>
+                <div className="authLabel">Description</div>
+                <textarea
+                  className="authInput"
+                  rows={4}
+                  value={description}
+                  onChange={(e) => setDescription(e.target.value)}
+                  placeholder="What should people expect? Line-up, vibe, tickets…"
+                />
+              </div>
+
+              <div className="myEventsActionsRow">
+                <button className="btn btnSecondary" type="button" onClick={() => setFormStep("basic")}>
+                  Back
+                </button>
+                <button
+                  className="btn btnSecondary"
+                  type="button"
+                  onClick={handlePredictSuccess}
+                  disabled={isGeocoding || successPredictLoading}
+                >
+                  {successPredictLoading ? "Predicting…" : "AI predict success"}
+                </button>
+
+                <button className="btn btnPrimary" type="button" onClick={handleSave} disabled={isGeocoding}>
+                  {editing ? "Save changes" : "Create event"}
+                </button>
+
+                <button className="btn btnSecondary" type="button" onClick={resetForm} disabled={isGeocoding}>
+                  Reset
+                </button>
+              </div>
+
+              {successPredictError ? (
+                <div className="sectionHint myEventsAiError">
+                  Predictor unavailable: {successPredictError}
+                </div>
               ) : null}
-            </div>
-          ) : null}
+              {successPredict ? (
+                <div className="myEventsAiCard">
+                  <div className="myEventsStrongTitle">AI Success Predictor</div>
+                  <div className="myEventsAiStats">
+                    <span>
+                      Chance of high turnout: <b>{successPredict.probabilityHighAttendance ?? "?"}%</b>
+                    </span>
+                    <span>
+                      Expected attendance: <b>{successPredict.expectedAttendance ?? "?"}</b>
+                    </span>
+                    <span>
+                      Best promo day: <b>{successPredict.bestPromotionDay ?? "—"}</b>
+                    </span>
+                    <span>
+                      Target audience: <b>{successPredict.targetAudienceAgeRange ?? "—"}</b>
+                    </span>
+                  </div>
+                  {successPredict.notes && successPredict.notes.length > 0 ? (
+                    <ul className="myEventsAiNotes">
+                      {successPredict.notes.slice(0, 4).map((note) => (
+                        <li key={note}>{note}</li>
+                      ))}
+                    </ul>
+                  ) : null}
+                </div>
+              ) : null}
+            </>
+          )}
         </div>
       </div>
 
