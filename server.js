@@ -181,6 +181,22 @@ function normalizeOrigin(rawOrigin) {
   }
 }
 
+function withWwwVariants(origin) {
+  const normalized = normalizeOrigin(origin);
+  if (!normalized) return [];
+  try {
+    const u = new URL(normalized);
+    const out = new Set([normalizeOrigin(u.toString())]);
+    const hasWww = u.hostname.startsWith("www.");
+    const altHost = hasWww ? u.hostname.replace(/^www\./, "") : `www.${u.hostname}`;
+    const alt = `${u.protocol}//${altHost}${u.port ? `:${u.port}` : ""}`;
+    out.add(normalizeOrigin(alt));
+    return Array.from(out).filter(Boolean);
+  } catch {
+    return [normalized];
+  }
+}
+
 const configuredCorsOrigins = parseDelimitedList(process.env.CORS_ORIGINS).map(normalizeOrigin);
 const allowLocalhostAnyPort = toBool(process.env.CORS_ALLOW_LOCALHOST_ANY_PORT, false);
 const allowAllCorsOrigins = toBool(process.env.CORS_ALLOW_ALL, false);
@@ -188,6 +204,17 @@ const allowVercelAppOrigins = toBool(
   process.env.CORS_ALLOW_VERCEL_APP,
   IS_PROD && String(process.env.VERCEL || "").trim() === "1"
 );
+const autoConfiguredCorsOrigins = [
+  process.env.APP_URL,
+  process.env.PUBLIC_APP_URL,
+  process.env.VERCEL_PROJECT_PRODUCTION_URL
+    ? `https://${String(process.env.VERCEL_PROJECT_PRODUCTION_URL).trim()}`
+    : "",
+  process.env.VERCEL_URL ? `https://${String(process.env.VERCEL_URL).trim()}` : "",
+]
+  .flatMap(withWwwVariants)
+  .map(normalizeOrigin)
+  .filter(Boolean);
 const defaultDevCorsOrigins = [
   "http://localhost:5173",
   "http://127.0.0.1:5173",
@@ -217,9 +244,9 @@ function isVercelAppOrigin(rawOrigin) {
 
 const allowedCorsOrigins = new Set(
   configuredCorsOrigins.length > 0
-    ? configuredCorsOrigins
+    ? [...configuredCorsOrigins, ...autoConfiguredCorsOrigins]
     : IS_PROD
-      ? []
+      ? autoConfiguredCorsOrigins
       : defaultDevCorsOrigins
 );
 
