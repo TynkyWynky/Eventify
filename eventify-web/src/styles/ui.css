@@ -8,7 +8,7 @@
 
 @import "./tokens.css";
 @import "./event-detail.css";
-@import "./toast.css";
+@import "./notifications.css";
 @import "./skeleton.css";
 
 @tailwind base;
@@ -158,6 +158,12 @@ body::before {
   .eventImage {
     transition: none !important;
   }
+
+  .appLoadingBarFill {
+    animation: none !important;
+    transform: translateX(0) !important;
+    width: 100%;
+  }
 }
 
 .srOnly {
@@ -170,6 +176,80 @@ body::before {
   clip: rect(0, 0, 0, 0) !important;
   white-space: nowrap !important;
   border: 0 !important;
+}
+
+.appLoadingScreen {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  position: relative;
+  overflow: hidden;
+}
+
+.appLoadingAura {
+  position: absolute;
+  inset: -160px;
+  pointer-events: none;
+  background:
+    radial-gradient(520px 280px at 22% 36%, rgba(178,106,168,.30), transparent 70%),
+    radial-gradient(560px 300px at 78% 64%, rgba(139,63,127,.26), transparent 70%);
+}
+
+.appLoadingCard {
+  width: min(460px, 100%);
+  border-radius: 24px;
+  border: 1px solid rgba(255,255,255,.16);
+  background:
+    linear-gradient(145deg, rgba(255,255,255,.10), rgba(255,255,255,.02)),
+    rgba(12,12,18,.88);
+  backdrop-filter: blur(14px);
+  box-shadow: 0 24px 70px rgba(0,0,0,.48);
+  padding: clamp(20px, 3vw, 28px);
+  display: grid;
+  gap: 10px;
+  position: relative;
+}
+
+.appLoadingBrand {
+  font-family: var(--fontBrand);
+  font-size: 30px;
+  line-height: 1;
+  letter-spacing: 0.3px;
+}
+
+.appLoadingTitle {
+  font-size: 17px;
+  font-weight: 900;
+}
+
+.appLoadingHint {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.appLoadingBar {
+  margin-top: 4px;
+  height: 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(255,255,255,.14);
+  background: rgba(255,255,255,.08);
+  overflow: hidden;
+}
+
+.appLoadingBarFill {
+  display: block;
+  width: 46%;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, rgba(178,106,168,.96), rgba(139,63,127,.90));
+  animation: appLoadingPulse 1.25s ease-in-out infinite;
+}
+
+@keyframes appLoadingPulse {
+  0% { transform: translateX(-45%); }
+  50% { transform: translateX(55%); }
+  100% { transform: translateX(145%); }
 }
 
 /* Subtle scrollbars */
@@ -231,8 +311,10 @@ body::before {
   color: var(--text);
 }
 
-.navSearchWrap { flex: 1; }
-.navSearchWrap { position: relative; }
+.navSearchWrap {
+  flex: 1;
+  position: relative;
+}
 
 .searchBar {
   width: 100%;
@@ -1567,6 +1649,23 @@ textarea.input { min-height: 110px; resize: vertical; }
   margin-bottom: 12px;
 }
 
+.eventDetailCardHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.eventDetailCardToggle {
+  min-height: 34px;
+  padding: 8px 12px;
+  font-size: 12px;
+}
+
+.eventDetailCardBody {
+  margin-top: 12px;
+}
+
 .eventDetailText {
   margin-top: 8px;
   color: rgba(255,255,255,.88);
@@ -1841,6 +1940,50 @@ a.accountFriendAction {
 .settingsForm { margin-top: 12px; display: grid; gap: 10px; }
 .settingsToggles { margin-top: 12px; display: grid; gap: 10px; color: var(--text); }
 .settingsToggle { display: flex; align-items: center; gap: 10px; font-weight: 800; }
+
+.settingsFieldHint {
+  margin-top: -4px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.settingsFieldError {
+  margin-top: -4px;
+  color: #ffb4b4;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.settingsActionsRow {
+  margin-top: 4px;
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.settingsStatus {
+  margin-top: 6px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  padding: 10px 12px;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.settingsStatussuccess {
+  border-color: rgba(92, 255, 164, 0.35);
+  background: rgba(92, 255, 164, 0.08);
+}
+
+.settingsStatuserror {
+  border-color: rgba(255, 110, 140, 0.35);
+  background: rgba(255, 110, 140, 0.10);
+}
+
+.settingsStatusinfo {
+  border-color: rgba(255,255,255,.18);
+  background: rgba(255,255,255,.05);
+}
 
 /* =========================
    PAGES — ADMIN DASHBOARD
@@ -2165,10 +2308,6 @@ a.accountFriendAction {
   color: var(--muted);
   font-size: 12px;
 }
-
-@media (max-width: 900px) {
-  .myEventsKpiGrid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-}
 /* =========================
    ADMIN – FILTER CONTROLS
    ========================= */
@@ -2370,6 +2509,11 @@ a.accountFriendAction {
     flex: 1 1 calc(50% - 10px);
     min-height: 44px;
   }
+
+  .eventDetailCardHeader {
+    flex-wrap: wrap;
+    align-items: flex-start;
+  }
 }
 
 @media (max-width: 520px) {
@@ -2380,9 +2524,6 @@ a.accountFriendAction {
   }
 
   .eventDetailCard { padding: var(--space-4); }
-}
-
-@media (max-width: 520px) {
   .eventDetailHero { height: 210px; }
   .eventDetailTitle { font-size: 24px; }
   .leafletMap { height: 220px; }
@@ -3326,12 +3467,29 @@ a.accountFriendAction {
   .footerGrid > :last-child { grid-column: 1 / -1; }
 }
 
+@media (max-width: 900px) {
+  .footerGrid {
+    grid-template-columns: 1fr 1fr;
+    gap: var(--space-5);
+  }
+}
+
 @media (max-width: 720px) {
   .footerGrid { grid-template-columns: 1fr 1fr; }
 }
 
 @media (max-width: 560px) {
-  .footerGrid { grid-template-columns: 1fr; }
+  .footerInner { padding: var(--space-5) var(--space-3); }
+
+  .footerGrid {
+    grid-template-columns: 1fr;
+    gap: var(--space-4);
+  }
+
+  .footerBottom {
+    flex-direction: column;
+    align-items: flex-start;
+  }
 }
 
 /* On small screens, leave a bit of space so the floating assistant doesn't sit on top of footer links */
@@ -3404,30 +3562,6 @@ a.accountFriendAction {
   .legalTitle { font-size: 28px; }
   .legalCard { padding: var(--space-5); }
 }
-/* =========================
-   RESPONSIVE — FOOTER
-   ========================= */
-@media (max-width: 900px) {
-  .footerGrid {
-    grid-template-columns: 1fr 1fr;
-    gap: var(--space-5);
-  }
-}
-
-@media (max-width: 560px) {
-  .footerInner { padding: var(--space-5) var(--space-3); }
-
-  .footerGrid {
-    grid-template-columns: 1fr;
-    gap: var(--space-4);
-  }
-
-  .footerBottom {
-    flex-direction: column;
-    align-items: flex-start;
-  }
-}
-
 /* =========================
    RESPONSIVE — APP SAFE AREA
    ========================= */

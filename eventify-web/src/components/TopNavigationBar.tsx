@@ -3,12 +3,12 @@ import {
   Link,
   NavLink,
   type To,
-  useLocation,
   useNavigate,
-  useSearchParams,
 } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
 import type { NotificationItem } from "../auth/authTypes";
+import { useInstallPrompt } from "../hooks/useInstallPrompt";
+import { useNavSearch } from "../hooks/useNavSearch";
 import { getOrigin, subscribeOriginChanged } from "../data/location/locationStore";
 
 const MAX_RECENT_SEARCHES = 8;
@@ -108,6 +108,21 @@ export default function TopNavigationBar() {
   const { user, notifications, unreadCount, markAllAsRead, markAsRead, logout } =
     useAuth();
 
+  const {
+    query,
+    setQuery,
+    isSearchOpen,
+    setSearchOpen,
+    recentSearches,
+    searchSuggestions,
+    submitSearch,
+    clearQuery,
+    applySuggestion,
+    clearHistory,
+  } = useNavSearch();
+
+  const { isInstallReady, isStandalone, promptInstall } = useInstallPrompt();
+
   const [isNotifOpen, setNotifOpen] = useState(false);
   const [isProfileOpen, setProfileOpen] = useState(false);
 
@@ -115,13 +130,9 @@ export default function TopNavigationBar() {
   const profileWrapRef = useRef<HTMLDivElement | null>(null);
   const searchWrapRef = useRef<HTMLDivElement | null>(null);
 
-  const latest = useMemo(() => notifications.slice(0, 6), [notifications]);
-
-  // ✅ URL-driven search (q=...)
-  const [searchParams, setSearchParams] = useSearchParams();
-  const location = useLocation();
   const navigate = useNavigate();
 
+  const latest = useMemo(() => notifications.slice(0, 6), [notifications]);
   const qFromUrl = searchParams.get("q") ?? "";
   const [query, setQuery] = useState(qFromUrl);
   const [isSearchOpen, setSearchOpen] = useState(false);
@@ -134,7 +145,6 @@ export default function TopNavigationBar() {
   );
   const [origin, setOrigin] = useState(() => getOrigin());
 
-  // Close popovers when clicking outside
   useEffect(() => {
     function onPointerDown(e: PointerEvent) {
       const target = e.target as Node | null;
@@ -156,9 +166,9 @@ export default function TopNavigationBar() {
       }
     }
 
-    // capture=true zodat het ook werkt als ergens stopPropagation gebeurt
     document.addEventListener("pointerdown", onPointerDown, true);
     return () => document.removeEventListener("pointerdown", onPointerDown, true);
+  }, [isNotifOpen, isProfileOpen, isSearchOpen, setSearchOpen]);
   }, [isNotifOpen, isProfileOpen, isSearchOpen]);
 
   // Sync input when URL changes (back/forward, clicks, etc.)
@@ -352,23 +362,17 @@ export default function TopNavigationBar() {
             onKeyDown={(e) => {
               if (e.key === "Enter") {
                 e.preventDefault();
-                commitQuery(query, { persistHistory: true });
-                setSearchOpen(false);
+                submitSearch();
               }
               if (e.key === "Escape") {
-                setQuery("");
-                commitQuery("", { persistHistory: false });
-                setSearchOpen(false);
+                clearQuery();
               }
             }}
           />
           <button
             type="button"
             className="searchCommitBtn"
-            onClick={() => {
-              commitQuery(query, { persistHistory: true });
-              setSearchOpen(false);
-            }}
+            onClick={submitSearch}
             aria-label="Search"
           >
             Search
@@ -378,11 +382,7 @@ export default function TopNavigationBar() {
               <div className="searchSuggestHeader">
                 <div className="searchSuggestHeaderTitle">Suggestions</div>
                 {recentSearches.length > 0 ? (
-                  <button
-                    type="button"
-                    className="searchSuggestClear"
-                    onClick={() => setRecentSearches(clearRecentSearches())}
-                  >
+                  <button type="button" className="searchSuggestClear" onClick={clearHistory}>
                     Clear history
                   </button>
                 ) : null}
@@ -391,11 +391,7 @@ export default function TopNavigationBar() {
                 <button
                   key={`${item.source}-${item.label}`}
                   className="searchSuggestItem"
-                  onClick={() => {
-                    setQuery(item.label);
-                    commitQuery(item.label, { persistHistory: false });
-                    setSearchOpen(false);
-                  }}
+                  onClick={() => applySuggestion(item.label)}
                 >
                   <span className="searchSuggestLabel">{item.label}</span>
                   <span className="searchSuggestMeta">
@@ -409,7 +405,7 @@ export default function TopNavigationBar() {
 
         <div className="navActions">
           {!isStandalone && isInstallReady ? (
-            <button type="button" className="navInstallBtn" onClick={handleInstallClick}>
+            <button type="button" className="navInstallBtn" onClick={promptInstall}>
               Install app
             </button>
           ) : null}
@@ -424,7 +420,6 @@ export default function TopNavigationBar() {
             </>
           ) : (
             <>
-              {/* Notifications */}
               <div className="navPopoverWrap" ref={notifWrapRef}>
                 <button
                   className="navIconBtn"
@@ -435,9 +430,7 @@ export default function TopNavigationBar() {
                   aria-label="Notifications"
                 >
                   <BellIcon />
-                  {unreadCount > 0 && (
-                    <span className="navBadge">{unreadCount}</span>
-                  )}
+                  {unreadCount > 0 && <span className="navBadge">{unreadCount}</span>}
                 </button>
 
                 {isNotifOpen && (
@@ -459,9 +452,7 @@ export default function TopNavigationBar() {
                         latest.map((n) => (
                           <button
                             key={n.id}
-                            className={`popoverItem ${
-                              n.isRead ? "" : "popoverItemUnread"
-                            }`}
+                            className={`popoverItem ${n.isRead ? "" : "popoverItemUnread"}`}
                             onClick={() => handleNotificationClick(n)}
                           >
                             <div className="popoverItemTitle">{n.title}</div>
@@ -474,7 +465,6 @@ export default function TopNavigationBar() {
                 )}
               </div>
 
-              {/* Profile */}
               <div className="navPopoverWrap" ref={profileWrapRef}>
                 <button
                   className="navIconBtn"
@@ -497,11 +487,7 @@ export default function TopNavigationBar() {
                     </div>
 
                     <div className="popoverList">
-                      <Link
-                        className="popoverLink"
-                        to="/account"
-                        onClick={() => setProfileOpen(false)}
-                      >
+                      <Link className="popoverLink" to="/account" onClick={() => setProfileOpen(false)}>
                         Account
                       </Link>
 
@@ -516,11 +502,7 @@ export default function TopNavigationBar() {
                       )}
 
                       {user.role === "admin" && (
-                        <Link
-                          className="popoverLink"
-                          to="/admin"
-                          onClick={() => setProfileOpen(false)}
-                        >
+                        <Link className="popoverLink" to="/admin" onClick={() => setProfileOpen(false)}>
                           Admin Dashboard
                         </Link>
                       )}

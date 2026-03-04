@@ -335,6 +335,7 @@ export default function EventDetailPage() {
   const [selectedPlanInviteeIds, setSelectedPlanInviteeIds] = useState<string[]>([]);
   const [planCreating, setPlanCreating] = useState(false);
   const [planActionMsg, setPlanActionMsg] = useState<string | null>(null);
+  const [socialPanelOpen, setSocialPanelOpen] = useState(false);
 
   const [isFav, setIsFav] = useState(false);
   const [setlists, setSetlists] = useState<SetlistItem[]>([]);
@@ -1364,8 +1365,24 @@ export default function EventDetailPage() {
 
         {/* ✅ Social / Friends + Invite dropdown */}
         <div className="eventDetailCard eventDetailCardSocial">
-          <div className="eventDetailCardTitle">Friends</div>
+          <div className="eventDetailCardHeader">
+            <div className="eventDetailCardTitle" style={{ marginBottom: 0 }}>
+              Social & plans
+            </div>
+            <button
+              type="button"
+              className="btn btnSecondary eventDetailCardToggle"
+              aria-expanded={socialPanelOpen}
+              aria-controls="event-social-content"
+              onClick={() => setSocialPanelOpen((v) => !v)}
+            >
+              {socialPanelOpen ? "Hide" : "Show"}
+            </button>
+          </div>
+          <div className="sectionHint">Friends going, invites and group plans.</div>
 
+          {socialPanelOpen ? (
+            <div id="event-social-content" className="eventDetailCardBody">
           {!user ? (
             <div className="sectionHint">Login to see friends going and invite them.</div>
           ) : socialLoading ? (
@@ -1493,6 +1510,8 @@ export default function EventDetailPage() {
             onCreate={createGroupPlan}
             onVote={voteOnPlan}
           />
+            </div>
+          ) : null}
         </div>
 
         <div className="eventDetailCard eventDetailCardLocation">

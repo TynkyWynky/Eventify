@@ -22,8 +22,6 @@ const {
 } = require("./aiEngine");
 
 const app = express();
-app.use(cors());
-app.use(express.json());
 
 // -----------------------------
 // Config
@@ -65,8 +63,22 @@ function parseDelimitedList(rawValue) {
 }
 
 const PORT = process.env.PORT ? Number(process.env.PORT) : 3000;
+const NODE_ENV = (process.env.NODE_ENV || "development").trim().toLowerCase();
+const IS_PROD = NODE_ENV === "production";
 const JWT_SECRET = (process.env.JWT_SECRET || "dev_change_me").trim();
 const JWT_EXPIRES_IN = (process.env.JWT_EXPIRES_IN || "7d").trim();
+const JWT_ISSUER = (process.env.JWT_ISSUER || "eventify-api").trim();
+const JWT_AUDIENCE = (process.env.JWT_AUDIENCE || "eventify-client").trim();
+const JWT_ALGORITHMS = ["HS256"];
+const JSON_BODY_LIMIT = (process.env.JSON_BODY_LIMIT || "100kb").trim();
+const AUTH_LOGIN_WINDOW_MS = toPositiveInt(process.env.AUTH_LOGIN_WINDOW_MS, 15 * 60 * 1000);
+const AUTH_LOGIN_MAX_ATTEMPTS = toPositiveInt(process.env.AUTH_LOGIN_MAX_ATTEMPTS, 10);
+const AUTH_REGISTER_WINDOW_MS = toPositiveInt(process.env.AUTH_REGISTER_WINDOW_MS, 60 * 60 * 1000);
+const AUTH_REGISTER_MAX_ATTEMPTS = toPositiveInt(process.env.AUTH_REGISTER_MAX_ATTEMPTS, 5);
+const SOCIAL_WRITE_WINDOW_MS = toPositiveInt(process.env.SOCIAL_WRITE_WINDOW_MS, 60 * 1000);
+const SOCIAL_WRITE_MAX_ATTEMPTS = toPositiveInt(process.env.SOCIAL_WRITE_MAX_ATTEMPTS, 60);
+const INVITE_WINDOW_MS = toPositiveInt(process.env.INVITE_WINDOW_MS, 60 * 60 * 1000);
+const INVITE_MAX_ATTEMPTS = toPositiveInt(process.env.INVITE_MAX_ATTEMPTS, 30);
 const OLLAMA_CONFIG = {
   enabled: toBool(process.env.OLLAMA_ENABLED, false),
   baseUrl: (process.env.OLLAMA_BASE_URL || "http://127.0.0.1:11434").trim().replace(/\/+$/, ""),
@@ -148,6 +160,79 @@ if (!process.env.JWT_SECRET) {
     "⚠️  JWT_SECRET is not set. Using a default dev secret. Set JWT_SECRET in .env for real usage."
   );
 }
+if (IS_PROD && (!process.env.JWT_SECRET || JWT_SECRET === "dev_change_me" || JWT_SECRET.length < 32)) {
+  throw new Error("Refusing to start in production without a strong JWT_SECRET (min 32 chars).");
+}
+
+function normalizeOrigin(rawOrigin) {
+  if (!rawOrigin) return "";
+  try {
+    const u = new URL(String(rawOrigin));
+    return `${u.protocol}//${u.host}`.toLowerCase();
+  } catch {
+    return String(rawOrigin).trim().toLowerCase();
+  }
+}
+
+const configuredCorsOrigins = parseDelimitedList(process.env.CORS_ORIGINS).map(normalizeOrigin);
+const defaultDevCorsOrigins = [
+  "http://localhost:5173",
+  "http://127.0.0.1:5173",
+  "http://localhost:4173",
+  "http://127.0.0.1:4173",
+].map(normalizeOrigin);
+const allowedCorsOrigins = new Set(
+  configuredCorsOrigins.length > 0
+    ? configuredCorsOrigins
+    : IS_PROD
+      ? []
+      : defaultDevCorsOrigins
+);
+
+const trustProxyHops = Number(process.env.TRUST_PROXY || 0);
+if (Number.isInteger(trustProxyHops) && trustProxyHops > 0) {
+  app.set("trust proxy", trustProxyHops);
+}
+
+app.disable("x-powered-by");
+app.use(
+  cors({
+    origin(origin, callback) {
+      if (!origin) return callback(null, true);
+      const normalized = normalizeOrigin(origin);
+      if (allowedCorsOrigins.has(normalized)) return callback(null, true);
+      return callback(new Error("Origin not allowed by CORS"));
+    },
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Authorization", "Content-Type"],
+    maxAge: 600,
+    credentials: false,
+  })
+);
+app.use(express.json({ limit: JSON_BODY_LIMIT, strict: true }));
+app.use((req, res, next) => {
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("X-Frame-Options", "DENY");
+  res.setHeader("Referrer-Policy", "no-referrer");
+  res.setHeader("Cross-Origin-Opener-Policy", "same-origin");
+  res.setHeader("Cross-Origin-Resource-Policy", "same-site");
+  res.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
+  res.setHeader(
+    "Content-Security-Policy",
+    "default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'"
+  );
+  const forwardedProto = String(req.headers["x-forwarded-proto"] || "").toLowerCase();
+  if (IS_PROD && (req.secure || forwardedProto === "https")) {
+    res.setHeader("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
+  }
+  return next();
+});
+app.use((err, _req, res, next) => {
+  if (err && String(err.message || "").includes("Origin not allowed by CORS")) {
+    return res.status(403).json({ ok: false, error: "CORS origin denied." });
+  }
+  return next(err);
+});
 
 // -----------------------------
 // Helpers (DB + Auth)
@@ -167,8 +252,40 @@ function normalizeEmail(email) {
   return String(email || "").trim().toLowerCase();
 }
 
+function splitNameParts(name) {
+  const cleaned = String(name || "").trim().replace(/\s+/g, " ");
+  if (!cleaned) return { firstName: "", lastName: "" };
+  const [firstName, ...rest] = cleaned.split(" ");
+  return { firstName, lastName: rest.join(" ") };
+}
+
 function safeText(v, fallback = "") {
   return typeof v === "string" ? v : fallback;
+}
+
+function isStrongPassword(password) {
+  const pwd = String(password || "");
+  if (pwd.length < 10 || pwd.length > 256) return false;
+  return /[A-Z]/.test(pwd) && /[a-z]/.test(pwd) && /\d/.test(pwd) && /[^A-Za-z0-9]/.test(pwd);
+}
+
+function mustBoolean(value, name) {
+  if (typeof value !== "boolean") {
+    const err = new Error(`Invalid ${name}. Must be boolean.`);
+    err.status = 400;
+    throw err;
+  }
+  return value;
+}
+
+function mustEventKey(value, name = "eventKey") {
+  const key = String(value || "").trim();
+  if (!key || key.length > 180 || !/^[a-zA-Z0-9:_-]+$/.test(key)) {
+    const err = new Error(`Invalid ${name}`);
+    err.status = 400;
+    throw err;
+  }
+  return key;
 }
 
 function roleFromRow(row) {
@@ -192,7 +309,18 @@ function userRowToUser(row) {
 
 function signToken(user) {
   return jwt.sign({ sub: user.id, role: user.role }, JWT_SECRET, {
+    algorithm: "HS256",
     expiresIn: JWT_EXPIRES_IN,
+    issuer: JWT_ISSUER,
+    audience: JWT_AUDIENCE,
+  });
+}
+
+function verifyJwtToken(token) {
+  return jwt.verify(token, JWT_SECRET, {
+    algorithms: JWT_ALGORITHMS,
+    issuer: JWT_ISSUER,
+    audience: JWT_AUDIENCE,
   });
 }
 
@@ -209,13 +337,74 @@ function authRequired(req, res, next) {
     if (!token) {
       return res.status(401).json({ ok: false, error: "Missing Authorization: Bearer <token>" });
     }
-    const payload = jwt.verify(token, JWT_SECRET);
+    const payload = verifyJwtToken(token);
+    if (!payload?.sub || !payload?.role) {
+      return res.status(401).json({ ok: false, error: "Invalid token payload" });
+    }
     req.auth = payload;
     return next();
   } catch {
     return res.status(401).json({ ok: false, error: "Invalid or expired token" });
   }
 }
+
+const rateLimitBuckets = new Map();
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, bucket] of rateLimitBuckets.entries()) {
+    if (!bucket || bucket.resetAt <= now) rateLimitBuckets.delete(key);
+  }
+}, 60_000).unref();
+
+function createRateLimiter({ keyPrefix, windowMs, max }) {
+  return (req, res, next) => {
+    const ip = String(req.ip || req.headers["x-forwarded-for"] || req.socket?.remoteAddress || "unknown");
+    const key = `${keyPrefix}:${ip}`;
+    const now = Date.now();
+    let bucket = rateLimitBuckets.get(key);
+    if (!bucket || bucket.resetAt <= now) {
+      bucket = { count: 0, resetAt: now + windowMs };
+      rateLimitBuckets.set(key, bucket);
+    }
+    bucket.count += 1;
+
+    const remaining = Math.max(0, max - bucket.count);
+    res.setHeader("X-RateLimit-Limit", String(max));
+    res.setHeader("X-RateLimit-Remaining", String(remaining));
+    res.setHeader("X-RateLimit-Reset", String(Math.ceil(bucket.resetAt / 1000)));
+
+    if (bucket.count > max) {
+      res.setHeader("Retry-After", String(Math.ceil((bucket.resetAt - now) / 1000)));
+      return res.status(429).json({ ok: false, error: "Too many requests. Try again later." });
+    }
+
+    return next();
+  };
+}
+
+const authLoginLimiter = createRateLimiter({
+  keyPrefix: "auth:login",
+  windowMs: AUTH_LOGIN_WINDOW_MS,
+  max: AUTH_LOGIN_MAX_ATTEMPTS,
+});
+
+const authRegisterLimiter = createRateLimiter({
+  keyPrefix: "auth:register",
+  windowMs: AUTH_REGISTER_WINDOW_MS,
+  max: AUTH_REGISTER_MAX_ATTEMPTS,
+});
+
+const socialWriteLimiter = createRateLimiter({
+  keyPrefix: "social:write",
+  windowMs: SOCIAL_WRITE_WINDOW_MS,
+  max: SOCIAL_WRITE_MAX_ATTEMPTS,
+});
+
+const inviteLimiter = createRateLimiter({
+  keyPrefix: "invite:write",
+  windowMs: INVITE_WINDOW_MS,
+  max: INVITE_MAX_ATTEMPTS,
+});
 
 function requireRole(allowedRoles) {
   return (req, res, next) => {
@@ -542,18 +731,26 @@ async function ensureDatabaseSchemaCompatibility() {
  * POST /auth/register
  * body: { name, email, password }
  */
-app.post("/auth/register", async (req, res) => {
+app.post("/auth/register", authRegisterLimiter, async (req, res) => {
   try {
     const email = normalizeEmail(req.body?.email);
     const password = safeText(req.body?.password, "");
     const name = safeText(req.body?.name, "").trim();
 
     if (!email) return res.status(400).json({ ok: false, error: "Email is required." });
+    if (email.length > 320) return res.status(400).json({ ok: false, error: "Invalid email." });
     if (!/^\S+@\S+\.\S+$/.test(email)) {
       return res.status(400).json({ ok: false, error: "Invalid email." });
     }
-    if (password.length < 8) {
-      return res.status(400).json({ ok: false, error: "Password must be at least 8 characters." });
+    if (!isStrongPassword(password)) {
+      return res.status(400).json({
+        ok: false,
+        error:
+          "Password must be 10-256 chars and include uppercase, lowercase, number, and symbol.",
+      });
+    }
+    if (name.length > 120) {
+      return res.status(400).json({ ok: false, error: "Name is too long." });
     }
 
     const username = await buildUniqueUsername(email);
@@ -588,7 +785,7 @@ app.post("/auth/register", async (req, res) => {
  * POST /auth/login
  * body: { emailOrUsername, password }
  */
-app.post("/auth/login", async (req, res) => {
+app.post("/auth/login", authLoginLimiter, async (req, res) => {
   try {
     const identifierRaw = safeText(req.body?.emailOrUsername, "") || safeText(req.body?.email, "");
     const identifier = String(identifierRaw || "").trim();
@@ -596,6 +793,9 @@ app.post("/auth/login", async (req, res) => {
 
     if (!identifier) return res.status(400).json({ ok: false, error: "Email or username is required." });
     if (!password) return res.status(400).json({ ok: false, error: "Password is required." });
+    if (identifier.length > 320 || password.length > 256) {
+      return res.status(400).json({ ok: false, error: "Invalid credentials format." });
+    }
 
     const db = requireDb();
 
@@ -680,6 +880,61 @@ app.get("/auth/me", authRequired, async (req, res) => {
   }
 });
 
+/**
+ * PATCH /auth/me
+ * body: { name, email }
+ */
+app.patch("/auth/me", authRequired, async (req, res) => {
+  try {
+    const userId = req?.auth?.sub;
+    if (!userId) return res.status(401).json({ ok: false, error: "Invalid token" });
+
+    const name = safeText(req.body?.name, "").trim();
+    const email = normalizeEmail(req.body?.email);
+
+    if (!name || name.length < 2) {
+      return res.status(400).json({ ok: false, error: "Name must be at least 2 characters." });
+    }
+    if (name.length > 120) {
+      return res.status(400).json({ ok: false, error: "Name is too long." });
+    }
+
+    if (!email) return res.status(400).json({ ok: false, error: "Email is required." });
+    if (email.length > 320) return res.status(400).json({ ok: false, error: "Invalid email." });
+    if (!/^\S+@\S+\.\S+$/.test(email)) {
+      return res.status(400).json({ ok: false, error: "Invalid email." });
+    }
+
+    const { firstName, lastName } = splitNameParts(name);
+    const db = requireDb();
+    const updated = await db.query(
+      `
+      UPDATE users
+      SET email = $2,
+          first_name = $3,
+          last_name = $4,
+          updated_at = CURRENT_TIMESTAMP
+      WHERE id = $1
+      RETURNING id, username, email, first_name, last_name, is_admin, is_organisator, is_active
+      `,
+      [userId, email, firstName, lastName]
+    );
+
+    if (updated.rowCount === 0) return res.status(404).json({ ok: false, error: "User not found" });
+    if (!updated.rows[0].is_active) {
+      return res.status(401).json({ ok: false, error: "User disabled" });
+    }
+
+    return res.json({ ok: true, user: userRowToUser(updated.rows[0]) });
+  } catch (err) {
+    if (err && err.code === "23505") {
+      return res.status(409).json({ ok: false, error: "An account with this email already exists." });
+    }
+    const status = err?.status || 500;
+    return res.status(status).json({ ok: false, error: err?.message || String(err) });
+  }
+});
+
 // -----------------------------
 // Admin endpoints
 // -----------------------------
@@ -726,10 +981,8 @@ app.get("/admin/users", authRequired, requireRole(["admin"]), async (_req, res) 
  */
 app.patch("/admin/users/:id/role", authRequired, requireRole(["admin"]), async (req, res) => {
   try {
-    const userId = String(req.params.id || "").trim();
+    const userId = mustInt(req.params.id, "user id");
     const role = String(req.body?.role || "").trim();
-
-    if (!userId) return res.status(400).json({ ok: false, error: "Missing user id" });
     if (!role || !["user", "organizer", "admin"].includes(role)) {
       return res.status(400).json({ ok: false, error: "role must be one of: user, organizer, admin" });
     }
@@ -766,10 +1019,8 @@ app.patch("/admin/users/:id/role", authRequired, requireRole(["admin"]), async (
  */
 app.patch("/admin/users/:id/active", authRequired, requireRole(["admin"]), async (req, res) => {
   try {
-    const userId = String(req.params.id || "").trim();
-    const isActive = Boolean(req.body?.isActive);
-
-    if (!userId) return res.status(400).json({ ok: false, error: "Missing user id" });
+    const userId = mustInt(req.params.id, "user id");
+    const isActive = mustBoolean(req.body?.isActive, "isActive");
 
     const db = requireDb();
     const updated = await db.query(
@@ -933,7 +1184,8 @@ function authOptional(req, _res, next) {
       req.auth = null;
       return next();
     }
-    req.auth = jwt.verify(token, JWT_SECRET);
+    const payload = verifyJwtToken(token);
+    req.auth = payload?.sub && payload?.role ? payload : null;
     return next();
   } catch {
     req.auth = null;
@@ -1257,7 +1509,7 @@ app.get("/friends/requests/outgoing", authRequired, async (req, res) => {
 });
 
 // Send request
-app.post("/friends/requests", authRequired, async (req, res) => {
+app.post("/friends/requests", authRequired, socialWriteLimiter, async (req, res) => {
   try {
     const me = mustInt(req.auth?.sub, "user id");
     const toUserId = mustInt(req.body?.toUserId, "toUserId");
@@ -1309,7 +1561,7 @@ app.post("/friends/requests", authRequired, async (req, res) => {
 });
 
 // Accept / Decline
-app.post("/friends/requests/:id/accept", authRequired, async (req, res) => {
+app.post("/friends/requests/:id/accept", authRequired, socialWriteLimiter, async (req, res) => {
   try {
     const me = mustInt(req.auth?.sub, "user id");
     const reqId = mustInt(req.params.id, "request id");
@@ -1352,7 +1604,7 @@ app.post("/friends/requests/:id/accept", authRequired, async (req, res) => {
   }
 });
 
-app.post("/friends/requests/:id/decline", authRequired, async (req, res) => {
+app.post("/friends/requests/:id/decline", authRequired, socialWriteLimiter, async (req, res) => {
   try {
     const me = mustInt(req.auth?.sub, "user id");
     const reqId = mustInt(req.params.id, "request id");
@@ -1376,7 +1628,7 @@ app.post("/friends/requests/:id/decline", authRequired, async (req, res) => {
 });
 
 // Remove friend
-app.delete("/friends/:friendId", authRequired, async (req, res) => {
+app.delete("/friends/:friendId", authRequired, socialWriteLimiter, async (req, res) => {
   try {
     const me = mustInt(req.auth?.sub, "user id");
     const friendId = mustInt(req.params.friendId, "friend id");
@@ -1417,8 +1669,7 @@ app.get("/me/going", authRequired, async (req, res) => {
 // --- Event social info
 app.get("/events/:eventKey/social", authOptional, async (req, res) => {
   try {
-    const eventKey = String(req.params.eventKey || "");
-    if (!eventKey) return res.status(400).json({ ok: false, error: "Missing eventKey" });
+    const eventKey = mustEventKey(req.params.eventKey);
 
     const db = requireDb();
 
@@ -1498,8 +1749,7 @@ app.get("/events/:eventKey/social", authOptional, async (req, res) => {
 app.get("/events/:eventKey/plans", authRequired, async (req, res) => {
   try {
     const me = mustInt(req.auth?.sub, "user id");
-    const eventKey = String(req.params.eventKey || "").trim();
-    if (!eventKey) return res.status(400).json({ ok: false, error: "Missing eventKey" });
+    const eventKey = mustEventKey(req.params.eventKey);
 
     const db = requireDb();
     const plans = await loadEventPlansForUser({ db, eventKey, userId: me });
@@ -1509,11 +1759,10 @@ app.get("/events/:eventKey/plans", authRequired, async (req, res) => {
   }
 });
 
-app.post("/events/:eventKey/plans", authRequired, async (req, res) => {
+app.post("/events/:eventKey/plans", authRequired, socialWriteLimiter, inviteLimiter, async (req, res) => {
   try {
     const me = mustInt(req.auth?.sub, "user id");
-    const eventKey = String(req.params.eventKey || "").trim();
-    if (!eventKey) return res.status(400).json({ ok: false, error: "Missing eventKey" });
+    const eventKey = mustEventKey(req.params.eventKey);
 
     const title = safeText(req.body?.title, "").trim();
     const note = safeText(req.body?.note, "").trim();
@@ -1585,7 +1834,7 @@ app.post("/events/:eventKey/plans", authRequired, async (req, res) => {
   }
 });
 
-app.post("/plans/:planId/vote", authRequired, async (req, res) => {
+app.post("/plans/:planId/vote", authRequired, socialWriteLimiter, async (req, res) => {
   try {
     const me = mustInt(req.auth?.sub, "user id");
     const planId = mustInt(req.params.planId, "planId");
@@ -1634,14 +1883,12 @@ app.post("/plans/:planId/vote", authRequired, async (req, res) => {
 });
 
 // --- Set going + notify friends (real-time)
-app.put("/events/:eventKey/going", authRequired, async (req, res) => {
+app.put("/events/:eventKey/going", authRequired, socialWriteLimiter, async (req, res) => {
   try {
     const me = mustInt(req.auth?.sub, "user id");
-    const eventKey = String(req.params.eventKey || "");
-    const going = Boolean(req.body?.going);
+    const eventKey = mustEventKey(req.params.eventKey);
+    const going = mustBoolean(req.body?.going, "going");
     const eventMeta = req.body?.event && typeof req.body.event === "object" ? req.body.event : null;
-
-    if (!eventKey) return res.status(400).json({ ok: false, error: "Missing eventKey" });
 
     const db = requireDb();
 
@@ -1689,14 +1936,13 @@ app.put("/events/:eventKey/going", authRequired, async (req, res) => {
 });
 
 // --- Invite friend to event
-app.post("/events/:eventKey/invite", authRequired, async (req, res) => {
+app.post("/events/:eventKey/invite", authRequired, socialWriteLimiter, inviteLimiter, async (req, res) => {
   try {
     const me = mustInt(req.auth?.sub, "user id");
-    const eventKey = String(req.params.eventKey || "");
+    const eventKey = mustEventKey(req.params.eventKey);
     const inviteeId = mustInt(req.body?.inviteeId, "inviteeId");
     const eventMeta = req.body?.event && typeof req.body.event === "object" ? req.body.event : null;
 
-    if (!eventKey) return res.status(400).json({ ok: false, error: "Missing eventKey" });
     if (inviteeId === me) return res.status(400).json({ ok: false, error: "Can't invite yourself" });
 
     const db = requireDb();
@@ -1770,7 +2016,7 @@ app.get("/invites", authRequired, async (req, res) => {
   }
 });
 
-app.post("/invites/:id/respond", authRequired, async (req, res) => {
+app.post("/invites/:id/respond", authRequired, socialWriteLimiter, async (req, res) => {
   try {
     const me = mustInt(req.auth?.sub, "user id");
     const inviteId = mustInt(req.params.id, "invite id");
@@ -1884,7 +2130,7 @@ app.get("/notifications/stream", async (req, res) => {
     const token = String(req.query?.token || "");
     if (!token) return res.status(401).end();
 
-    const payload = jwt.verify(token, JWT_SECRET);
+    const payload = verifyJwtToken(token);
     const userId = mustInt(payload?.sub, "user id");
 
     res.writeHead(200, {

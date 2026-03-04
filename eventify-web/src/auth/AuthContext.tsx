@@ -259,6 +259,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setNotifications((prev) => prev.map((n) => (n.id === id ? { ...n, isRead: true } : n)));
   }
 
+  function setCurrentUser(nextUser: User) {
+    setUser(nextUser);
+  }
+
   function pushNotification(n: Omit<NotificationItem, "id" | "createdAt" | "isRead">) {
     setNotifications((prev) => [
       {
@@ -284,6 +288,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     logout,
     markAllAsRead,
     markAsRead,
+    setCurrentUser,
     pushNotification,
   };
 
