@@ -271,7 +271,7 @@ body::before {
 }
 
 .appPage {
-  max-width: 84rem;
+  width: min(96rem, calc(100vw - 96px));
   margin: 0 auto;
   padding: 0 var(--space-4) var(--space-6);
   flex: 1;
@@ -289,7 +289,7 @@ body::before {
 }
 
 .navInner {
-  max-width: 84rem;
+  width: min(96rem, calc(100vw - 96px));
   margin: 0 auto;
   padding: var(--space-3) var(--space-4);
 
@@ -2452,6 +2452,7 @@ a.accountFriendAction {
    ========================= */
 @media (max-width: 720px) {
   .appPage {
+    width: 100%;
     padding: 0 var(--space-3) var(--space-5);
   }
 
@@ -3479,7 +3480,7 @@ a.accountFriendAction {
 }
 
 .footerInner {
-  max-width: 84rem;
+  width: min(96rem, calc(100vw - 96px));
   margin: 0 auto;
   padding: var(--space-6) var(--space-4);
 }
