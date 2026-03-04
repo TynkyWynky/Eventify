@@ -146,26 +146,29 @@ Nieuwe backend endpoints voor explainable AI-functionaliteit:
     - `targetAudienceAgeRange`
   - Gebaseerd op vergelijkbare historische events + timing/prijs/locatie
 
-### Chatbot + Ollama (fast mode)
+### Chatbot + LLM API (fast mode)
 
-`POST /chatbot` gebruikt een snelle Ollama-only chatflow (zonder de trage copilot-ranking pipeline).
-`POST /copilot` blijft bestaan voor compatibiliteit en volgt dezelfde Ollama-only fast mode zolang `CHATBOT_OLLAMA_ONLY=true`.
+`POST /chatbot` gebruikt een snelle LLM-chatflow (zonder de trage copilot-ranking pipeline).
+`POST /copilot` blijft bestaan voor compatibiliteit en volgt dezelfde fast mode zolang `CHATBOT_FAST_ONLY=true`.
 
 Eigenschappen:
-- Directe antwoordgeneratie via Ollama (`/api/generate`)
+- Directe antwoordgeneratie via LLM provider (`openai` of `ollama`)
 - Korte timeout + korte reply-limiet voor snellere UX
 - In-memory reply cache voor herhaalde prompts
 
 Env:
-- `OLLAMA_ENABLED=true|false`
-- `OLLAMA_BASE_URL=http://127.0.0.1:11434`
-- `OLLAMA_MODEL=llama3.1:8b`
-- `OLLAMA_TIMEOUT_MS=5500`
-- `OLLAMA_MAX_MESSAGE_CHARS=1200`
-- `CHATBOT_OLLAMA_ONLY=true`
-- `CHATBOT_OLLAMA_TIMEOUT_MS=12000`
-- `CHATBOT_OLLAMA_CACHE_TTL_MS=120000`
-- `CHATBOT_OLLAMA_MAX_REPLY_CHARS=1400`
+- `LLM_PROVIDER=openai|ollama`
+- `LLM_ENABLED=true|false`
+- `LLM_API_KEY=<secret>` (nodig voor `openai`)
+- `OPENAI_API_KEY=<secret>` (alias van `LLM_API_KEY`)
+- `LLM_BASE_URL=https://api.openai.com/v1` (of Ollama endpoint)
+- `LLM_MODEL=gpt-4o-mini` (of jouw model)
+- `LLM_TIMEOUT_MS=5500`
+- `LLM_MAX_MESSAGE_CHARS=1200`
+- `CHATBOT_FAST_ONLY=true`
+- `CHATBOT_TIMEOUT_MS=12000`
+- `CHATBOT_CACHE_TTL_MS=120000`
+- `CHATBOT_MAX_REPLY_CHARS=1400`
 
 ### Voorbeeld payloads
 
@@ -230,7 +233,9 @@ Minimaal:
 Optioneel maar aanbevolen:
 - `TICKETMASTER_API_KEY`
 - `SETLISTFM_API_KEY`
-- `OLLAMA_ENABLED=false` op Vercel (tenzij je Ollama extern host)
+- `LLM_PROVIDER=openai`
+- `LLM_ENABLED=true`
+- `LLM_API_KEY` (voor chatbot/copilot intent parsing op Vercel)
 - `API_BASE_URL=https://<jouw-app>.vercel.app/api` (of leeg laten voor auto-detect in cron)
 
 ### 3) Scheduled sync (Vercel Cron)

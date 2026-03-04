@@ -79,21 +79,51 @@ const SOCIAL_WRITE_WINDOW_MS = toPositiveInt(process.env.SOCIAL_WRITE_WINDOW_MS,
 const SOCIAL_WRITE_MAX_ATTEMPTS = toPositiveInt(process.env.SOCIAL_WRITE_MAX_ATTEMPTS, 60);
 const INVITE_WINDOW_MS = toPositiveInt(process.env.INVITE_WINDOW_MS, 60 * 60 * 1000);
 const INVITE_MAX_ATTEMPTS = toPositiveInt(process.env.INVITE_MAX_ATTEMPTS, 30);
-const OLLAMA_CONFIG = {
-  enabled: toBool(process.env.OLLAMA_ENABLED, false),
-  baseUrl: (process.env.OLLAMA_BASE_URL || "http://127.0.0.1:11434").trim().replace(/\/+$/, ""),
-  model: (process.env.OLLAMA_MODEL || "llama3.1:8b").trim(),
-  timeoutMs: Math.max(1200, toPositiveInt(process.env.OLLAMA_TIMEOUT_MS, 5500)),
-  maxMessageChars: Math.max(200, toPositiveInt(process.env.OLLAMA_MAX_MESSAGE_CHARS, 1200)),
-};
-const CHATBOT_CONFIG = {
-  ollamaOnly: toBool(process.env.CHATBOT_OLLAMA_ONLY, true),
+const rawLlmProvider = (process.env.LLM_PROVIDER || "").trim().toLowerCase();
+const llmApiKey = (process.env.LLM_API_KEY || process.env.OPENAI_API_KEY || "").trim();
+const inferredLlmProvider = rawLlmProvider || (llmApiKey ? "openai" : "ollama");
+const llmDefaultBaseUrl =
+  inferredLlmProvider === "openai" ? "https://api.openai.com/v1" : "http://127.0.0.1:11434";
+const llmDefaultModel = inferredLlmProvider === "openai" ? "gpt-4o-mini" : "llama3.1:8b";
+const llmEnabledFallback =
+  inferredLlmProvider === "openai" ? Boolean(llmApiKey) : toBool(process.env.OLLAMA_ENABLED, false);
+const LLM_CONFIG = {
+  provider: inferredLlmProvider,
+  enabled: toBool(process.env.LLM_ENABLED, llmEnabledFallback),
+  baseUrl: (process.env.LLM_BASE_URL || process.env.OLLAMA_BASE_URL || llmDefaultBaseUrl)
+    .trim()
+    .replace(/\/+$/, ""),
+  apiKey: llmApiKey,
+  model: (process.env.LLM_MODEL || process.env.OLLAMA_MODEL || llmDefaultModel).trim(),
   timeoutMs: Math.max(
     1200,
-    toPositiveInt(process.env.CHATBOT_OLLAMA_TIMEOUT_MS, Math.min(12000, OLLAMA_CONFIG.timeoutMs))
+    toPositiveInt(process.env.LLM_TIMEOUT_MS, toPositiveInt(process.env.OLLAMA_TIMEOUT_MS, 5500))
   ),
-  maxReplyChars: Math.max(400, toPositiveInt(process.env.CHATBOT_OLLAMA_MAX_REPLY_CHARS, 1400)),
-  cacheTtlMs: Math.max(5000, toPositiveInt(process.env.CHATBOT_OLLAMA_CACHE_TTL_MS, 120000)),
+  maxMessageChars: Math.max(
+    200,
+    toPositiveInt(
+      process.env.LLM_MAX_MESSAGE_CHARS,
+      toPositiveInt(process.env.OLLAMA_MAX_MESSAGE_CHARS, 1200)
+    )
+  ),
+};
+const CHATBOT_CONFIG = {
+  ollamaOnly: toBool(process.env.CHATBOT_FAST_ONLY, toBool(process.env.CHATBOT_OLLAMA_ONLY, true)),
+  timeoutMs: Math.max(
+    1200,
+    toPositiveInt(
+      process.env.CHATBOT_TIMEOUT_MS,
+      toPositiveInt(process.env.CHATBOT_OLLAMA_TIMEOUT_MS, Math.min(12000, LLM_CONFIG.timeoutMs))
+    )
+  ),
+  maxReplyChars: Math.max(
+    400,
+    toPositiveInt(process.env.CHATBOT_MAX_REPLY_CHARS, toPositiveInt(process.env.CHATBOT_OLLAMA_MAX_REPLY_CHARS, 1400))
+  ),
+  cacheTtlMs: Math.max(
+    5000,
+    toPositiveInt(process.env.CHATBOT_CACHE_TTL_MS, toPositiveInt(process.env.CHATBOT_OLLAMA_CACHE_TTL_MS, 120000))
+  ),
 };
 const PRICE_TIER_THRESHOLDS = Object.freeze({
   low: 20,
@@ -6137,7 +6167,7 @@ const COPILOT_NEXT_WEEK_PHRASES = ["volgende week", "next week", "semaine procha
 const COPILOT_MONTH_NAME_REGEX = Object.keys(COPILOT_MONTH_NAME_TO_INDEX)
   .sort((a, b) => b.length - a.length)
   .join("|");
-const COPILOT_OLLAMA_DATE_HINTS = [
+const COPILOT_LLM_DATE_HINTS = [
   "none",
   "today",
   "tomorrow",
@@ -6814,7 +6844,7 @@ function parseJsonObjectLoose(value) {
 function buildChatbotCacheKey({ message, originLabel, suggestions = [] }) {
   const normalizedMessage = copilotNormalize(message)
     .replace(/\s+/g, " ")
-    .slice(0, OLLAMA_CONFIG.maxMessageChars);
+    .slice(0, LLM_CONFIG.maxMessageChars);
   const normalizedOrigin = copilotNormalize(originLabel).slice(0, 80);
   const suggestionKey = (Array.isArray(suggestions) ? suggestions : [])
     .map((entry) => {
@@ -7402,24 +7432,24 @@ async function buildFastChatbotSuggestions({
   return selected.map((entry) => mapCopilotSuggestion(entry));
 }
 
-async function buildFastOllamaChatbotPayload({
+async function buildFastLlmChatbotPayload({
   message,
   originLabel,
   clientNowIso,
   suggestions = [],
 }) {
-  const safeMessage = String(message || "").slice(0, OLLAMA_CONFIG.maxMessageChars).trim();
+  const safeMessage = String(message || "").slice(0, LLM_CONFIG.maxMessageChars).trim();
   if (!safeMessage) {
     return {
       answer: "Beschrijf kort je plan: dag, stad, vibe, max km en budget.",
-      meta: { strategy: "empty_message", model: OLLAMA_CONFIG.model, cached: false },
+      meta: { strategy: "empty_message", model: LLM_CONFIG.model, cached: false },
     };
   }
 
-  if (!OLLAMA_CONFIG.enabled || !OLLAMA_CONFIG.model) {
+  if (!LLM_CONFIG.enabled || !LLM_CONFIG.model) {
     return {
       answer: buildChatbotFallbackReply({ message: safeMessage, originLabel, suggestions }),
-      meta: { strategy: "fallback_no_ollama", model: OLLAMA_CONFIG.model || null, cached: false },
+      meta: { strategy: "fallback_no_llm", model: LLM_CONFIG.model || null, cached: false },
     };
   }
 
@@ -7466,45 +7496,77 @@ async function buildFastOllamaChatbotPayload({
   ].join("\n");
 
   try {
-    const { data } = await axios.post(
-      `${OLLAMA_CONFIG.baseUrl}/api/generate`,
-      {
-        model: OLLAMA_CONFIG.model,
-        stream: false,
-        system: systemPrompt,
-        prompt,
-        options: {
+    let content = null;
+    if (LLM_CONFIG.provider === "openai") {
+      if (!LLM_CONFIG.apiKey) throw new Error("Missing LLM_API_KEY for OpenAI provider");
+      const { data } = await axios.post(
+        `${LLM_CONFIG.baseUrl}/chat/completions`,
+        {
+          model: LLM_CONFIG.model,
           temperature: 0.2,
           top_p: 0.9,
-          num_predict: 180,
+          max_tokens: 180,
+          messages: [
+            { role: "system", content: systemPrompt },
+            { role: "user", content: prompt },
+          ],
         },
-      },
-      {
-        timeout: CHATBOT_CONFIG.timeoutMs,
-      }
-    );
+        {
+          timeout: CHATBOT_CONFIG.timeoutMs,
+          headers: {
+            Authorization: `Bearer ${LLM_CONFIG.apiKey}`,
+            "Content-Type": "application/json",
+          },
+        }
+      );
+      content = trimChatbotReply(data?.choices?.[0]?.message?.content);
+    } else if (LLM_CONFIG.provider === "ollama") {
+      const { data } = await axios.post(
+        `${LLM_CONFIG.baseUrl}/api/generate`,
+        {
+          model: LLM_CONFIG.model,
+          stream: false,
+          system: systemPrompt,
+          prompt,
+          options: {
+            temperature: 0.2,
+            top_p: 0.9,
+            num_predict: 180,
+          },
+        },
+        {
+          timeout: CHATBOT_CONFIG.timeoutMs,
+        }
+      );
+      content = trimChatbotReply(data?.response);
+    } else {
+      throw new Error(`Unsupported LLM_PROVIDER: ${LLM_CONFIG.provider}`);
+    }
 
-    const content = trimChatbotReply(data?.response);
     if (!content) {
       return {
         answer: buildChatbotFallbackReply({ message: safeMessage, originLabel, suggestions }),
-        meta: { strategy: "ollama_generate_empty", model: OLLAMA_CONFIG.model, cached: false },
+        meta: { strategy: "llm_generate_empty", model: LLM_CONFIG.model, cached: false },
       };
     }
 
     return {
       answer: content,
-      meta: { strategy: "ollama_generate", model: OLLAMA_CONFIG.model, cached: false },
+      meta: { strategy: "llm_generate", model: LLM_CONFIG.model, cached: false },
     };
   } catch (err) {
     const detail = cleanText(
-      err?.response?.data?.error || err?.message || err?.code || "ollama generate failed"
+      err?.response?.data?.error?.message ||
+        err?.response?.data?.error ||
+        err?.message ||
+        err?.code ||
+        "llm generate failed"
     );
     return {
       answer: buildChatbotFallbackReply({ message: safeMessage, originLabel, suggestions }),
       meta: {
-        strategy: "fallback_ollama_error",
-        model: OLLAMA_CONFIG.model,
+        strategy: "fallback_llm_error",
+        model: LLM_CONFIG.model,
         cached: false,
         error: detail ? detail.slice(0, 180) : "unknown",
       },
@@ -7534,29 +7596,11 @@ async function buildFastChatbotResponse({
     return {
       answer: cached.answer,
       suggestions: Array.isArray(cached.suggestions) ? cached.suggestions : suggestions,
-      meta: { strategy: "ollama_generate_cache", model: OLLAMA_CONFIG.model, cached: true },
+      meta: { strategy: "llm_generate_cache", model: LLM_CONFIG.model, cached: true },
     };
   }
 
-  if (suggestions.length > 0) {
-    const groundedAnswer = buildChatbotFallbackReply({
-      message,
-      originLabel,
-      suggestions,
-    });
-    setCachedChatbotReply(cacheKey, { answer: groundedAnswer, suggestions });
-    return {
-      answer: groundedAnswer,
-      suggestions,
-      meta: {
-        strategy: "grounded_template",
-        model: OLLAMA_CONFIG.model || null,
-        cached: false,
-      },
-    };
-  }
-
-  const generated = await buildFastOllamaChatbotPayload({
+  const generated = await buildFastLlmChatbotPayload({
     message,
     originLabel,
     clientNowIso,
@@ -7577,7 +7621,7 @@ async function buildFastChatbotResponse({
   };
 }
 
-function sanitizeOllamaCopilotIntent(rawIntent, { clientNowIso } = {}) {
+function sanitizeLlmCopilotIntent(rawIntent, { clientNowIso } = {}) {
   const raw = parseJsonObjectLoose(rawIntent);
   if (!raw) return null;
 
@@ -7638,16 +7682,16 @@ function sanitizeOllamaCopilotIntent(rawIntent, { clientNowIso } = {}) {
   };
 }
 
-async function extractCopilotIntentWithOllama({ message, clientNowIso }) {
-  if (!OLLAMA_CONFIG.enabled || !OLLAMA_CONFIG.model) {
+async function extractCopilotIntentWithLlm({ message, clientNowIso }) {
+  if (!LLM_CONFIG.enabled || !LLM_CONFIG.model) {
     return { intent: null, meta: { used: false, strategy: "disabled", model: null } };
   }
 
-  const safeMessage = String(message || "").slice(0, OLLAMA_CONFIG.maxMessageChars).trim();
+  const safeMessage = String(message || "").slice(0, LLM_CONFIG.maxMessageChars).trim();
   if (!safeMessage) {
     return {
       intent: null,
-      meta: { used: false, strategy: "empty_message", model: OLLAMA_CONFIG.model },
+      meta: { used: false, strategy: "empty_message", model: LLM_CONFIG.model },
     };
   }
 
@@ -7657,7 +7701,7 @@ async function extractCopilotIntentWithOllama({ message, clientNowIso }) {
     "If unsure, use null or empty arrays.",
     `Cities should be one of: ${COPILOT_CITIES.map((city) => city.name).join(", ")}.`,
     `Styles should be chosen from: ${COPILOT_ALLOWED_STYLES.join(", ")}.`,
-    `dateHint must be one of: ${COPILOT_OLLAMA_DATE_HINTS.join(", ")}.`,
+    `dateHint must be one of: ${COPILOT_LLM_DATE_HINTS.join(", ")}.`,
     "Schema:",
     '{"city": string|null, "styles": string[], "maxKm": number|null, "budget": number|"cheap"|null, "friendCount": number|null, "mode": "normal"|"plan"|null, "dateHint": string|null}',
   ].join(" ");
@@ -7668,50 +7712,83 @@ async function extractCopilotIntentWithOllama({ message, clientNowIso }) {
   ].join("\n");
 
   try {
-    const { data } = await axios.post(
-      `${OLLAMA_CONFIG.baseUrl}/api/chat`,
-      {
-        model: OLLAMA_CONFIG.model,
-        stream: false,
-        format: "json",
-        options: {
+    let content = null;
+    if (LLM_CONFIG.provider === "openai") {
+      if (!LLM_CONFIG.apiKey) throw new Error("Missing LLM_API_KEY for OpenAI provider");
+      const { data } = await axios.post(
+        `${LLM_CONFIG.baseUrl}/chat/completions`,
+        {
+          model: LLM_CONFIG.model,
           temperature: 0.1,
           top_p: 0.9,
-          num_predict: 220,
+          max_tokens: 220,
+          response_format: { type: "json_object" },
+          messages: [
+            { role: "system", content: systemPrompt },
+            { role: "user", content: userPrompt },
+          ],
         },
-        messages: [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: userPrompt },
-        ],
-      },
-      {
-        timeout: OLLAMA_CONFIG.timeoutMs,
-      }
-    );
+        {
+          timeout: LLM_CONFIG.timeoutMs,
+          headers: {
+            Authorization: `Bearer ${LLM_CONFIG.apiKey}`,
+            "Content-Type": "application/json",
+          },
+        }
+      );
+      content = data?.choices?.[0]?.message?.content;
+    } else if (LLM_CONFIG.provider === "ollama") {
+      const { data } = await axios.post(
+        `${LLM_CONFIG.baseUrl}/api/chat`,
+        {
+          model: LLM_CONFIG.model,
+          stream: false,
+          format: "json",
+          options: {
+            temperature: 0.1,
+            top_p: 0.9,
+            num_predict: 220,
+          },
+          messages: [
+            { role: "system", content: systemPrompt },
+            { role: "user", content: userPrompt },
+          ],
+        },
+        {
+          timeout: LLM_CONFIG.timeoutMs,
+        }
+      );
+      content = data?.message?.content;
+    } else {
+      throw new Error(`Unsupported LLM_PROVIDER: ${LLM_CONFIG.provider}`);
+    }
 
-    const content = data?.message?.content;
-    const sanitized = sanitizeOllamaCopilotIntent(content, { clientNowIso });
+    const sanitized = sanitizeLlmCopilotIntent(content, { clientNowIso });
     if (!sanitized) {
       return {
         intent: null,
-        meta: { used: false, strategy: "ollama_invalid_json", model: OLLAMA_CONFIG.model },
+        meta: { used: false, strategy: "llm_invalid_json", model: LLM_CONFIG.model },
       };
     }
 
     return {
       intent: sanitized,
-      meta: { used: true, strategy: "ollama", model: OLLAMA_CONFIG.model },
+      meta: { used: true, strategy: "llm", model: LLM_CONFIG.model },
     };
   } catch (err) {
     const detail = String(
-      err?.response?.data?.error || err?.message || err?.code || "ollama request failed"
+      err?.response?.data?.error?.message ||
+        err?.response?.data?.error ||
+        err?.message ||
+        err?.code ||
+        "llm request failed"
     ).slice(0, 180);
     return {
       intent: null,
       meta: {
         used: false,
-        strategy: "ollama_error",
-        model: OLLAMA_CONFIG.model,
+        strategy: "llm_error",
+        model: LLM_CONFIG.model,
         error: detail,
       },
     };
@@ -7748,8 +7825,8 @@ async function resolveCopilotIntent({ message, clientNowIso, modeRaw }) {
     mode: heuristicMode,
   };
 
-  const ollama = await extractCopilotIntentWithOllama({ message, clientNowIso });
-  const llm = ollama.intent;
+  const llmResult = await extractCopilotIntentWithLlm({ message, clientNowIso });
+  const llm = llmResult.intent;
 
   const mode =
     heuristic.mode === "plan"
@@ -7767,8 +7844,8 @@ async function resolveCopilotIntent({ message, clientNowIso, modeRaw }) {
     friendCount: heuristic.friendCount ?? (hasFriendHint ? llm?.friendCount : null),
     dateRange: llm?.dateRange || heuristic.dateRange,
     mode,
-    parser: llm ? "ollama+heuristic" : "heuristic",
-    parserMeta: ollama.meta,
+    parser: llm ? "llm+heuristic" : "heuristic",
+    parserMeta: llmResult.meta,
   };
 }
 
@@ -8029,7 +8106,7 @@ app.post("/chatbot", authOptional, async (req, res) => {
       answer: chatbot.answer,
       suggestions: Array.isArray(chatbot.suggestions) ? chatbot.suggestions : [],
       intentParser: {
-        strategy: chatbot.meta?.strategy || "ollama_generate",
+        strategy: chatbot.meta?.strategy || "llm_generate",
         model: chatbot.meta?.model || null,
         cached: chatbot.meta?.cached === true,
         error: chatbot.meta?.error || null,
@@ -8070,7 +8147,7 @@ app.post("/copilot", authOptional, async (req, res) => {
         answer: chatbot.answer,
         suggestions: Array.isArray(chatbot.suggestions) ? chatbot.suggestions : [],
         intentParser: {
-          strategy: chatbot.meta?.strategy || "ollama_generate",
+          strategy: chatbot.meta?.strategy || "llm_generate",
           model: chatbot.meta?.model || null,
           cached: chatbot.meta?.cached === true,
           error: chatbot.meta?.error || null,
@@ -8302,15 +8379,15 @@ async function startApiServer() {
     console.log(
       `Chatbot mode: ${
         CHATBOT_CONFIG.ollamaOnly
-          ? `ollama-only (/chatbot, timeout=${CHATBOT_CONFIG.timeoutMs}ms, cacheTtl=${CHATBOT_CONFIG.cacheTtlMs}ms)`
-          : "copilot ranking + optional ollama intent"
+          ? `fast-only (/chatbot, timeout=${CHATBOT_CONFIG.timeoutMs}ms, cacheTtl=${CHATBOT_CONFIG.cacheTtlMs}ms)`
+          : "copilot ranking + optional llm intent"
       }`
     );
     console.log(
       `Copilot intent parser: ${
-        OLLAMA_CONFIG.enabled
-          ? `heuristic + ollama (${OLLAMA_CONFIG.model} @ ${OLLAMA_CONFIG.baseUrl})`
-          : "heuristic only (set OLLAMA_ENABLED=true to enable Ollama)"
+        LLM_CONFIG.enabled
+          ? `heuristic + ${LLM_CONFIG.provider} (${LLM_CONFIG.model} @ ${LLM_CONFIG.baseUrl})`
+          : "heuristic only (set LLM_ENABLED=true and configure provider)"
       }`
     );
     console.log(
