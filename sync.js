@@ -224,6 +224,13 @@ async function fetchEventsFromAPI({
         maxResults: size,
         includeScraped,
         keyword: keyword || undefined,
+        // Sync must fetch fresh upstream data, not the DB-first view.
+        preferDb: 0,
+        allowLiveFetch: 1,
+      },
+      headers: {
+        // Lets API handlers skip bootstrap-sync recursion for internal sync calls.
+        "x-eventify-sync-internal": "1",
       },
       timeout: 30000,
     });
