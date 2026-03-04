@@ -5,19 +5,31 @@ function shouldUpgradeHttpBase(baseUrl: string): boolean {
   return !/^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?(\/|$)/i.test(baseUrl);
 }
 
-function resolveRawApiBaseUrl(): string {
+function resolveApiBaseUrl(): string {
   const envBase = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.trim();
   const fallbackBase = import.meta.env.DEV ? "http://localhost:3000" : "/api";
-  const candidate = envBase || fallbackBase;
-  if (shouldUpgradeHttpBase(candidate)) {
-    return candidate.replace(/^http:\/\//i, "https://");
+  if (!envBase) return fallbackBase;
+
+  if (!import.meta.env.DEV) {
+    // Protect production builds from accidental localhost env values on Vercel.
+    try {
+      const parsed = new URL(envBase, window.location.origin);
+      if (parsed.hostname === "localhost" || parsed.hostname === "127.0.0.1") {
+        return "/api";
+      }
+    } catch {
+      // Keep non-URL values such as "/api" as-is.
+    }
   }
-  return candidate;
+
+  if (shouldUpgradeHttpBase(envBase)) {
+    return envBase.replace(/^http:\/\//i, "https://");
+  }
+
+  return envBase;
 }
 
-const RAW_BASE = resolveRawApiBaseUrl();
-
-export const API_BASE_URL = RAW_BASE.replace(/\/+$/, "");
+export const API_BASE_URL = resolveApiBaseUrl().replace(/\/+$/, "");
 
 type ApiErrorPayload = { error?: string; message?: string };
 
