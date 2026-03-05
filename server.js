@@ -4974,7 +4974,25 @@ function buildEventSuggestions(events, query, limit = 10) {
     .map((item) => item.label);
 }
 
-async function resolveEventsForAi({ events, query = {} } = {}) {
+function inferRequestApiBase(request) {
+  if (!request || typeof request !== "object") return null;
+
+  const forwardedHost = request?.headers?.["x-forwarded-host"];
+  const hostRaw = Array.isArray(forwardedHost)
+    ? forwardedHost[0]
+    : forwardedHost || request?.headers?.host || "";
+  const host = cleanText(String(hostRaw).split(",")[0]);
+  if (!host) return null;
+
+  const forwardedProto = request?.headers?.["x-forwarded-proto"];
+  const protoRaw = Array.isArray(forwardedProto) ? forwardedProto[0] : forwardedProto || "";
+  const protocol = cleanText(String(protoRaw).split(",")[0]) || "https";
+  if (!/^https?$/i.test(protocol)) return null;
+
+  return `${protocol.toLowerCase()}://${host.replace(/\/+$/, "")}`;
+}
+
+async function resolveEventsForAi({ events, query = {}, request = null } = {}) {
   if (Array.isArray(events) && events.length > 0) {
     return dedupe(events).slice(0, 300);
   }
@@ -4983,6 +5001,7 @@ async function resolveEventsForAi({ events, query = {} } = {}) {
   const port = process.env.PORT ? Number(process.env.PORT) : 3000;
   const apiBase = cleanText(process.env.API_BASE_URL);
   const vercelUrl = cleanText(process.env.VERCEL_URL);
+  const requestApiBase = inferRequestApiBase(request);
 
   const toAbsoluteBase = (value) => {
     const raw = cleanText(value);
@@ -4999,6 +5018,10 @@ async function resolveEventsForAi({ events, query = {} } = {}) {
 
   const endpointCandidates = [];
   endpointCandidates.push(`http://127.0.0.1:${port}/events`);
+  if (requestApiBase) {
+    endpointCandidates.push(joinUrl(requestApiBase, "api/events"));
+    endpointCandidates.push(joinUrl(requestApiBase, "events"));
+  }
 
   const absoluteApiBase = toAbsoluteBase(apiBase);
   if (absoluteApiBase) {
@@ -5751,6 +5774,7 @@ app.get("/events/suggestions", async (req, res) => {
     const limit = Math.max(1, Math.min(20, Number(req.query?.limit) || 10));
 
     const events = await resolveEventsForAi({
+      request: req,
       query: {
         keyword: q,
         lat: Number.isFinite(lat) ? lat : 50.8503,
@@ -5955,6 +5979,7 @@ app.post("/ai/recommendations", async (req, res) => {
     const weights = objectOrEmpty(body.weights);
 
     const events = await resolveEventsForAi({
+      request: req,
       events: Array.isArray(body.events) ? body.events : null,
       query: objectOrEmpty(body.query),
     });
@@ -5994,6 +6019,7 @@ app.post("/ai/radar", async (req, res) => {
     const userProfile = objectOrEmpty(body.userProfile);
 
     const events = await resolveEventsForAi({
+      request: req,
       events: Array.isArray(body.events) ? body.events : null,
       query: objectOrEmpty(body.query),
     });
@@ -6039,7 +6065,10 @@ app.post("/ai/taste-dna", async (req, res) => {
     if (Array.isArray(body.events) && body.events.length > 0) {
       feedEvents = body.events;
     } else if (likedEventKeys.length > 0 || toBool(body.bootstrapFromFeed, false)) {
-      feedEvents = await resolveEventsForAi({ query: objectOrEmpty(body.query) });
+      feedEvents = await resolveEventsForAi({
+        request: req,
+        query: objectOrEmpty(body.query),
+      });
     }
 
     if (
@@ -6102,7 +6131,7 @@ app.post("/ai/success-predictor", async (req, res) => {
         maxResults: toPositiveInt(body?.query?.maxResults, 140),
       };
 
-      historicalEvents = await resolveEventsForAi({ query });
+      historicalEvents = await resolveEventsForAi({ request: req, query });
     }
 
     const prediction = predictEventSuccess(draftEvent, historicalEvents);
@@ -7232,6 +7261,7 @@ async function buildFastChatbotSuggestions({
   originLng,
   originLabel,
   clientNowIso,
+  request,
   limit = 3,
 } = {}) {
   const safeMessage = safeText(message, "").trim();
@@ -7275,6 +7305,7 @@ async function buildFastChatbotSuggestions({
 
   try {
     feedEvents = await resolveEventsForAi({
+      request,
       query: {
         ...feedQueryBase,
         keyword,
@@ -7287,6 +7318,7 @@ async function buildFastChatbotSuggestions({
   if (feedEvents.length === 0 && keyword) {
     try {
       feedEvents = await resolveEventsForAi({
+        request,
         query: {
           ...feedQueryBase,
           keyword: "",
@@ -7301,6 +7333,7 @@ async function buildFastChatbotSuggestions({
     try {
       const budgetPoolSize = Math.max(fetchSize, 60);
       const budgetPoolEvents = await resolveEventsForAi({
+        request,
         query: {
           ...feedQueryBase,
           keyword: "",
@@ -7647,6 +7680,7 @@ async function buildFastChatbotResponse({
   originLng,
   originLabel,
   clientNowIso,
+  request,
 } = {}) {
   const suggestions = await buildFastChatbotSuggestions({
     message,
@@ -7654,6 +7688,7 @@ async function buildFastChatbotResponse({
     originLng,
     originLabel,
     clientNowIso,
+    request,
     limit: 3,
   });
 
@@ -8150,6 +8185,39 @@ function buildCopilotAnswer({ suggestions, city, originLabel, relaxedFallback })
   return lines.join("\n");
 }
 
+function chatbotGetUsageResponse(req, endpoint) {
+  const forwardedHost = req?.headers?.["x-forwarded-host"];
+  const hostRaw = Array.isArray(forwardedHost)
+    ? forwardedHost[0]
+    : forwardedHost || req?.headers?.host || "";
+  const forwardedProto = req?.headers?.["x-forwarded-proto"];
+  const protoRaw = Array.isArray(forwardedProto) ? forwardedProto[0] : forwardedProto || "";
+  const protocol = String(protoRaw).split(",")[0].trim() || "https";
+  const host = cleanText(hostRaw);
+  const apiBase = host ? `${protocol}://${host.replace(/\/+$/, "")}/api` : "/api";
+
+  return {
+    ok: false,
+    error: `Use POST ${endpoint} with JSON body. GET is not supported for chat generation.`,
+    examples: {
+      endpoint,
+      method: "POST",
+      url: `${apiBase}${endpoint}`,
+      body: {
+        message: "vrijdag brussel techno max 20km budget 40",
+        originLat: 50.8466,
+        originLng: 4.3528,
+        originLabel: "Brussels",
+        clientNowIso: new Date().toISOString(),
+      },
+    },
+  };
+}
+
+app.get("/chatbot", (_req, res) => {
+  return res.status(405).json(chatbotGetUsageResponse(_req, "/chatbot"));
+});
+
 app.post("/chatbot", authOptional, async (req, res) => {
   try {
     const message = safeText(req.body?.message, "").trim();
@@ -8166,6 +8234,7 @@ app.post("/chatbot", authOptional, async (req, res) => {
       originLng,
       originLabel,
       clientNowIso,
+      request: req,
     });
 
     return res.json({
@@ -8183,6 +8252,10 @@ app.post("/chatbot", authOptional, async (req, res) => {
   } catch (err) {
     return res.status(500).json({ ok: false, error: err?.message || String(err) });
   }
+});
+
+app.get("/copilot", (_req, res) => {
+  return res.status(405).json(chatbotGetUsageResponse(_req, "/copilot"));
 });
 
 app.post("/copilot", authOptional, async (req, res) => {
@@ -8207,6 +8280,7 @@ app.post("/copilot", authOptional, async (req, res) => {
         originLng,
         originLabel,
         clientNowIso,
+        request: req,
       });
 
       return res.json({
@@ -8243,19 +8317,25 @@ app.post("/copilot", authOptional, async (req, res) => {
     const distanceReferenceLng = city ? city.lng : originLng;
 
     // Fetch broad event feed first (Ticketmaster + scraped), then filter + rank ourselves.
-    const feedEvents = await resolveEventsForAi({
-      query: {
-        keyword: "",
-        lat: centerLat,
-        lng: centerLng,
-        radiusKm: COPILOT_FETCH_RADIUS_KM,
-        classificationName: "music",
-        size: COPILOT_FETCH_SIZE,
-        maxResults: COPILOT_FETCH_SIZE,
-        includeScraped: 1,
-        includeSetlists: 0,
-      },
-    });
+    let feedEvents = [];
+    try {
+      feedEvents = await resolveEventsForAi({
+        request: req,
+        query: {
+          keyword: "",
+          lat: centerLat,
+          lng: centerLng,
+          radiusKm: COPILOT_FETCH_RADIUS_KM,
+          classificationName: "music",
+          size: COPILOT_FETCH_SIZE,
+          maxResults: COPILOT_FETCH_SIZE,
+          includeScraped: 1,
+          includeSetlists: 0,
+        },
+      });
+    } catch {
+      feedEvents = [];
+    }
 
     let candidates = (feedEvents || []).map((e, idx) => {
       const eventKey = buildEventKeyFromApiEvent(e, idx);
