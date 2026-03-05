@@ -547,9 +547,19 @@ body::before {
 
 .navLanguageFlagEN {
   background:
-    linear-gradient(90deg, transparent 0 45%, #ffffff 45% 55%, transparent 55% 100%),
-    linear-gradient(transparent 0 42%, #ffffff 42% 58%, transparent 58% 100%),
-    #012169;
+    linear-gradient(180deg, #b22234 0 14.28%, #ffffff 14.28% 28.56%, #b22234 28.56% 42.84%, #ffffff 42.84% 57.12%, #b22234 57.12% 71.4%, #ffffff 71.4% 85.68%, #b22234 85.68% 100%);
+  position: relative;
+}
+
+.navLanguageFlagEN::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 46%;
+  height: 52%;
+  background: #3c3b6e;
+  border-top-left-radius: 1px;
 }
 
 .navLanguageFlagFR {
@@ -557,7 +567,7 @@ body::before {
 }
 
 .navLanguageFlagNL {
-  background: linear-gradient(180deg, #000000 0 33.333%, #fdda24 33.333% 66.666%, #ef3340 66.666% 100%);
+  background: linear-gradient(180deg, #ae1c28 0 33.333%, #ffffff 33.333% 66.666%, #21468b 66.666% 100%);
 }
 
 .navLanguagePopover .popoverList {
