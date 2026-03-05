@@ -3193,14 +3193,20 @@ async function enrichEventPriceOnDemand(event) {
 
   const cached = getCachedPriceEntry(targetUrl);
   if (cached) {
-    if (!cached.payload) {
-      return { event: current, enriched: false, blockedHostSkip: false };
+    if (!cached.payload && isTicketmaster) {
+      // Ticketmaster availability can flip quickly and bot gating is inconsistent.
+      // Do not keep stale "no-price" misses for this source.
+      priceEnrichCache.delete(cleanText(targetUrl));
+    } else {
+      if (!cached.payload) {
+        return { event: current, enriched: false, blockedHostSkip: false };
+      }
+      const merged = enrichEventWithPriceInsights({
+        ...current,
+        ...cached.payload,
+      });
+      return { event: merged, enriched: hasAnyPriceSignal(merged), blockedHostSkip: false };
     }
-    const merged = enrichEventWithPriceInsights({
-      ...current,
-      ...cached.payload,
-    });
-    return { event: merged, enriched: hasAnyPriceSignal(merged), blockedHostSkip: false };
   }
 
   let directBlocked = false;
@@ -3239,7 +3245,7 @@ async function enrichEventPriceOnDemand(event) {
   }
 
   if (!extracted || !hasAnyPriceSignal(extracted)) {
-    if (!directBlocked) {
+    if (!directBlocked && !isTicketmaster) {
       setCachedPriceEntry(targetUrl, null);
     }
     return { event: current, enriched: false, blockedHostSkip: directBlocked && !canUseTicketmasterProxy };
@@ -5706,6 +5712,12 @@ app.get("/events", async (req, res) => {
         enrichedThisRequest: priceResult.enrichedThisRequest,
         unknownPrice,
         blockedHostSkips: priceResult.blockedHostSkips,
+        settings: {
+          enabled: PRICE_ENRICH_CONFIG.enabled,
+          maxPerRequest: PRICE_ENRICH_CONFIG.maxPerRequest,
+          ticketmasterMaxPerRequest: PRICE_ENRICH_CONFIG.ticketmasterMaxPerRequest,
+          proxyConfigured: Boolean(PRICE_ENRICH_CONFIG.ticketmasterProxyBaseUrl),
+        },
       },
       count: events.length,
       events,
@@ -5800,7 +5812,27 @@ app.get("/events/enrich", async (req, res) => {
       return res.status(404).json({ ok: false, error: 'Event is disabled by admin moderation.' });
     }
 
-    return res.json({ ok: true, event });
+    const priceResult = await enrichMissingPrices([event]);
+    const pricedEvent = priceResult.events[0] || event;
+    const inferredEvent = applyTicketmasterPriceInference([pricedEvent])[0] || pricedEvent;
+
+    return res.json({
+      ok: true,
+      event: inferredEvent,
+      priceCoverage: {
+        total: 1,
+        withAnyPrice: inferredEvent?.hasAnyPrice ? 1 : 0,
+        enrichedThisRequest: priceResult.enrichedThisRequest,
+        unknownPrice: inferredEvent?.hasAnyPrice ? 0 : 1,
+        blockedHostSkips: priceResult.blockedHostSkips,
+        settings: {
+          enabled: PRICE_ENRICH_CONFIG.enabled,
+          maxPerRequest: PRICE_ENRICH_CONFIG.maxPerRequest,
+          ticketmasterMaxPerRequest: PRICE_ENRICH_CONFIG.ticketmasterMaxPerRequest,
+          proxyConfigured: Boolean(PRICE_ENRICH_CONFIG.ticketmasterProxyBaseUrl),
+        },
+      },
+    });
   } catch (err) {
     return res.status(500).json({ ok: false, error: String(err) });
   }

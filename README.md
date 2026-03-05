@@ -84,7 +84,7 @@ De backend kan nu events uit extra websites scrapen en samenvoegen met Ticketmas
 - `PRICE_ENRICH_BACKGROUND_MAX_QUEUE=250`
 - `PRICE_ENRICH_CACHE_TTL_MS=21600000`
 - `PRICE_ENRICH_BLOCK_TTL_MS=600000`
-- `PRICE_ENRICH_TICKETMASTER_PROXY_BASE_URL=` (optioneel, bv. `https://r.jina.ai/http://`)
+- `PRICE_ENRICH_TICKETMASTER_PROXY_BASE_URL=` (optioneel, gebruik bij voorkeur een anti-bot geschikte scraping proxy)
 - `PRICE_ENRICH_TICKETMASTER_PROXY_TIMEOUT_MS=10000`
 
 Prijsverrijking gebeurt on-demand in `GET /events` voor events zonder prijsdata
@@ -101,6 +101,7 @@ Let op voor Ticketmaster:
 - Price-enrichment probeert daarom eerst Ticketmaster web-JSON (`/api/ticketselection/{eventId}` afgeleid uit de event-URL)
 - Directe Ticketmaster eventpagina's returnen vaak `401/403` voor bots
 - Daarom is er een optionele proxy fallback (`PRICE_ENRICH_TICKETMASTER_PROXY_BASE_URL`)
+- Simpele text-mirrors/proxy's kunnen nog steeds door Ticketmaster geblokkeerd worden
 
 ### Snelle test
 
