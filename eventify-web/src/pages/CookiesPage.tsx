@@ -1,11 +1,12 @@
+import { useI18n } from "../i18n/I18nContext";
+
 export default function CookiesPage() {
+  const { t } = useI18n();
   return (
     <div className="legalWrap">
       <header className="legalHeader">
-        <h1 className="legalTitle">Cookies & Local Storage</h1>
-        <p className="legalLead">
-          Eventium mainly uses browser storage to keep you logged in and save preferences.
-        </p>
+        <h1 className="legalTitle">{t("legal.cookies.title")}</h1>
+        <p className="legalLead">{t("legal.cookies.lead")}</p>
       </header>
 
       <div className="legalCard">

@@ -1,11 +1,12 @@
+import { useI18n } from "../i18n/I18nContext";
+
 export default function TermsPage() {
+  const { t } = useI18n();
   return (
     <div className="legalWrap">
       <header className="legalHeader">
-        <h1 className="legalTitle">Terms of Service</h1>
-        <p className="legalLead">
-          Basic rules for using Eventium. This is a student project and provided “as is”.
-        </p>
+        <h1 className="legalTitle">{t("legal.terms.title")}</h1>
+        <p className="legalLead">{t("legal.terms.lead")}</p>
       </header>
 
       <div className="legalCard">

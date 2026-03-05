@@ -32,6 +32,7 @@ import {
   subscribeOriginChanged,
 } from "../data/location/locationStore";
 import EventsMap from "../components/EventsMap";
+import { useI18n } from "../i18n/I18nContext";
 
 function clamp(n: number, min: number, max: number) {
   return Math.min(max, Math.max(min, n));
@@ -168,6 +169,7 @@ function EventCardSkeleton() {
 }
 
 export default function EventDashboardPage() {
+  const { t } = useI18n();
   const { user } = useAuth();
   const userId = user?.id ?? null;
 
@@ -608,9 +610,9 @@ export default function EventDashboardPage() {
 
         <div className="heroCenter">
           <div>
-            <h1 className="heroTitle">Your local scene awaits.</h1>
+            <h1 className="heroTitle">{t("hero.title")}</h1>
             <p className="heroSubtitle">
-              Discover concerts around you — fast, local, personal.
+              {t("dash.hero.subtitle")}
             </p>
 
             <div className="heroFilterBar">
@@ -619,7 +621,7 @@ export default function EventDashboardPage() {
                 options={styleOptions}
                 onChange={(v) => updateParams({ style: v })}
                 placeholder="All"
-                searchPlaceholder="Search a style…"
+                searchPlaceholder={t("dash.search.style")}
               />
 
               <SelectField
@@ -647,12 +649,12 @@ export default function EventDashboardPage() {
                   updateParams({ loc: v });
                 }}
                 placeholder="Location"
-                searchPlaceholder="Search a city…"
+                searchPlaceholder={t("dash.search.city")}
               />
 
               <div className="sliderGroup">
                 <div className="sliderHeader">
-                  <span className="sliderLabel">Distance (Km)</span>
+                  <span className="sliderLabel">{t("dash.distance")}</span>
                   <span className="sliderValue">{maxDistanceKm} Km</span>
                 </div>
 
@@ -670,8 +672,8 @@ export default function EventDashboardPage() {
             <div className="dashboardStatusRow">
               <div className="sectionHint">
                 {isLoading
-                  ? "Loading events…"
-                  : `${resultCount} event${resultCount === 1 ? "" : "s"} found`}
+                  ? t("dash.loading.events")
+                  : `${resultCount} ${t(resultCount === 1 ? "dash.event.one" : "dash.event.many")}`}
                 {lastLoadedAt
                   ? ` • Updated ${new Date(lastLoadedAt).toLocaleTimeString([], {
                       hour: "2-digit",
@@ -685,7 +687,7 @@ export default function EventDashboardPage() {
                 onClick={() => setReloadTick((t) => t + 1)}
                 disabled={isLoading}
               >
-                Retry
+                {t("dash.retry")}
               </button>
             </div>
             {error ? (
@@ -696,7 +698,7 @@ export default function EventDashboardPage() {
                   className="btn btnSecondary dashboardErrorAction"
                   onClick={() => setReloadTick((t) => t + 1)}
                 >
-                  Retry now
+                  {t("dash.retryNow")}
                 </button>
               </div>
             ) : null}
@@ -711,7 +713,7 @@ export default function EventDashboardPage() {
             <div>
               <div className="sectionTitle">Offline quick access</div>
               <div className="sectionHint">
-                You're offline. Open your recently viewed events.
+                {t("dash.offline.hint")}
               </div>
             </div>
           </div>
@@ -732,9 +734,9 @@ export default function EventDashboardPage() {
         <>
           <div id="dash-recommended" className="sectionTitleRow">
             <div>
-              <div className="sectionTitle">Recommended for you</div>
+              <div className="sectionTitle">{t("dash.recommended.title")}</div>
               <div className="sectionHint">
-                Based on:
+                {t("dash.recommended.basedOn")}
                 {prefTags.slice(0, 3).map((t) => (
                   <span key={t} className="tagPill" style={{ marginLeft: 8 }}>
                     {t}
@@ -742,7 +744,7 @@ export default function EventDashboardPage() {
                 ))}
               </div>
             </div>
-            <div className="sectionHint">{filterLabel || "Personalized"}</div>
+            <div className="sectionHint">{filterLabel || t("dash.personalized")}</div>
           </div>
 
           <div className="trendingRow">
@@ -761,16 +763,16 @@ export default function EventDashboardPage() {
       <div id="dash-trending" className="sectionTitleRow">
         <div>
           <div className="sectionTitle">Trending</div>
-          <div className="sectionHint">Hot events around you</div>
+          <div className="sectionHint">{t("dash.trending.hint")}</div>
         </div>
-        <div className="sectionHint">{filterLabel || "No filters"}</div>
+        <div className="sectionHint">{filterLabel || t("dash.noFilters")}</div>
       </div>
 
       <div className="trendingRow">
         {isLoading && events.length === 0 ? (
           Array.from({ length: 3 }).map((_, idx) => <EventCardSkeleton key={`trend-sk-${idx}`} />)
         ) : trendingEvents.length === 0 ? (
-          <div className="sectionHint">No trending events for this filter.</div>
+          <div className="sectionHint">{t("dash.noTrending")}</div>
         ) : (
           trendingEvents.map((e) => (
             <EventCard
@@ -785,39 +787,39 @@ export default function EventDashboardPage() {
       {/* ALL EVENTS */}
       <div id="dash-all" className="sectionTitleRow">
         <div>
-          <div className="sectionTitle">All events</div>
-          <div className="sectionHint">Everything that matches your filters</div>
+          <div className="sectionTitle">{t("dash.all.title")}</div>
+          <div className="sectionHint">{t("dash.all.hint")}</div>
         </div>
       </div>
 
       <div className="resultsViewBar">
-        <div className="viewToggle" role="tablist" aria-label="Results view">
+        <div className="viewToggle" role="tablist" aria-label={t("dash.resultsView")}>
           <button
             type="button"
             className={`viewToggleBtn ${viewMode === "list" ? "isActive" : ""}`}
             onClick={() => updateParams({ view: "list" })}
           >
-            List
+            {t("dash.list")}
           </button>
           <button
             type="button"
             className={`viewToggleBtn ${viewMode === "map" ? "isActive" : ""}`}
             onClick={() => updateParams({ view: "map" })}
           >
-            Map
+            {t("dash.map")}
           </button>
           <button
             type="button"
             className={`viewToggleBtn ${viewMode === "split" ? "isActive" : ""}`}
             onClick={() => updateParams({ view: "split" })}
           >
-            Split
+            {t("dash.split")}
           </button>
         </div>
 
         {viewMode !== "list" ? (
           <div className="sectionHint">
-            Hover a dot to see the event name • Click a dot to open the details
+            {t("dash.hoverHint")}
           </div>
         ) : null}
       </div>
@@ -825,9 +827,9 @@ export default function EventDashboardPage() {
       {viewMode === "map" ? (
         <div className="eventsMapPanel">
           {isLoading && mapEvents.length === 0 ? (
-            <div className="sectionHint">Loading events on the map…</div>
+            <div className="sectionHint">{t("dash.loading.map")}</div>
           ) : mapEvents.length === 0 ? (
-            <div className="sectionHint">No events match your filters.</div>
+            <div className="sectionHint">{t("dash.noEvents")}</div>
           ) : (
             <EventsMap
               events={mapEvents}
@@ -844,7 +846,7 @@ export default function EventDashboardPage() {
               {isLoading && events.length === 0 ? (
                 Array.from({ length: 3 }).map((_, idx) => <EventCardSkeleton key={`split-sk-${idx}`} />)
               ) : eventsWithAi.length === 0 ? (
-                <div className="sectionHint">No events match your filters.</div>
+                <div className="sectionHint">{t("dash.noEvents")}</div>
               ) : (
                 eventsWithAi.map((e) => (
                   <EventCard
@@ -859,7 +861,7 @@ export default function EventDashboardPage() {
 
           <div className="dashSplitMap">
             {isLoading && mapEvents.length === 0 ? (
-              <div className="sectionHint">Loading events on the map…</div>
+              <div className="sectionHint">{t("dash.loading.map")}</div>
             ) : mapEvents.length === 0 ? null : (
               <EventsMap
                 events={mapEvents}
@@ -875,7 +877,7 @@ export default function EventDashboardPage() {
           {isLoading && events.length === 0 ? (
             Array.from({ length: 6 }).map((_, idx) => <EventCardSkeleton key={`list-sk-${idx}`} />)
           ) : eventsWithAi.length === 0 ? (
-            <div className="sectionHint">No events match your filters.</div>
+            <div className="sectionHint">{t("dash.noEvents")}</div>
           ) : (
             eventsWithAi.map((e) => (
               <EventCard

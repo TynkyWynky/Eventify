@@ -536,8 +536,28 @@ body::before {
 .navLanguageBtn:hover { border-color: var(--borderHover); box-shadow: var(--glow); }
 
 .navLanguageFlag {
-  font-size: 18px;
-  line-height: 1;
+  width: 18px;
+  height: 12px;
+  border-radius: 2px;
+  border: 1px solid rgba(255,255,255,.28);
+  display: inline-block;
+  vertical-align: -1px;
+  box-shadow: inset 0 0 0 1px rgba(0,0,0,.08);
+}
+
+.navLanguageFlagEN {
+  background:
+    linear-gradient(90deg, transparent 0 45%, #ffffff 45% 55%, transparent 55% 100%),
+    linear-gradient(transparent 0 42%, #ffffff 42% 58%, transparent 58% 100%),
+    #012169;
+}
+
+.navLanguageFlagFR {
+  background: linear-gradient(90deg, #0055a4 0 33.333%, #ffffff 33.333% 66.666%, #ef4135 66.666% 100%);
+}
+
+.navLanguageFlagNL {
+  background: linear-gradient(180deg, #000000 0 33.333%, #fdda24 33.333% 66.666%, #ef3340 66.666% 100%);
 }
 
 .navLanguagePopover .popoverList {

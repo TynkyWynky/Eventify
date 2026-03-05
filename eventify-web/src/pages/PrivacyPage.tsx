@@ -1,13 +1,13 @@
 import { Link } from "react-router-dom";
+import { useI18n } from "../i18n/I18nContext";
 
 export default function PrivacyPage() {
+  const { t } = useI18n();
   return (
     <div className="legalWrap">
       <header className="legalHeader">
-        <h1 className="legalTitle">Privacy Policy</h1>
-        <p className="legalLead">
-          This page explains what data Eventium collects, why we collect it, and your rights under GDPR.
-        </p>
+        <h1 className="legalTitle">{t("legal.privacy.title")}</h1>
+        <p className="legalLead">{t("legal.privacy.lead")}</p>
       </header>
 
       <div className="legalCard">

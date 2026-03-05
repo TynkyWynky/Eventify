@@ -222,9 +222,7 @@ export default function TopNavigationBar() {
               aria-label={t("nav.language")}
               title={t("nav.language")}
             >
-              <span className="navLanguageFlag" aria-hidden="true">
-                {LOCALE_META[locale].flag}
-              </span>
+              <span className={`navLanguageFlag navLanguageFlag${locale.toUpperCase()}`} aria-hidden="true" />
             </button>
 
             {isLangOpen && (
@@ -244,7 +242,8 @@ export default function TopNavigationBar() {
                       }}
                     >
                       <div className="popoverItemTitle">
-                        {LOCALE_META[code].flag} {LOCALE_META[code].label}
+                        <span className={`navLanguageFlag navLanguageFlag${code.toUpperCase()}`} aria-hidden="true" />{" "}
+                        {LOCALE_META[code].label}
                       </div>
                     </button>
                   ))}

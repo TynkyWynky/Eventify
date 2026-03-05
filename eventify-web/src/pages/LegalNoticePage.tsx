@@ -1,11 +1,12 @@
+import { useI18n } from "../i18n/I18nContext";
+
 export default function LegalNoticePage() {
+  const { t } = useI18n();
   return (
     <div className="legalWrap">
       <header className="legalHeader">
-        <h1 className="legalTitle">Legal Notice</h1>
-        <p className="legalLead">
-          Mandatory information + disclaimer for this student project.
-        </p>
+        <h1 className="legalTitle">{t("legal.notice.title")}</h1>
+        <p className="legalLead">{t("legal.notice.lead")}</p>
       </header>
 
       <div className="legalCard">

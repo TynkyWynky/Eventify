@@ -1,4 +1,7 @@
+import { useI18n } from "../i18n/I18nContext";
+
 export default function HeroBanner() {
+  const { t } = useI18n();
   return (
     <section className="heroBanner">
       <div
@@ -11,9 +14,9 @@ export default function HeroBanner() {
       <div className="heroShade" />
 
       <div className="heroContent">
-        <h1 className="heroTitle">Your local scene awaits.</h1>
+        <h1 className="heroTitle">{t("hero.title")}</h1>
         <p className="heroSubtitle">
-          Discover all the concerts around you — in one place.
+          {t("hero.subtitle")}
         </p>
       </div>
     </section>
