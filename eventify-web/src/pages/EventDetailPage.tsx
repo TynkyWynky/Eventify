@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import type { EventItem } from "../events/eventsStore";
 import { eventsRepo } from "../data/events";
@@ -414,7 +414,6 @@ export default function EventDetailPage() {
   const [planActionMsg, setPlanActionMsg] = useState<string | null>(null);
   const [socialPanelOpen, setSocialPanelOpen] = useState(false);
   const [calendarMenuOpen, setCalendarMenuOpen] = useState(false);
-  const calendarMenuRef = useRef<HTMLDivElement | null>(null);
 
   const [isFav, setIsFav] = useState(false);
   const [setlists, setSetlists] = useState<SetlistItem[]>([]);
@@ -439,26 +438,11 @@ export default function EventDetailPage() {
 
   useEffect(() => {
     if (!calendarMenuOpen) return;
-
-    const closeIfOutside = (event: MouseEvent | TouchEvent) => {
-      const target = event.target as Node | null;
-      if (!target) return;
-      if (calendarMenuRef.current?.contains(target)) return;
-      setCalendarMenuOpen(false);
-    };
-
     const closeOnEscape = (event: KeyboardEvent) => {
       if (event.key === "Escape") setCalendarMenuOpen(false);
     };
-
-    document.addEventListener("mousedown", closeIfOutside);
-    document.addEventListener("touchstart", closeIfOutside);
     document.addEventListener("keydown", closeOnEscape);
-    return () => {
-      document.removeEventListener("mousedown", closeIfOutside);
-      document.removeEventListener("touchstart", closeIfOutside);
-      document.removeEventListener("keydown", closeOnEscape);
-    };
+    return () => document.removeEventListener("keydown", closeOnEscape);
   }, [calendarMenuOpen]);
 
   // ✅ origin (My location / city)
@@ -1356,65 +1340,15 @@ export default function EventDetailPage() {
             </button>
 
             {googleCalendarUrl ? (
-              <div className="eventCalendarMenu" ref={calendarMenuRef}>
-                <button
-                  className="btn btnSecondary eventCalendarMenuTrigger"
-                  type="button"
-                  aria-expanded={calendarMenuOpen}
-                  aria-haspopup="menu"
-                  onClick={() => setCalendarMenuOpen((open) => !open)}
-                >
-                  Add to calendar
-                </button>
-                {calendarMenuOpen ? (
-                  <div className="eventCalendarMenuList" role="menu">
-                    <a
-                      className="eventCalendarMenuItem"
-                      href={googleCalendarUrl}
-                      target="_blank"
-                      rel="noreferrer"
-                      role="menuitem"
-                      onClick={() => setCalendarMenuOpen(false)}
-                    >
-                      Google Calendar
-                    </a>
-                    {outlookCalendarUrl ? (
-                      <a
-                        className="eventCalendarMenuItem"
-                        href={outlookCalendarUrl}
-                        target="_blank"
-                        rel="noreferrer"
-                        role="menuitem"
-                        onClick={() => setCalendarMenuOpen(false)}
-                      >
-                        Outlook Calendar
-                      </a>
-                    ) : null}
-                    <button
-                      className="eventCalendarMenuItem"
-                      type="button"
-                      role="menuitem"
-                      onClick={() => {
-                        setCalendarMenuOpen(false);
-                        downloadIcsFile();
-                      }}
-                    >
-                      Apple Calendar
-                    </button>
-                    <button
-                      className="eventCalendarMenuItem"
-                      type="button"
-                      role="menuitem"
-                      onClick={() => {
-                        setCalendarMenuOpen(false);
-                        downloadIcsFile();
-                      }}
-                    >
-                      Download .ics
-                    </button>
-                  </div>
-                ) : null}
-              </div>
+              <button
+                className="btn btnSecondary eventCalendarMenuTrigger"
+                type="button"
+                aria-expanded={calendarMenuOpen}
+                aria-haspopup="dialog"
+                onClick={() => setCalendarMenuOpen(true)}
+              >
+                Add to calendar
+              </button>
             ) : null}
 
             <button className="btn btnSecondary" type="button" onClick={shareEvent}>
@@ -1479,6 +1413,78 @@ export default function EventDetailPage() {
           </div>
         </div>
       </section>
+
+      {googleCalendarUrl && calendarMenuOpen ? (
+        <div
+          className="eventCalendarModalBackdrop"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Add to calendar"
+          onClick={() => setCalendarMenuOpen(false)}
+        >
+          <div
+            className="eventCalendarModal"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="eventCalendarModalHeader">
+              <div className="eventCalendarModalTitle">Add to calendar</div>
+              <button
+                className="btn btnSecondary eventCalendarModalClose"
+                type="button"
+                onClick={() => setCalendarMenuOpen(false)}
+              >
+                Close
+              </button>
+            </div>
+            <div className="eventCalendarModalList" role="menu">
+              <a
+                className="eventCalendarMenuItem"
+                href={googleCalendarUrl}
+                target="_blank"
+                rel="noreferrer"
+                role="menuitem"
+                onClick={() => setCalendarMenuOpen(false)}
+              >
+                Google Calendar
+              </a>
+              {outlookCalendarUrl ? (
+                <a
+                  className="eventCalendarMenuItem"
+                  href={outlookCalendarUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  role="menuitem"
+                  onClick={() => setCalendarMenuOpen(false)}
+                >
+                  Outlook Calendar
+                </a>
+              ) : null}
+              <button
+                className="eventCalendarMenuItem"
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  setCalendarMenuOpen(false);
+                  downloadIcsFile();
+                }}
+              >
+                Apple Calendar
+              </button>
+              <button
+                className="eventCalendarMenuItem"
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  setCalendarMenuOpen(false);
+                  downloadIcsFile();
+                }}
+              >
+                Download .ics
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       <section className="eventDetailGrid">
         <div className="eventDetailCard eventDetailCardAbout">

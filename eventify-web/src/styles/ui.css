@@ -1658,28 +1658,52 @@ textarea.input { min-height: 110px; resize: vertical; }
   box-shadow: 0 14px 40px rgba(178, 106, 168, 0.18);
 }
 
-.eventCalendarMenu {
-  position: relative;
-  display: inline-flex;
-}
-
 .eventCalendarMenuTrigger {
   min-width: 168px;
 }
 
-.eventCalendarMenuList {
-  position: absolute;
-  top: calc(100% + 8px);
-  left: 0;
-  z-index: 30;
-  min-width: 220px;
-  padding: 8px;
-  border-radius: 14px;
-  border: 1px solid var(--border);
-  background: rgba(10, 12, 24, 0.96);
-  box-shadow: 0 16px 42px rgba(0, 0, 0, 0.45);
+.eventCalendarModalBackdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  background: rgba(7, 8, 18, 0.66);
+  backdrop-filter: blur(3px);
   display: grid;
-  gap: 6px;
+  place-items: center;
+  padding: 16px;
+}
+
+.eventCalendarModal {
+  width: min(420px, 100%);
+  border-radius: 18px;
+  border: 1px solid var(--border);
+  background: linear-gradient(180deg, rgba(20, 23, 46, 0.97), rgba(12, 13, 28, 0.97));
+  box-shadow: 0 22px 56px rgba(0, 0, 0, 0.5);
+  padding: 14px;
+}
+
+.eventCalendarModalHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.eventCalendarModalTitle {
+  font-size: 15px;
+  font-weight: 900;
+  letter-spacing: 0.01em;
+}
+
+.eventCalendarModalClose {
+  min-height: 36px;
+  padding-inline: 12px;
+}
+
+.eventCalendarModalList {
+  display: grid;
+  gap: 8px;
 }
 
 .eventCalendarMenuItem {
@@ -2713,8 +2737,7 @@ a.accountFriendAction {
 
   .eventDetailActions .btn,
   .eventDetailActions .btnPrimary,
-  .eventDetailActions .btnSecondary,
-  .eventDetailActions .eventCalendarMenu {
+  .eventDetailActions .btnSecondary {
     flex: 1 1 calc(50% - 10px);
     min-height: 44px;
   }
@@ -2732,8 +2755,7 @@ a.accountFriendAction {
 @media (max-width: 520px) {
   .eventDetailActions .btn,
   .eventDetailActions .btnPrimary,
-  .eventDetailActions .btnSecondary,
-  .eventDetailActions .eventCalendarMenu {
+  .eventDetailActions .btnSecondary {
     flex: 1 1 100%;
   }
 
@@ -2741,9 +2763,8 @@ a.accountFriendAction {
     width: 100%;
   }
 
-  .eventCalendarMenuList {
-    width: 100%;
-    min-width: 0;
+  .eventCalendarModal {
+    width: min(100%, 360px);
   }
 
   .eventDetailCard { padding: var(--space-4); }
