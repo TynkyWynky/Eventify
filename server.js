@@ -107,8 +107,12 @@ const LLM_CONFIG = {
     )
   ),
 };
+const chatbotFastOnlyFallback =
+  inferredLlmProvider === "ollama"
+    ? toBool(process.env.CHATBOT_OLLAMA_ONLY, true)
+    : false;
 const CHATBOT_CONFIG = {
-  ollamaOnly: toBool(process.env.CHATBOT_FAST_ONLY, toBool(process.env.CHATBOT_OLLAMA_ONLY, true)),
+  ollamaOnly: toBool(process.env.CHATBOT_FAST_ONLY, chatbotFastOnlyFallback),
   timeoutMs: Math.max(
     1200,
     toPositiveInt(
@@ -8173,7 +8177,7 @@ app.post("/chatbot", authOptional, async (req, res) => {
         model: chatbot.meta?.model || null,
         cached: chatbot.meta?.cached === true,
         error: chatbot.meta?.error || null,
-        ollamaOnly: true,
+        ollamaOnly: CHATBOT_CONFIG.ollamaOnly,
       },
     });
   } catch (err) {
@@ -8214,7 +8218,7 @@ app.post("/copilot", authOptional, async (req, res) => {
           model: chatbot.meta?.model || null,
           cached: chatbot.meta?.cached === true,
           error: chatbot.meta?.error || null,
-          ollamaOnly: true,
+          ollamaOnly: CHATBOT_CONFIG.ollamaOnly,
         },
       });
     }

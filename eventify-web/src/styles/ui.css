@@ -1184,23 +1184,6 @@ textarea.input { min-height: 110px; resize: vertical; }
   background: rgba(178,106,168,.14);
 }
 
-.eventSocialPriceQuality {
-  text-transform: uppercase;
-  letter-spacing: 0.03em;
-}
-
-.eventSocialPriceVerified {
-  border-color: rgba(94, 210, 159, 0.44);
-  color: rgba(209, 255, 233, 0.96);
-  background: rgba(57, 162, 120, 0.18);
-}
-
-.eventSocialPriceEstimated {
-  border-color: rgba(255, 201, 102, 0.42);
-  color: rgba(255, 234, 183, 0.96);
-  background: rgba(185, 129, 46, 0.18);
-}
-
 .dashboardStatusRow {
   margin-top: 10px;
   display: flex;

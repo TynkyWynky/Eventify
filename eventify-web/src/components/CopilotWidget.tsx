@@ -355,21 +355,31 @@ export default function CopilotWidget() {
       const origin = getOrigin();
       const controller = new AbortController();
       const timer = window.setTimeout(() => controller.abort(), 15000);
+      const chatBody = {
+        message: text,
+        originLat: origin.lat,
+        originLng: origin.lng,
+        originLabel: origin.label,
+        clientNowIso: new Date().toISOString(),
+      };
 
       let data: CopilotResponse;
       try {
-        data = await apiFetch<CopilotResponse>("/chatbot", {
-          method: "POST",
-          token,
-          signal: controller.signal,
-          body: {
-            message: text,
-            originLat: origin.lat,
-            originLng: origin.lng,
-            originLabel: origin.label,
-            clientNowIso: new Date().toISOString(),
-          },
-        });
+        try {
+          data = await apiFetch<CopilotResponse>("/copilot", {
+            method: "POST",
+            token,
+            signal: controller.signal,
+            body: chatBody,
+          });
+        } catch {
+          data = await apiFetch<CopilotResponse>("/chatbot", {
+            method: "POST",
+            token,
+            signal: controller.signal,
+            body: chatBody,
+          });
+        }
       } finally {
         window.clearTimeout(timer);
       }

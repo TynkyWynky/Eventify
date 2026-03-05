@@ -168,7 +168,7 @@ Env:
 - `LLM_MODEL=gpt-4o-mini` (of jouw model)
 - `LLM_TIMEOUT_MS=5500`
 - `LLM_MAX_MESSAGE_CHARS=1200`
-- `CHATBOT_FAST_ONLY=true`
+- `CHATBOT_FAST_ONLY=false` (zet op `true` als je expliciet fast-only fallback wil)
 - `CHATBOT_TIMEOUT_MS=12000`
 - `CHATBOT_CACHE_TTL_MS=120000`
 - `CHATBOT_MAX_REPLY_CHARS=1400`
