@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import type { EventItem } from "../events/eventsStore";
 import { eventsRepo } from "../data/events";
@@ -84,6 +84,88 @@ function buildGoogleCalendarUrl(input: {
     location: input.location,
   });
   return `https://calendar.google.com/calendar/render?${params.toString()}`;
+}
+
+function buildOutlookCalendarUrl(input: {
+  title: string;
+  start: Date;
+  end: Date;
+  details: string;
+  location: string;
+}) {
+  const params = new URLSearchParams({
+    path: "/calendar/action/compose",
+    rru: "addevent",
+    subject: input.title,
+    startdt: input.start.toISOString(),
+    enddt: input.end.toISOString(),
+    body: input.details,
+    location: input.location,
+  });
+  return `https://outlook.live.com/calendar/0/deeplink/compose?${params.toString()}`;
+}
+
+function escapeIcsText(value: string) {
+  return String(value || "")
+    .replace(/\\/g, "\\\\")
+    .replace(/;/g, "\\;")
+    .replace(/,/g, "\\,")
+    .replace(/\r?\n/g, "\\n");
+}
+
+function foldIcsLine(line: string) {
+  const maxLen = 74;
+  if (line.length <= maxLen) return line;
+  const parts: string[] = [];
+  let start = 0;
+  while (start < line.length) {
+    const end = Math.min(start + maxLen, line.length);
+    const chunk = line.slice(start, end);
+    parts.push(start === 0 ? chunk : ` ${chunk}`);
+    start = end;
+  }
+  return parts.join("\r\n");
+}
+
+function buildIcsContent(input: {
+  title: string;
+  start: Date;
+  end: Date;
+  details: string;
+  location: string;
+  url?: string;
+  uidSeed?: string;
+}) {
+  const uid = `${input.uidSeed || "eventium-event"}-${toIcsUtcStamp(input.start)}@eventium.app`;
+  const lines = [
+    "BEGIN:VCALENDAR",
+    "VERSION:2.0",
+    "CALSCALE:GREGORIAN",
+    "PRODID:-//Eventium//Events//EN",
+    "BEGIN:VEVENT",
+    `UID:${escapeIcsText(uid)}`,
+    `DTSTAMP:${toIcsUtcStamp(new Date())}`,
+    `DTSTART:${toIcsUtcStamp(input.start)}`,
+    `DTEND:${toIcsUtcStamp(input.end)}`,
+    `SUMMARY:${escapeIcsText(input.title)}`,
+    `DESCRIPTION:${escapeIcsText(input.details)}`,
+    `LOCATION:${escapeIcsText(input.location)}`,
+    input.url ? `URL:${escapeIcsText(input.url)}` : null,
+    "END:VEVENT",
+    "END:VCALENDAR",
+  ].filter(Boolean) as string[];
+
+  return lines.map((line) => foldIcsLine(line)).join("\r\n");
+}
+
+function toSafeFileName(value: string) {
+  const cleaned = value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-zA-Z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .toLowerCase();
+  return cleaned || "eventium-event";
 }
 
 /** Haversine (straight-line) distance in km */
@@ -331,6 +413,8 @@ export default function EventDetailPage() {
   const [planCreating, setPlanCreating] = useState(false);
   const [planActionMsg, setPlanActionMsg] = useState<string | null>(null);
   const [socialPanelOpen, setSocialPanelOpen] = useState(false);
+  const [calendarMenuOpen, setCalendarMenuOpen] = useState(false);
+  const calendarMenuRef = useRef<HTMLDivElement | null>(null);
 
   const [isFav, setIsFav] = useState(false);
   const [setlists, setSetlists] = useState<SetlistItem[]>([]);
@@ -352,6 +436,30 @@ export default function EventDetailPage() {
   const [aiGenrePredictions, setAiGenrePredictions] = useState<
     Array<{ genre: string; confidence: number }>
   >([]);
+
+  useEffect(() => {
+    if (!calendarMenuOpen) return;
+
+    const closeIfOutside = (event: MouseEvent | TouchEvent) => {
+      const target = event.target as Node | null;
+      if (!target) return;
+      if (calendarMenuRef.current?.contains(target)) return;
+      setCalendarMenuOpen(false);
+    };
+
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setCalendarMenuOpen(false);
+    };
+
+    document.addEventListener("mousedown", closeIfOutside);
+    document.addEventListener("touchstart", closeIfOutside);
+    document.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.removeEventListener("mousedown", closeIfOutside);
+      document.removeEventListener("touchstart", closeIfOutside);
+      document.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [calendarMenuOpen]);
 
   // ✅ origin (My location / city)
   const [origin, setOriginState] = useState(() => getOrigin());
@@ -1007,6 +1115,38 @@ export default function EventDetailPage() {
           location: calendarLocationLine,
         })
       : null;
+  const outlookCalendarUrl =
+    calendarStart && calendarEnd
+      ? buildOutlookCalendarUrl({
+          title: event.title,
+          start: calendarStart,
+          end: calendarEnd,
+          details: calendarDescription,
+          location: calendarLocationLine,
+        })
+      : null;
+
+  const downloadIcsFile = () => {
+    if (!calendarStart || !calendarEnd) return;
+    const ics = buildIcsContent({
+      title: event.title,
+      start: calendarStart,
+      end: calendarEnd,
+      details: calendarDescription,
+      location: calendarLocationLine,
+      url: detailUrl,
+      uidSeed: event.id,
+    });
+    const blob = new Blob([ics], { type: "text/calendar;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `${toSafeFileName(event.title)}.ics`;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    URL.revokeObjectURL(url);
+  };
 
   const shareEvent = async () => {
     const shareUrl = detailUrl;
@@ -1216,9 +1356,65 @@ export default function EventDetailPage() {
             </button>
 
             {googleCalendarUrl ? (
-              <a className="btn btnSecondary" href={googleCalendarUrl} target="_blank" rel="noreferrer">
-                Google Calendar
-              </a>
+              <div className="eventCalendarMenu" ref={calendarMenuRef}>
+                <button
+                  className="btn btnSecondary eventCalendarMenuTrigger"
+                  type="button"
+                  aria-expanded={calendarMenuOpen}
+                  aria-haspopup="menu"
+                  onClick={() => setCalendarMenuOpen((open) => !open)}
+                >
+                  Add to calendar
+                </button>
+                {calendarMenuOpen ? (
+                  <div className="eventCalendarMenuList" role="menu">
+                    <a
+                      className="eventCalendarMenuItem"
+                      href={googleCalendarUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      role="menuitem"
+                      onClick={() => setCalendarMenuOpen(false)}
+                    >
+                      Google Calendar
+                    </a>
+                    {outlookCalendarUrl ? (
+                      <a
+                        className="eventCalendarMenuItem"
+                        href={outlookCalendarUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        role="menuitem"
+                        onClick={() => setCalendarMenuOpen(false)}
+                      >
+                        Outlook Calendar
+                      </a>
+                    ) : null}
+                    <button
+                      className="eventCalendarMenuItem"
+                      type="button"
+                      role="menuitem"
+                      onClick={() => {
+                        setCalendarMenuOpen(false);
+                        downloadIcsFile();
+                      }}
+                    >
+                      Apple Calendar
+                    </button>
+                    <button
+                      className="eventCalendarMenuItem"
+                      type="button"
+                      role="menuitem"
+                      onClick={() => {
+                        setCalendarMenuOpen(false);
+                        downloadIcsFile();
+                      }}
+                    >
+                      Download .ics
+                    </button>
+                  </div>
+                ) : null}
+              </div>
             ) : null}
 
             <button className="btn btnSecondary" type="button" onClick={shareEvent}>

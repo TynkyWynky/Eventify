@@ -1658,6 +1658,53 @@ textarea.input { min-height: 110px; resize: vertical; }
   box-shadow: 0 14px 40px rgba(178, 106, 168, 0.18);
 }
 
+.eventCalendarMenu {
+  position: relative;
+  display: inline-flex;
+}
+
+.eventCalendarMenuTrigger {
+  min-width: 168px;
+}
+
+.eventCalendarMenuList {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  z-index: 30;
+  min-width: 220px;
+  padding: 8px;
+  border-radius: 14px;
+  border: 1px solid var(--border);
+  background: rgba(10, 12, 24, 0.96);
+  box-shadow: 0 16px 42px rgba(0, 0, 0, 0.45);
+  display: grid;
+  gap: 6px;
+}
+
+.eventCalendarMenuItem {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.02);
+  color: var(--text);
+  border-radius: 10px;
+  min-height: 40px;
+  padding: 0 12px;
+  font-size: 14px;
+  font-weight: 700;
+  text-decoration: none;
+  cursor: pointer;
+  transition: border-color 0.16s ease, background 0.16s ease;
+}
+
+.eventCalendarMenuItem:hover {
+  border-color: var(--borderHover);
+  background: rgba(255, 255, 255, 0.05);
+}
+
 .eventDetailGrid {
   margin-top: var(--space-5);
   display: grid;
@@ -2666,9 +2713,14 @@ a.accountFriendAction {
 
   .eventDetailActions .btn,
   .eventDetailActions .btnPrimary,
-  .eventDetailActions .btnSecondary {
+  .eventDetailActions .btnSecondary,
+  .eventDetailActions .eventCalendarMenu {
     flex: 1 1 calc(50% - 10px);
     min-height: 44px;
+  }
+
+  .eventDetailActions .eventCalendarMenuTrigger {
+    width: 100%;
   }
 
   .eventDetailCardHeader {
@@ -2680,8 +2732,18 @@ a.accountFriendAction {
 @media (max-width: 520px) {
   .eventDetailActions .btn,
   .eventDetailActions .btnPrimary,
-  .eventDetailActions .btnSecondary {
+  .eventDetailActions .btnSecondary,
+  .eventDetailActions .eventCalendarMenu {
     flex: 1 1 100%;
+  }
+
+  .eventDetailActions .eventCalendarMenuTrigger {
+    width: 100%;
+  }
+
+  .eventCalendarMenuList {
+    width: 100%;
+    min-width: 0;
   }
 
   .eventDetailCard { padding: var(--space-4); }
