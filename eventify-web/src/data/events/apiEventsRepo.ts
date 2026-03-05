@@ -6,6 +6,7 @@ import {
 } from "./organizerEventsStore";
 import { getGenreFallbackImage } from "./genreImages";
 import { apiBaseForUrlConstructor } from "../../auth/apiClient";
+import { BELGIUM_CITIES } from "../location/locationStore";
 
 type ApiEvent = {
   source?: string | null;
@@ -94,9 +95,13 @@ function normalizeMeaning(text: string) {
   return out.replace(/\s+/g, " ").trim();
 }
 
-function safeNum(v: unknown, fallback: number) {
-  const n = typeof v === "number" ? v : Number(v);
-  return Number.isFinite(n) ? n : fallback;
+function findBelgiumCityCoords(cityRaw?: string | null) {
+  const city = normalizeComparable(String(cityRaw || ""));
+  if (!city) return null;
+  const found = BELGIUM_CITIES.find(
+    (c) => normalizeComparable(c.name) === city
+  );
+  return found ? { lat: found.lat, lng: found.lng } : null;
 }
 
 function toNumberOrNull(v: unknown) {
@@ -345,6 +350,29 @@ function mergeUnique(organizerEvents: EventItem[], remoteEvents: EventItem[]) {
   return out;
 }
 
+function withDistanceFromCurrentOrigin(items: EventItem[], origin: { lat: number; lng: number }) {
+  return items.map((item) => {
+    const latRaw = toFiniteOrNull(item.latitude);
+    const lngRaw = toFiniteOrNull(item.longitude);
+    const cityCoords = findBelgiumCityCoords(item.city);
+    const hasCoords = latRaw != null && lngRaw != null;
+    const hasCityCoords = cityCoords != null;
+
+    const lat = latRaw ?? (hasCityCoords ? cityCoords.lat : origin.lat);
+    const lng = lngRaw ?? (hasCityCoords ? cityCoords.lng : origin.lng);
+    const distanceKm = hasCoords || hasCityCoords
+      ? Math.round(haversineKm(origin.lat, origin.lng, lat, lng) * 10) / 10
+      : 9_999;
+
+    return {
+      ...item,
+      latitude: lat,
+      longitude: lng,
+      distanceKm,
+    };
+  });
+}
+
 function mapApiEventToItem(
   apiEvent: ApiEvent,
   rank: number,
@@ -360,10 +388,17 @@ function mapApiEventToItem(
   const venue = apiEvent.venue?.trim() || "Unknown venue";
   const city = apiEvent.city?.trim() || "Unknown city";
 
-  const lat = safeNum(apiEvent.lat, opts.originLat);
-  const lng = safeNum(apiEvent.lng, opts.originLng);
-  const distanceKm =
-    Math.round(haversineKm(opts.originLat, opts.originLng, lat, lng) * 10) / 10;
+  const latRaw = toFiniteOrNull(apiEvent.lat);
+  const lngRaw = toFiniteOrNull(apiEvent.lng);
+  const cityCoords = findBelgiumCityCoords(apiEvent.city);
+  const hasApiCoords = latRaw != null && lngRaw != null;
+  const hasCityCoords = cityCoords != null;
+
+  const lat = latRaw ?? (hasCityCoords ? cityCoords.lat : opts.originLat);
+  const lng = lngRaw ?? (hasCityCoords ? cityCoords.lng : opts.originLng);
+  const distanceKm = hasApiCoords || hasCityCoords
+    ? Math.round(haversineKm(opts.originLat, opts.originLng, lat, lng) * 10) / 10
+    : 9_999;
 
   const inferred = inferStyle(
     [title, apiEvent.artistName || "", apiEvent.description || ""].filter(Boolean).join(" ")
@@ -532,7 +567,7 @@ export const apiEventsRepo: EventsRepo = {
           lastRemoteListCache &&
           Date.now() - lastRemoteListCache.at <= EVENTS_CACHE_TTL_MS
         ) {
-          return lastRemoteListCache.items.map((item) => ({ ...item }));
+          return withDistanceFromCurrentOrigin(lastRemoteListCache.items, origin);
         }
         throw err;
       }),
