@@ -2579,7 +2579,7 @@ a.accountFriendAction {
 @media (max-width: 720px) {
   .appPage {
     width: 100%;
-    padding: 0 var(--space-3) var(--space-5);
+    padding: 0 var(--space-3) calc(var(--space-5) + env(safe-area-inset-bottom, 0px));
   }
 
   .navInner {
@@ -2605,6 +2605,9 @@ a.accountFriendAction {
     grid-area: actions;
     margin-left: 0;
     justify-self: end;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 6px;
   }
 
   .searchBar { padding: 10px 88px 10px 12px; }
@@ -2621,24 +2624,70 @@ a.accountFriendAction {
   }
 
   .authCard { padding: var(--space-5); }
+
+  .navPill {
+    height: 36px;
+    padding: 0 11px;
+    font-size: 13px;
+  }
+
+  .navIconBtn,
+  .navLanguageBtn {
+    width: 38px;
+    min-width: 38px;
+    height: 38px;
+    padding: 0 8px;
+  }
+
+  .popover {
+    width: min(420px, calc(100vw - 20px));
+    max-height: min(68vh, 540px);
+    overflow: auto;
+  }
 }
 
 @media (max-width: 520px) {
   .navInner {
     width: 100%;
-    padding: 8px 10px;
-    gap: 8px 10px;
+    grid-template-columns: 1fr;
+    grid-template-areas:
+      "brand"
+      "search"
+      "actions";
+    padding: 8px 10px 10px;
+    gap: 8px;
   }
 
   .brandTitle { font-size: 20px; }
 
   .navActions {
-    gap: 8px;
+    width: 100%;
+    justify-self: stretch;
+    justify-content: flex-start;
   }
 
-  .navPill { height: 36px; padding: 0 10px; }
-  .navIconBtn { width: 38px; height: 38px; }
-  .navLanguageBtn { min-width: 38px; height: 38px; padding: 0 8px; }
+  .navPill {
+    flex: 1 1 calc(50% - 6px);
+    min-width: 0;
+  }
+
+  .navPillPrimary {
+    flex: 1 1 calc(50% - 6px);
+  }
+
+  .navPopoverWrap {
+    flex: 0 0 auto;
+  }
+
+  .popover {
+    position: fixed;
+    top: calc(10px + env(safe-area-inset-top, 0px) + 44px);
+    left: 10px;
+    right: 10px;
+    width: auto;
+    max-height: min(72vh, 560px);
+    z-index: 140;
+  }
 
   .authCard {
     border-radius: 20px;
