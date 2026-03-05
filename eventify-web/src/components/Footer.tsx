@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
+import { useI18n } from "../i18n/I18nContext";
 
 function ExternalIcon() {
   return (
@@ -31,6 +32,7 @@ function ExternalIcon() {
 }
 
 export default function Footer() {
+  const { t } = useI18n();
   const { user } = useAuth();
   const year = new Date().getFullYear();
   const [openSection, setOpenSection] = useState<"explore" | "legal" | "contact" | null>(null);
@@ -55,19 +57,18 @@ export default function Footer() {
             </Link>
 
             <p className="footerTagline">
-              Hyper-local event discovery for your next night out — fast filters,
-              social proof, and smart recommendations.
+              {t("footer.tagline")}
             </p>
 
             <div className="footerMeta">
-              <span className="footerMetaItem">Brussels • Belgium</span>
+              <span className="footerMetaItem">{t("footer.location")}</span>
               <span className="footerMetaDot">•</span>
-              <span className="footerMetaItem">Student project</span>
+              <span className="footerMetaItem">{t("footer.studentProject")}</span>
             </div>
           </div>
 
-          <nav className="footerCol footerAccordionCol" aria-label="Explore">
-            <div className="footerHeading footerHeadingDesktop">Explore</div>
+          <nav className="footerCol footerAccordionCol" aria-label={t("footer.explore")}>
+            <div className="footerHeading footerHeadingDesktop">{t("footer.explore")}</div>
             <button
               type="button"
               className={`footerAccordionToggle ${openSection === "explore" ? "isOpen" : ""}`}
@@ -75,7 +76,7 @@ export default function Footer() {
               aria-expanded={openSection === "explore"}
               aria-controls="footer-explore-links"
             >
-              <span>Explore</span>
+              <span>{t("footer.explore")}</span>
               <span aria-hidden="true">{openSection === "explore" ? "−" : "+"}</span>
             </button>
 
@@ -83,26 +84,26 @@ export default function Footer() {
               id="footer-explore-links"
               className={`footerLinkList ${openSection === "explore" ? "isOpen" : ""}`}
             >
-              <li><Link className="footerLink" to="/" onClick={handleFooterLinkClick}>Discover</Link></li>
-              <li><Link className="footerLink" to="/my-events" onClick={handleFooterLinkClick}>My events</Link></li>
+              <li><Link className="footerLink" to="/" onClick={handleFooterLinkClick}>{t("footer.discover")}</Link></li>
+              <li><Link className="footerLink" to="/my-events" onClick={handleFooterLinkClick}>{t("footer.myEvents")}</Link></li>
               <li>
                 {user ? (
-                  <Link className="footerLink" to="/account" onClick={handleFooterLinkClick}>Account</Link>
+                  <Link className="footerLink" to="/account" onClick={handleFooterLinkClick}>{t("footer.account")}</Link>
                 ) : (
                   <div className="footerAuthStack">
-                    <Link className="footerLink" to="/login" onClick={handleFooterLinkClick}>Login</Link>
-                    <Link className="footerLink" to="/register" onClick={handleFooterLinkClick}>Sign up</Link>
+                    <Link className="footerLink" to="/login" onClick={handleFooterLinkClick}>{t("footer.login")}</Link>
+                    <Link className="footerLink" to="/register" onClick={handleFooterLinkClick}>{t("footer.signup")}</Link>
                   </div>
                 )}
               </li>
               {user?.role === "admin" ? (
-                <li><Link className="footerLink" to="/admin" onClick={handleFooterLinkClick}>Admin</Link></li>
+                <li><Link className="footerLink" to="/admin" onClick={handleFooterLinkClick}>{t("footer.admin")}</Link></li>
               ) : null}
             </ul>
           </nav>
 
-          <nav className="footerCol footerAccordionCol" aria-label="Legal">
-            <div className="footerHeading footerHeadingDesktop">Legal</div>
+          <nav className="footerCol footerAccordionCol" aria-label={t("footer.legal")}>
+            <div className="footerHeading footerHeadingDesktop">{t("footer.legal")}</div>
             <button
               type="button"
               className={`footerAccordionToggle ${openSection === "legal" ? "isOpen" : ""}`}
@@ -110,7 +111,7 @@ export default function Footer() {
               aria-expanded={openSection === "legal"}
               aria-controls="footer-legal-links"
             >
-              <span>Legal</span>
+              <span>{t("footer.legal")}</span>
               <span aria-hidden="true">{openSection === "legal" ? "−" : "+"}</span>
             </button>
 
@@ -118,15 +119,15 @@ export default function Footer() {
               id="footer-legal-links"
               className={`footerLinkList ${openSection === "legal" ? "isOpen" : ""}`}
             >
-              <li><Link className="footerLink" to="/privacy" onClick={handleFooterLinkClick}>Privacy (GDPR)</Link></li>
-              <li><Link className="footerLink" to="/terms" onClick={handleFooterLinkClick}>Terms</Link></li>
-              <li><Link className="footerLink" to="/cookies" onClick={handleFooterLinkClick}>Cookies</Link></li>
-              <li><Link className="footerLink" to="/legal" onClick={handleFooterLinkClick}>Legal notice</Link></li>
+              <li><Link className="footerLink" to="/privacy" onClick={handleFooterLinkClick}>{t("footer.privacy")}</Link></li>
+              <li><Link className="footerLink" to="/terms" onClick={handleFooterLinkClick}>{t("footer.terms")}</Link></li>
+              <li><Link className="footerLink" to="/cookies" onClick={handleFooterLinkClick}>{t("footer.cookies")}</Link></li>
+              <li><Link className="footerLink" to="/legal" onClick={handleFooterLinkClick}>{t("footer.legalNotice")}</Link></li>
             </ul>
           </nav>
 
-          <div className="footerCol footerAccordionCol" aria-label="Contact">
-            <div className="footerHeading footerHeadingDesktop">Contact</div>
+          <div className="footerCol footerAccordionCol" aria-label={t("footer.contact")}>
+            <div className="footerHeading footerHeadingDesktop">{t("footer.contact")}</div>
             <button
               type="button"
               className={`footerAccordionToggle ${openSection === "contact" ? "isOpen" : ""}`}
@@ -134,7 +135,7 @@ export default function Footer() {
               aria-expanded={openSection === "contact"}
               aria-controls="footer-contact-links"
             >
-              <span>Contact</span>
+              <span>{t("footer.contact")}</span>
               <span aria-hidden="true">{openSection === "contact" ? "−" : "+"}</span>
             </button>
 
@@ -160,17 +161,15 @@ export default function Footer() {
 
         <div className="footerBottom">
           <div className="footerFineprint">
-            © {year} Eventium. Event data and images may come from public sources
-            and remain the property of their respective owners. If you want an
-            event or image removed/updated, contact us.
+            © {year} Eventium. {t("footer.fineprint")}
           </div>
 
           <div className="footerTinyLinks" aria-label="Footer shortcuts">
-            <Link className="footerTinyLink" to="/privacy" onClick={handleFooterLinkClick}>Privacy</Link>
+            <Link className="footerTinyLink" to="/privacy" onClick={handleFooterLinkClick}>{t("footer.privacy")}</Link>
             <span className="footerTinyDot">•</span>
-            <Link className="footerTinyLink" to="/terms" onClick={handleFooterLinkClick}>Terms</Link>
+            <Link className="footerTinyLink" to="/terms" onClick={handleFooterLinkClick}>{t("footer.terms")}</Link>
             <span className="footerTinyDot">•</span>
-            <Link className="footerTinyLink" to="/cookies" onClick={handleFooterLinkClick}>Cookies</Link>
+            <Link className="footerTinyLink" to="/cookies" onClick={handleFooterLinkClick}>{t("footer.cookies")}</Link>
           </div>
         </div>
       </div>

@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
+import { useI18n } from "../i18n/I18nContext";
 
 function isValidEmail(value: string) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim());
@@ -29,11 +30,12 @@ function CrossIcon() {
 }
 
 function ValidationIcon({ show, valid }: { show: boolean; valid: boolean }) {
+  const { t } = useI18n();
   if (!show) return null;
   return (
     <span
       className={`inputStatus ${valid ? "inputStatusOk" : "inputStatusBad"}`}
-      title={valid ? "Looks good" : "Not valid yet"}
+      title={valid ? t("auth.validation.good") : t("auth.validation.bad")}
     >
       {valid ? <CheckIcon /> : <CrossIcon />}
     </span>
@@ -41,6 +43,7 @@ function ValidationIcon({ show, valid }: { show: boolean; valid: boolean }) {
 }
 
 export default function RegisterPage() {
+  const { t } = useI18n();
   const { register } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
@@ -72,17 +75,17 @@ export default function RegisterPage() {
     setError(null);
 
     if (!emailOk) {
-      setError("Please enter a valid email.");
+      setError(t("auth.error.validEmail"));
       return;
     }
 
     if (!passwordOk) {
-      setError("Password must be at least 8 characters.");
+      setError(t("auth.error.passwordMin"));
       return;
     }
 
     if (!confirmOk) {
-      setError("Passwords do not match.");
+      setError(t("auth.error.passwordMatch"));
       return;
     }
 
@@ -91,7 +94,7 @@ export default function RegisterPage() {
       await register({ name, email, password });
       navigate(from, { replace: true });
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Register failed.");
+      setError(err instanceof Error ? err.message : t("auth.error.registerFailed"));
     } finally {
       setLoading(false);
     }
@@ -100,19 +103,19 @@ export default function RegisterPage() {
   return (
     <div className="authPage">
       <div className="authCard">
-        <h2 className="authTitle">Register</h2>
+        <h2 className="authTitle">{t("auth.register")}</h2>
 
         {error && <div className="authError">{error}</div>}
 
         <form className="authForm" onSubmit={handleSubmit}>
           <label className="authLabel" htmlFor="register-name">
-            Name
+            {t("auth.name")}
           </label>
           <div className="inputWithStatus">
             <input
               id="register-name"
               className="authInput"
-              placeholder="Your name"
+              placeholder={t("auth.placeholderName")}
               value={name}
               onChange={(e) => setName(e.target.value)}
               autoComplete="name"
@@ -120,13 +123,13 @@ export default function RegisterPage() {
           </div>
 
           <label className="authLabel" htmlFor="register-email">
-            Email
+            {t("auth.email")}
           </label>
           <div className="inputWithStatus">
             <input
               id="register-email"
               className="authInput"
-              placeholder="you@email.com"
+              placeholder={t("auth.placeholderEmail")}
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               autoComplete="email"
@@ -136,14 +139,14 @@ export default function RegisterPage() {
           </div>
 
           <label className="authLabel" htmlFor="register-password">
-            Password
+            {t("auth.password")}
           </label>
           <div className="inputWithStatus">
             <input
               id="register-password"
               className="authInput"
               type="password"
-              placeholder="••••••••"
+              placeholder={t("auth.placeholderPassword")}
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               autoComplete="new-password"
@@ -152,17 +155,17 @@ export default function RegisterPage() {
             <ValidationIcon show={showPasswordStatus} valid={passwordOk} />
           </div>
 
-          <div className="authHint">Password must be at least 8 characters.</div>
+          <div className="authHint">{t("auth.passwordMin")}</div>
 
           <label className="authLabel" htmlFor="register-confirm-password">
-            Confirm password
+            {t("auth.confirmPassword")}
           </label>
           <div className="inputWithStatus">
             <input
               id="register-confirm-password"
               className="authInput"
               type="password"
-              placeholder="••••••••"
+              placeholder={t("auth.placeholderPassword")}
               value={confirmPassword}
               onChange={(e) => setConfirmPassword(e.target.value)}
               autoComplete="new-password"
@@ -172,11 +175,11 @@ export default function RegisterPage() {
           </div>
 
           <button className="authPrimaryButton" type="submit" disabled={loading}>
-            {loading ? "Creating…" : "Create account"}
+            {loading ? t("auth.registerLoading") : t("auth.registerAction")}
           </button>
 
           <div className="authHint">
-            Already have an account? <Link to="/login">Login</Link>
+            {t("auth.haveAccount")} <Link to="/login">{t("auth.login")}</Link>
           </div>
         </form>
       </div>

@@ -9,6 +9,7 @@ import { useAuth } from "../auth/AuthContext";
 import type { NotificationItem } from "../auth/authTypes";
 import { useInstallPrompt } from "../hooks/useInstallPrompt";
 import { useNavSearch } from "../hooks/useNavSearch";
+import { LOCALE_META, type Locale, useI18n } from "../i18n/I18nContext";
 
 function BellIcon() {
   return (
@@ -37,6 +38,7 @@ function UserIcon() {
 }
 
 export default function TopNavigationBar() {
+  const { locale, setLocale, t } = useI18n();
   const { user, notifications, unreadCount, markAllAsRead, markAsRead, logout } =
     useAuth();
 
@@ -57,10 +59,12 @@ export default function TopNavigationBar() {
 
   const [isNotifOpen, setNotifOpen] = useState(false);
   const [isProfileOpen, setProfileOpen] = useState(false);
+  const [isLangOpen, setLangOpen] = useState(false);
 
   const notifWrapRef = useRef<HTMLDivElement | null>(null);
   const profileWrapRef = useRef<HTMLDivElement | null>(null);
   const searchWrapRef = useRef<HTMLDivElement | null>(null);
+  const langWrapRef = useRef<HTMLDivElement | null>(null);
 
   const navigate = useNavigate();
 
@@ -85,11 +89,16 @@ export default function TopNavigationBar() {
         const wrap = searchWrapRef.current;
         if (wrap && !wrap.contains(target)) setSearchOpen(false);
       }
+
+      if (isLangOpen) {
+        const wrap = langWrapRef.current;
+        if (wrap && !wrap.contains(target)) setLangOpen(false);
+      }
     }
 
     document.addEventListener("pointerdown", onPointerDown, true);
     return () => document.removeEventListener("pointerdown", onPointerDown, true);
-  }, [isNotifOpen, isProfileOpen, isSearchOpen, setSearchOpen]);
+  }, [isNotifOpen, isProfileOpen, isSearchOpen, isLangOpen, setSearchOpen]);
 
   const resolveNotificationTarget = useCallback((n: NotificationItem): To | null => {
     const payload = n.payload && typeof n.payload === "object" ? n.payload : null;
@@ -147,7 +156,7 @@ export default function TopNavigationBar() {
         <div className="navSearchWrap" ref={searchWrapRef}>
           <input
             className="searchBar"
-            placeholder="Search artists, places..."
+            placeholder={t("nav.searchPlaceholder")}
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onFocus={() => setSearchOpen(true)}
@@ -165,17 +174,17 @@ export default function TopNavigationBar() {
             type="button"
             className="searchCommitBtn"
             onClick={submitSearch}
-            aria-label="Search"
+            aria-label={t("nav.search")}
           >
-            Search
+            {t("nav.search")}
           </button>
           {isSearchOpen && searchSuggestions.length > 0 && (
-            <div className="searchSuggest" role="listbox" aria-label="Search suggestions">
+            <div className="searchSuggest" role="listbox" aria-label={t("nav.suggestions")}>
               <div className="searchSuggestHeader">
-                <div className="searchSuggestHeaderTitle">Suggestions</div>
+                <div className="searchSuggestHeaderTitle">{t("nav.suggestions")}</div>
                 {recentSearches.length > 0 ? (
                   <button type="button" className="searchSuggestClear" onClick={clearHistory}>
-                    Clear history
+                    {t("nav.clearHistory")}
                   </button>
                 ) : null}
               </div>
@@ -187,7 +196,7 @@ export default function TopNavigationBar() {
                 >
                   <span className="searchSuggestLabel">{item.label}</span>
                   <span className="searchSuggestMeta">
-                    {item.source === "recent" ? "Recent" : "Suggestion"}
+                    {item.source === "recent" ? t("nav.recent") : t("nav.suggestion")}
                   </span>
                 </button>
               ))}
@@ -198,16 +207,59 @@ export default function TopNavigationBar() {
         <div className="navActions">
           {!isStandalone && isInstallReady ? (
             <button type="button" className="navInstallBtn" onClick={promptInstall}>
-              Install app
+              {t("nav.installApp")}
             </button>
           ) : null}
+
+          <div className="navPopoverWrap" ref={langWrapRef}>
+            <button
+              className="navLanguageBtn"
+              onClick={() => {
+                setLangOpen((v) => !v);
+                setNotifOpen(false);
+                setProfileOpen(false);
+              }}
+              aria-label={t("nav.language")}
+              title={t("nav.language")}
+            >
+              <span className="navLanguageFlag" aria-hidden="true">
+                {LOCALE_META[locale].flag}
+              </span>
+            </button>
+
+            {isLangOpen && (
+              <div className="popover navLanguagePopover">
+                <div className="popoverHeader">
+                  <div className="popoverTitle">{t("nav.language")}</div>
+                </div>
+                <div className="popoverList">
+                  {(Object.keys(LOCALE_META) as Locale[]).map((code) => (
+                    <button
+                      key={code}
+                      type="button"
+                      className={`popoverItem ${code === locale ? "popoverItemUnread" : ""}`}
+                      onClick={() => {
+                        setLocale(code);
+                        setLangOpen(false);
+                      }}
+                    >
+                      <div className="popoverItemTitle">
+                        {LOCALE_META[code].flag} {LOCALE_META[code].label}
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+
           {!user ? (
             <>
               <NavLink
                 className={({ isActive }) => `navPill ${isActive ? "active" : ""}`}
                 to="/login"
               >
-                Login
+                {t("nav.login")}
               </NavLink>
               <NavLink
                 className={({ isActive }) =>
@@ -215,7 +267,7 @@ export default function TopNavigationBar() {
                 }
                 to="/register"
               >
-                Sign up
+                {t("nav.signup")}
               </NavLink>
             </>
           ) : (
@@ -226,8 +278,9 @@ export default function TopNavigationBar() {
                   onClick={() => {
                     setNotifOpen((v) => !v);
                     setProfileOpen(false);
+                    setLangOpen(false);
                   }}
-                  aria-label="Notifications"
+                  aria-label={t("nav.notifications")}
                 >
                   <BellIcon />
                   {unreadCount > 0 && <span className="navBadge">{unreadCount}</span>}
@@ -237,17 +290,17 @@ export default function TopNavigationBar() {
                   <div className="popover">
                     <div className="popoverHeader">
                       <div>
-                        <div className="popoverTitle">Notifications</div>
-                        <div className="popoverHint">{unreadCount} unread</div>
+                        <div className="popoverTitle">{t("nav.notifications")}</div>
+                        <div className="popoverHint">{unreadCount} {t("nav.unread")}</div>
                       </div>
                       <button className="popoverAction" onClick={markAllAsRead}>
-                        Mark all read
+                        {t("nav.markAllRead")}
                       </button>
                     </div>
 
                     <div className="popoverList">
                       {latest.length === 0 ? (
-                        <div className="popoverEmpty">No notifications.</div>
+                        <div className="popoverEmpty">{t("nav.noNotifications")}</div>
                       ) : (
                         latest.map((n) => (
                           <button
@@ -271,8 +324,9 @@ export default function TopNavigationBar() {
                   onClick={() => {
                     setProfileOpen((v) => !v);
                     setNotifOpen(false);
+                    setLangOpen(false);
                   }}
-                  aria-label="Account"
+                  aria-label={t("nav.account")}
                 >
                   <UserIcon />
                 </button>
@@ -288,7 +342,7 @@ export default function TopNavigationBar() {
 
                     <div className="popoverList">
                       <Link className="popoverLink" to="/account" onClick={() => setProfileOpen(false)}>
-                        Account
+                        {t("nav.account")}
                       </Link>
 
                       {(user.role === "organizer" || user.role === "admin") && (
@@ -297,13 +351,13 @@ export default function TopNavigationBar() {
                           to="/my-events"
                           onClick={() => setProfileOpen(false)}
                         >
-                          My Events
+                          {t("nav.myEvents")}
                         </Link>
                       )}
 
                       {user.role === "admin" && (
                         <Link className="popoverLink" to="/admin" onClick={() => setProfileOpen(false)}>
-                          Admin Dashboard
+                          {t("nav.adminDashboard")}
                         </Link>
                       )}
 
@@ -312,11 +366,11 @@ export default function TopNavigationBar() {
                         to="/account/settings"
                         onClick={() => setProfileOpen(false)}
                       >
-                        Settings
+                        {t("nav.settings")}
                       </Link>
 
                       <button className="popoverLink danger" onClick={logout}>
-                        Logout
+                        {t("nav.logout")}
                       </button>
                     </div>
                   </div>

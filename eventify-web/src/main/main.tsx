@@ -5,6 +5,7 @@ import { appRouter } from "../layout/AppRouter";
 import { AuthProvider } from "../auth/AuthContext";
 import { NotificationProvider } from "../components/NotificationProvider";
 import AppLoadingScreen from "../components/AppLoadingScreen";
+import { I18nProvider } from "../i18n/I18nContext";
 import "leaflet/dist/leaflet.css";
 import "../styles/ui.css";
 
@@ -47,12 +48,14 @@ if ("serviceWorker" in navigator) {
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
-    <NotificationProvider>
-      <AuthProvider>
-        <Suspense fallback={<AppLoadingScreen />}>
-          <RouterProvider router={appRouter} />
-        </Suspense>
-      </AuthProvider>
-    </NotificationProvider>
+    <I18nProvider>
+      <NotificationProvider>
+        <AuthProvider>
+          <Suspense fallback={<AppLoadingScreen />}>
+            <RouterProvider router={appRouter} />
+          </Suspense>
+        </AuthProvider>
+      </NotificationProvider>
+    </I18nProvider>
   </StrictMode>
 );

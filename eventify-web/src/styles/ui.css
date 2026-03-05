@@ -519,6 +519,32 @@ body::before {
 
 .navIconBtn:hover { border-color: var(--borderHover); box-shadow: var(--glow); }
 
+.navLanguageBtn {
+  min-width: 42px;
+  height: 42px;
+  padding: 0 10px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: rgba(0,0,0,.18);
+  color: var(--text);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.navLanguageBtn:hover { border-color: var(--borderHover); box-shadow: var(--glow); }
+
+.navLanguageFlag {
+  font-size: 18px;
+  line-height: 1;
+}
+
+.navLanguagePopover .popoverList {
+  max-height: 240px;
+  overflow: auto;
+}
+
 .navBadge {
   position: absolute;
   top: -6px;
@@ -2582,6 +2608,7 @@ a.accountFriendAction {
 
   .navPill { height: 36px; padding: 0 10px; }
   .navIconBtn { width: 38px; height: 38px; }
+  .navLanguageBtn { min-width: 38px; height: 38px; padding: 0 8px; }
 
   .authCard {
     border-radius: 20px;
