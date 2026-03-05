@@ -1733,6 +1733,67 @@ function isTicketmasterHost(value) {
   return /(^|\.)ticketmaster\./i.test(host);
 }
 
+function buildProxyTargetUrl(baseUrl, targetUrl) {
+  const base = cleanText(baseUrl);
+  const target = cleanText(targetUrl);
+  if (!base || !target) return null;
+  const normalizedBase = base.replace(/\s+/g, "");
+  const strippedTarget = target.replace(/^https?:\/\//i, "");
+  return `${normalizedBase}${strippedTarget}`;
+}
+
+function extractEmbeddedTicketmasterUrl(rawValue) {
+  const text = cleanText(rawValue);
+  if (!text) return null;
+
+  const candidates = [text];
+  try {
+    candidates.push(decodeURIComponent(text));
+  } catch {
+    // Ignore decode failures.
+  }
+
+  for (const candidate of candidates) {
+    const match = String(candidate).match(/https?:\/\/(?:www\.)?ticketmaster\.[^ "'<>]+/i);
+    if (!match?.[0]) continue;
+    const normalized = match[0].replace(/[),.;]+$/, "");
+    try {
+      const parsed = new URL(normalized);
+      if (isTicketmasterHost(parsed.hostname)) return parsed.toString();
+    } catch {
+      // Ignore invalid candidate URL.
+    }
+  }
+
+  return null;
+}
+
+function resolveTicketmasterTargetUrl(rawTarget) {
+  const target = cleanText(rawTarget);
+  if (!target) return null;
+
+  try {
+    const parsed = new URL(target);
+    if (isTicketmasterHost(parsed.hostname)) {
+      if (parsed.protocol === "http:") parsed.protocol = "https:";
+      return parsed.toString();
+    }
+  } catch {
+    // Fall through to embedded URL extraction.
+  }
+
+  const embedded = extractEmbeddedTicketmasterUrl(target);
+  if (!embedded) return null;
+  try {
+    const parsed = new URL(embedded);
+    if (!isTicketmasterHost(parsed.hostname)) return null;
+    if (parsed.protocol === "http:") parsed.protocol = "https:";
+    return parsed.toString();
+  } catch {
+    return null;
+  }
+}
+
 function extractTicketmasterWebEventId(url) {
   const target = cleanText(url);
   if (!target) return null;
@@ -1773,6 +1834,15 @@ function createStatusError(prefix, status) {
   const err = new Error(`${prefix}_${status}`);
   err.response = { status };
   return err;
+}
+
+function isBlockedHttpStatus(status) {
+  const value = Number(status);
+  return value === 401 || value === 403 || value === 429;
+}
+
+function isBlockedHttpError(err) {
+  return isBlockedHttpStatus(err?.response?.status);
 }
 
 function roundCurrencyAmount(value) {
@@ -1859,8 +1929,21 @@ function parseTicketmasterEventInfoPrice(payload, context = {}) {
 
   const values = [];
   let sawZero = false;
-  const ignoredPathRegex = /(fee|delivery|shipping|service|handling|order|payment|charge|tax|vat)/i;
-  const priceKeyRegex = /(price|min|max|cost|amount|value|ticket)/i;
+  const ignoredPathRegex =
+    /(fee|delivery|shipping|service|handling|order|payment|charge|tax|vat|reference|references|tracking|analytics|campaign|session|cookie|token|limit|quantity|count|inventory|capacity|availability|identifier|eventid|discoeventid|code|sourceid|id)/i;
+  const priceKeyRegex =
+    /(price|lowprice|highprice|minprice|maxprice|facevalue|listprice|ticketprice|totalprice|amount|cost)/i;
+  const textPriceHintRegex =
+    /(€|\beur\b|\beuro\b|\bprice(?:s)?\b|\bprijs(?:en)?\b|\btar(?:if|ief)(?:en)?\b)/i;
+  const maxReasonablePrice = 20000;
+
+  const isReasonablePrice = (amount) => {
+    const n = toFiniteNumber(amount);
+    if (n == null) return false;
+    if (n < 0) return false;
+    if (n > maxReasonablePrice) return false;
+    return true;
+  };
 
   const captureNumbers = (value, pathLabel) => {
     if (ignoredPathRegex.test(pathLabel)) return;
@@ -1868,6 +1951,7 @@ function parseTicketmasterEventInfoPrice(payload, context = {}) {
     for (const amount of numbers) {
       const rounded = roundCurrencyAmount(amount);
       if (rounded == null) continue;
+      if (!isReasonablePrice(rounded)) continue;
       if (rounded > 0) values.push(rounded);
       else if (rounded === 0) sawZero = true;
     }
@@ -1908,11 +1992,12 @@ function parseTicketmasterEventInfoPrice(payload, context = {}) {
   for (const block of textBlocks) {
     const compact = cleanText(String(block || "").replace(/<[^>]+>/g, " ")) || "";
     if (!compact) continue;
-    if (ignoredPathRegex.test(compact)) continue;
+    if (!textPriceHintRegex.test(compact)) continue;
     const numbers = extractPriceNumbers(compact);
     for (const amount of numbers) {
       const rounded = roundCurrencyAmount(amount);
       if (rounded == null) continue;
+      if (!isReasonablePrice(rounded)) continue;
       if (rounded > 0) values.push(rounded);
       else if (rounded === 0) sawZero = true;
     }
@@ -1943,69 +2028,95 @@ function parseTicketmasterEventInfoPrice(payload, context = {}) {
   );
 }
 
-async function extractTicketmasterApiPrice({ targetUrl, timeoutMs, userAgent }) {
-  const target = cleanText(targetUrl);
-  if (!target) return null;
+async function extractTicketmasterApiPrice({
+  targetUrl,
+  timeoutMs,
+  userAgent,
+  proxyBaseUrl = null,
+}) {
+  const canonicalTarget = resolveTicketmasterTargetUrl(targetUrl);
+  if (!canonicalTarget) return null;
 
   let parsedTarget = null;
   try {
-    parsedTarget = new URL(target);
+    parsedTarget = new URL(canonicalTarget);
   } catch {
     return null;
   }
 
-  if (!isTicketmasterHost(parsedTarget.hostname)) return null;
-
-  const eventId = extractTicketmasterWebEventId(target);
+  const eventId = extractTicketmasterWebEventId(canonicalTarget);
   if (!eventId) return null;
 
-  const apiUrl = `${parsedTarget.protocol}//${parsedTarget.host}/api/ticketselection/${encodeURIComponent(
+  const directApiUrl = `${parsedTarget.protocol}//${parsedTarget.host}/api/ticketselection/${encodeURIComponent(
     eventId
   )}`;
   const referer = `${parsedTarget.protocol}//${parsedTarget.host}${parsedTarget.pathname}`;
+  const proxyApiUrl = buildProxyTargetUrl(proxyBaseUrl, directApiUrl);
 
-  const maxAttempts = 3;
+  const requestCandidates = [
+    {
+      apiUrl: directApiUrl,
+      referer,
+      matchedBy: "ticketmaster_ticketselection",
+      maxAttempts: 3,
+    },
+  ];
+
+  if (proxyApiUrl) {
+    requestCandidates.push({
+      apiUrl: proxyApiUrl,
+      referer: buildProxyTargetUrl(proxyBaseUrl, referer) || referer,
+      matchedBy: "ticketmaster_ticketselection_proxy",
+      maxAttempts: 2,
+    });
+  }
+
   let lastBlockedStatus = null;
 
-  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-    const response = await axios.get(apiUrl, {
-      timeout: Math.max(1200, timeoutMs),
-      responseType: "json",
-      maxRedirects: 2,
-      headers: {
-        "User-Agent": userAgent || DEFAULT_USER_AGENT,
-        Accept: "application/json,text/plain,*/*",
-        "X-Requested-With": "XMLHttpRequest",
-        Referer: referer,
-        "Accept-Language": "en-US,en;q=0.9",
-      },
-      validateStatus(status) {
-        return status >= 200 && status < 500;
-      },
-    });
+  for (const candidate of requestCandidates) {
+    for (let attempt = 1; attempt <= candidate.maxAttempts; attempt += 1) {
+      const response = await axios.get(candidate.apiUrl, {
+        timeout: Math.max(1200, timeoutMs),
+        responseType: "json",
+        maxRedirects: 2,
+        headers: {
+          "User-Agent": userAgent || DEFAULT_USER_AGENT,
+          Accept: "application/json,text/plain,*/*",
+          "X-Requested-With": "XMLHttpRequest",
+          Referer: candidate.referer,
+          "Accept-Language": "en-US,en;q=0.9",
+        },
+        validateStatus(status) {
+          return status >= 200 && status < 500;
+        },
+      });
 
-    if (response.status === 400 || response.status === 404) return null;
-    if (response.status >= 500) return null;
-    if (response.status >= 400) {
-      if ((response.status === 403 || response.status === 429) && attempt < maxAttempts) {
-        lastBlockedStatus = response.status;
-        await delay(300 + attempt * 500);
-        continue;
+      if (response.status === 400 || response.status === 404) break;
+      if (response.status >= 500) break;
+      if (response.status >= 400) {
+        if (isBlockedHttpStatus(response.status) && attempt < candidate.maxAttempts) {
+          lastBlockedStatus = response.status;
+          await delay(300 + attempt * 500);
+          continue;
+        }
+        if (isBlockedHttpStatus(response.status)) {
+          lastBlockedStatus = response.status;
+        }
+        break;
       }
-      throw createStatusError("ticketmaster_ticketselection_failed", response.status);
+
+      const parsed = parseTicketmasterTicketSelectionPrice(response.data, {
+        hostname: parsedTarget.hostname,
+        ticketUrl: canonicalTarget,
+      });
+      if (!parsed || !hasPriceSignal(parsed)) break;
+
+      return {
+        ...parsed,
+        fetchedUrl: candidate.apiUrl,
+        matchedBy: candidate.matchedBy,
+      };
     }
-
-    const parsed = parseTicketmasterTicketSelectionPrice(response.data, {
-      hostname: parsedTarget.hostname,
-      ticketUrl: target,
-    });
-    if (!parsed || !hasPriceSignal(parsed)) return null;
-
-    return {
-      ...parsed,
-      fetchedUrl: apiUrl,
-      matchedBy: "ticketmaster_ticketselection",
-    };
   }
 
   if (lastBlockedStatus != null) {
@@ -2015,58 +2126,100 @@ async function extractTicketmasterApiPrice({ targetUrl, timeoutMs, userAgent }) 
   return null;
 }
 
-async function extractTicketmasterEventInfoApiPrice({ targetUrl, timeoutMs, userAgent }) {
-  const target = cleanText(targetUrl);
-  if (!target) return null;
+async function extractTicketmasterEventInfoApiPrice({
+  targetUrl,
+  timeoutMs,
+  userAgent,
+  proxyBaseUrl = null,
+}) {
+  const canonicalTarget = resolveTicketmasterTargetUrl(targetUrl);
+  if (!canonicalTarget) return null;
 
   let parsedTarget = null;
   try {
-    parsedTarget = new URL(target);
+    parsedTarget = new URL(canonicalTarget);
   } catch {
     return null;
   }
 
-  if (!isTicketmasterHost(parsedTarget.hostname)) return null;
-
-  const eventId = extractTicketmasterWebEventId(target);
+  const eventId = extractTicketmasterWebEventId(canonicalTarget);
   if (!eventId) return null;
 
-  const apiUrl = `${parsedTarget.protocol}//${parsedTarget.host}/api/eventinfo/${encodeURIComponent(
+  const directApiUrl = `${parsedTarget.protocol}//${parsedTarget.host}/api/eventinfo/${encodeURIComponent(
     eventId
   )}`;
+  const referer = `${parsedTarget.protocol}//${parsedTarget.host}${parsedTarget.pathname}`;
+  const proxyApiUrl = buildProxyTargetUrl(proxyBaseUrl, directApiUrl);
 
-  const response = await axios.get(apiUrl, {
-    timeout: Math.max(1200, timeoutMs),
-    responseType: "json",
-    maxRedirects: 2,
-    headers: {
-      "User-Agent": userAgent || DEFAULT_USER_AGENT,
-      Accept: "application/json,text/plain,*/*",
-      Referer: `${parsedTarget.protocol}//${parsedTarget.host}/`,
-      "Accept-Language": "en-US,en;q=0.9",
+  const requestCandidates = [
+    {
+      apiUrl: directApiUrl,
+      referer,
+      matchedBy: "ticketmaster_eventinfo",
+      maxAttempts: 2,
     },
-    validateStatus(status) {
-      return status >= 200 && status < 500;
-    },
-  });
-
-  if (response.status === 400 || response.status === 404) return null;
-  if (response.status >= 500) return null;
-  if (response.status >= 400) {
-    throw createStatusError("ticketmaster_eventinfo_failed", response.status);
+  ];
+  if (proxyApiUrl) {
+    requestCandidates.push({
+      apiUrl: proxyApiUrl,
+      referer: buildProxyTargetUrl(proxyBaseUrl, referer) || referer,
+      matchedBy: "ticketmaster_eventinfo_proxy",
+      maxAttempts: 2,
+    });
   }
 
-  const parsed = parseTicketmasterEventInfoPrice(response.data, {
-    hostname: parsedTarget.hostname,
-    ticketUrl: target,
-  });
-  if (!parsed || !hasPriceSignal(parsed)) return null;
+  let lastBlockedStatus = null;
 
-  return {
-    ...parsed,
-    fetchedUrl: apiUrl,
-    matchedBy: "ticketmaster_eventinfo",
-  };
+  for (const candidate of requestCandidates) {
+    for (let attempt = 1; attempt <= candidate.maxAttempts; attempt += 1) {
+      const response = await axios.get(candidate.apiUrl, {
+        timeout: Math.max(1200, timeoutMs),
+        responseType: "json",
+        maxRedirects: 2,
+        headers: {
+          "User-Agent": userAgent || DEFAULT_USER_AGENT,
+          Accept: "application/json,text/plain,*/*",
+          Referer: candidate.referer,
+          "Accept-Language": "en-US,en;q=0.9",
+        },
+        validateStatus(status) {
+          return status >= 200 && status < 500;
+        },
+      });
+
+      if (response.status === 400 || response.status === 404) break;
+      if (response.status >= 500) break;
+      if (response.status >= 400) {
+        if (isBlockedHttpStatus(response.status) && attempt < candidate.maxAttempts) {
+          lastBlockedStatus = response.status;
+          await delay(250 + attempt * 450);
+          continue;
+        }
+        if (isBlockedHttpStatus(response.status)) {
+          lastBlockedStatus = response.status;
+        }
+        break;
+      }
+
+      const parsed = parseTicketmasterEventInfoPrice(response.data, {
+        hostname: parsedTarget.hostname,
+        ticketUrl: canonicalTarget,
+      });
+      if (!parsed || !hasPriceSignal(parsed)) break;
+
+      return {
+        ...parsed,
+        fetchedUrl: candidate.apiUrl,
+        matchedBy: candidate.matchedBy,
+      };
+    }
+  }
+
+  if (lastBlockedStatus != null) {
+    throw createStatusError("ticketmaster_eventinfo_failed", lastBlockedStatus);
+  }
+
+  return null;
 }
 
 function pickBestPriceCandidate(candidates) {
@@ -2090,6 +2243,7 @@ async function extractPriceFromEventUrl({
   ticketUrl,
   timeoutMs = 4500,
   userAgent = DEFAULT_USER_AGENT,
+  ticketmasterProxyBaseUrl = null,
 } = {}) {
   const target = cleanText(ticketUrl) || cleanText(url);
   if (!target) return null;
@@ -2102,23 +2256,39 @@ async function extractPriceFromEventUrl({
   }
   if (!/^https?:$/i.test(parsed.protocol)) return null;
 
-  if (isTicketmasterHost(parsed.hostname || target)) {
-    const ticketmasterApiPrice = await extractTicketmasterApiPrice({
-      targetUrl: target,
-      timeoutMs,
-      userAgent,
-    });
-    if (ticketmasterApiPrice && hasPriceSignal(ticketmasterApiPrice)) {
-      return ticketmasterApiPrice;
+  let blockedTicketmasterError = null;
+  const ticketmasterTarget = resolveTicketmasterTargetUrl(target);
+  if (isTicketmasterHost(parsed.hostname || target) || ticketmasterTarget) {
+    try {
+      const ticketmasterApiPrice = await extractTicketmasterApiPrice({
+        targetUrl: ticketmasterTarget || target,
+        timeoutMs,
+        userAgent,
+        proxyBaseUrl: ticketmasterProxyBaseUrl,
+      });
+      if (ticketmasterApiPrice && hasPriceSignal(ticketmasterApiPrice)) {
+        return ticketmasterApiPrice;
+      }
+    } catch (err) {
+      if (isBlockedHttpError(err)) {
+        blockedTicketmasterError = err;
+      }
     }
 
-    const ticketmasterEventInfoPrice = await extractTicketmasterEventInfoApiPrice({
-      targetUrl: target,
-      timeoutMs,
-      userAgent,
-    });
-    if (ticketmasterEventInfoPrice && hasPriceSignal(ticketmasterEventInfoPrice)) {
-      return ticketmasterEventInfoPrice;
+    try {
+      const ticketmasterEventInfoPrice = await extractTicketmasterEventInfoApiPrice({
+        targetUrl: ticketmasterTarget || target,
+        timeoutMs,
+        userAgent,
+        proxyBaseUrl: ticketmasterProxyBaseUrl,
+      });
+      if (ticketmasterEventInfoPrice && hasPriceSignal(ticketmasterEventInfoPrice)) {
+        return ticketmasterEventInfoPrice;
+      }
+    } catch (err) {
+      if (!blockedTicketmasterError && isBlockedHttpError(err)) {
+        blockedTicketmasterError = err;
+      }
     }
   }
 
@@ -2131,9 +2301,15 @@ async function extractPriceFromEventUrl({
   } catch (err) {
     const status = Number(err?.response?.status);
     if (Number.isFinite(status) && status >= 400) {
+      if (blockedTicketmasterError && isBlockedHttpStatus(status)) {
+        throw blockedTicketmasterError;
+      }
       const wrapped = new Error(`price_fetch_failed_${status}`);
       wrapped.response = { status };
       throw wrapped;
+    }
+    if (blockedTicketmasterError) {
+      throw blockedTicketmasterError;
     }
     return null;
   }
@@ -2186,6 +2362,10 @@ async function extractPriceFromEventUrl({
       fetchedUrl: target,
       matchedBy: "text_fallback",
     };
+  }
+
+  if (blockedTicketmasterError) {
+    throw blockedTicketmasterError;
   }
 
   return null;

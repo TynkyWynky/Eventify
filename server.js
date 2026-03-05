@@ -3211,6 +3211,9 @@ async function enrichEventPriceOnDemand(event) {
       ticketUrl: current.ticketUrl,
       timeoutMs: PRICE_ENRICH_CONFIG.timeoutMs,
       userAgent: PRICE_ENRICH_CONFIG.userAgent || DEFAULT_USER_AGENT,
+      ticketmasterProxyBaseUrl: isTicketmaster
+        ? PRICE_ENRICH_CONFIG.ticketmasterProxyBaseUrl
+        : null,
     });
   } catch (err) {
     if (isBlockedStatusError(err)) {
@@ -3250,6 +3253,12 @@ async function enrichEventPriceOnDemand(event) {
     normalizeCurrencyCode(extracted.currency) || current.currency || null;
   const extractedIsFree = extracted.isFree === true;
   const extractedTicketUrl = cleanText(extracted.ticketUrl) || current.ticketUrl;
+  const extractedMatchedBy = cleanText(extracted.matchedBy) || null;
+  const extractedFetchedUrl = cleanText(extracted.fetchedUrl) || null;
+  const proxyMatchedBy = extractedMatchedBy ? /proxy/i.test(extractedMatchedBy) : false;
+  const proxyFetchedUrl = extractedFetchedUrl
+    ? /^https?:\/\/(?:[^/]+\.)?ticketmaster\./i.test(extractedFetchedUrl) === false
+    : false;
 
   const confidenceProbe = {
     ...current,
@@ -3280,9 +3289,9 @@ async function enrichEventPriceOnDemand(event) {
       priceMin: extractedPriceMin,
       priceMax: extractedPriceMax,
       priceSource: extractedSource,
-      priceMatchedBy: cleanText(extracted.matchedBy) || null,
-      priceFetchedUrl: cleanText(extracted.fetchedUrl) || null,
-      priceProxyUsed: extractedSource === "scraped_proxy",
+      priceMatchedBy: extractedMatchedBy,
+      priceFetchedUrl: extractedFetchedUrl,
+      priceProxyUsed: extractedSource === "scraped_proxy" || proxyMatchedBy || proxyFetchedUrl,
     },
   };
 
