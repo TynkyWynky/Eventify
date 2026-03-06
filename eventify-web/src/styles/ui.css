@@ -2725,6 +2725,10 @@ a.accountFriendAction {
     border-radius: 14px;
   }
 
+  .navActionsAuthed .navLanguageWrap {
+    display: none;
+  }
+
   .navActionsAuthed .navPopoverWrap {
     flex: 0 0 auto;
   }
