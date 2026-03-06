@@ -436,6 +436,10 @@ body::before {
   gap: var(--space-2);
 }
 
+.navActionsGuest .navPill {
+  min-width: 110px;
+}
+
 .navQuickLinks {
   display: flex;
   align-items: center;
@@ -2610,6 +2614,13 @@ a.accountFriendAction {
     gap: 6px;
   }
 
+  .navActionsAuthed {
+    padding: 4px;
+    border-radius: 14px;
+    border: 1px solid rgba(255,255,255,.08);
+    background: rgba(255,255,255,.02);
+  }
+
   .searchBar { padding: 10px 88px 10px 12px; }
   .searchCommitBtn {
     right: 7px;
@@ -2664,19 +2675,62 @@ a.accountFriendAction {
     width: 100%;
     justify-self: stretch;
     justify-content: flex-start;
+    align-items: stretch;
+    gap: 8px;
   }
 
-  .navPill {
-    flex: 1 1 calc(50% - 6px);
+  .navActionsGuest {
+    display: grid;
+    grid-template-columns: 44px minmax(0, 1fr);
+    grid-auto-rows: 38px;
+    align-items: center;
+    width: 100%;
+  }
+
+  .navActionsGuest .navPopoverWrap {
+    grid-column: 1;
+    grid-row: 1;
+  }
+
+  .navActionsGuest .navPill {
     min-width: 0;
+    width: 100%;
+    height: 38px;
+    border-radius: 999px;
+    justify-content: center;
+    font-weight: 900;
+    letter-spacing: .01em;
   }
 
-  .navPillPrimary {
-    flex: 1 1 calc(50% - 6px);
+  .navActionsGuest .navPill:not(.navPillPrimary) {
+    grid-column: 2;
+    grid-row: 1;
+    background: rgba(0,0,0,.34);
   }
 
-  .navPopoverWrap {
+  .navActionsGuest .navPillPrimary {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    border-radius: 14px;
+    box-shadow: 0 10px 28px rgba(178,106,168,.24);
+  }
+
+  .navActionsAuthed {
+    width: 100%;
+    justify-content: flex-start;
+    padding: 2px;
+    border-radius: 14px;
+  }
+
+  .navActionsAuthed .navPopoverWrap {
     flex: 0 0 auto;
+  }
+
+  .navActionsAuthed .navIconBtn,
+  .navActionsAuthed .navLanguageBtn {
+    width: 40px;
+    min-width: 40px;
+    height: 40px;
   }
 
   .popover {

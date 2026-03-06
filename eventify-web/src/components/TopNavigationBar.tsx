@@ -204,7 +204,7 @@ export default function TopNavigationBar() {
           )}
         </div>
 
-        <div className="navActions">
+        <div className={`navActions ${user ? "navActionsAuthed" : "navActionsGuest"}`}>
           {!isStandalone && isInstallReady ? (
             <button type="button" className="navInstallBtn" onClick={promptInstall}>
               {t("nav.installApp")}
