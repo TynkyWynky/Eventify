@@ -4,6 +4,7 @@ import TopNavigationBar from "../components/TopNavigationBar";
 import CopilotWidget from "../components/CopilotWidget";
 import Footer from "../components/Footer";
 import LanguageOnboardingModal from "../components/LanguageOnboardingModal";
+import RouteSeo from "../components/RouteSeo";
 import { ensureOriginOnFirstVisit } from "../data/location/locationStore";
 
 export default function AppShellLayout() {
@@ -13,6 +14,7 @@ export default function AppShellLayout() {
 
   return (
     <div className="appShell">
+      <RouteSeo />
       <TopNavigationBar />
       <main className="appPage">
         <Outlet />

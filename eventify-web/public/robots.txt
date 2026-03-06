@@ -1,0 +1,10 @@
+User-agent: *
+Allow: /
+
+# Private/authenticated zones
+Disallow: /admin
+Disallow: /account
+Disallow: /account/settings
+
+Sitemap: https://eventium.be/sitemap.xml
+

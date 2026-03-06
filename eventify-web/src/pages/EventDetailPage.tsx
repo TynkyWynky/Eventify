@@ -8,6 +8,7 @@ import { useAuth } from "../auth/AuthContext";
 import { apiBaseForUrlConstructor, apiFetch } from "../auth/apiClient";
 import { useNotifications } from "../components/NotificationProvider";
 import GroupPlansPanel from "./eventDetail/GroupPlansPanel";
+import { useSeo } from "../seo/useSeo";
 
 import {
   countGoings,
@@ -435,6 +436,16 @@ export default function EventDetailPage() {
   const [aiGenrePredictions, setAiGenrePredictions] = useState<
     Array<{ genre: string; confidence: number }>
   >([]);
+
+  useSeo({
+    title: event ? `${event.title} | Eventium` : "Event Details | Eventium",
+    description: event
+      ? `${event.venue} • ${event.city}. ${event.description?.slice(0, 150) || "View event details, social signals, and tickets."}`
+      : "View event details, social signals, and tickets on Eventium.",
+    canonicalPath: location.pathname,
+    image: event?.imageUrl,
+    type: "article",
+  });
 
   useEffect(() => {
     if (!calendarMenuOpen) return;
