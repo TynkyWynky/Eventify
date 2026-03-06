@@ -211,7 +211,7 @@ export default function TopNavigationBar() {
             </button>
           ) : null}
 
-          <div className="navPopoverWrap" ref={langWrapRef}>
+          <div className="navPopoverWrap navLanguageWrap" ref={langWrapRef}>
             <button
               className="navLanguageBtn"
               onClick={() => {

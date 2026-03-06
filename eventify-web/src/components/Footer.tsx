@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
-import { useI18n } from "../i18n/I18nContext";
+import { LOCALE_META, type Locale, useI18n } from "../i18n/I18nContext";
 
 function ExternalIcon() {
   return (
@@ -32,7 +32,7 @@ function ExternalIcon() {
 }
 
 export default function Footer() {
-  const { t } = useI18n();
+  const { t, locale, setLocale } = useI18n();
   const { user } = useAuth();
   const year = new Date().getFullYear();
   const [openSection, setOpenSection] = useState<"explore" | "legal" | "contact" | null>(null);
@@ -64,6 +64,23 @@ export default function Footer() {
               <span className="footerMetaItem">{t("footer.location")}</span>
               <span className="footerMetaDot">•</span>
               <span className="footerMetaItem">{t("footer.studentProject")}</span>
+            </div>
+          </div>
+
+          <div className="footerCol footerLangMobile" aria-label={t("footer.language")}>
+            <div className="footerHeading footerHeadingDesktop">{t("footer.language")}</div>
+            <div className="footerLangRow">
+              {(Object.keys(LOCALE_META) as Locale[]).map((code) => (
+                <button
+                  key={code}
+                  type="button"
+                  className={`footerLangBtn ${locale === code ? "isActive" : ""}`}
+                  onClick={() => setLocale(code)}
+                >
+                  <span className={`navLanguageFlag navLanguageFlag${code.toUpperCase()}`} aria-hidden="true" />
+                  <span>{LOCALE_META[code].label}</span>
+                </button>
+              ))}
             </div>
           </div>
 

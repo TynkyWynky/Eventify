@@ -440,6 +440,10 @@ body::before {
   min-width: 110px;
 }
 
+.navLanguageWrap {
+  flex: 0 0 auto;
+}
+
 .navQuickLinks {
   display: flex;
   align-items: center;
@@ -2681,15 +2685,14 @@ a.accountFriendAction {
 
   .navActionsGuest {
     display: grid;
-    grid-template-columns: 44px minmax(0, 1fr);
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
     grid-auto-rows: 38px;
-    align-items: center;
+    align-items: stretch;
     width: 100%;
   }
 
-  .navActionsGuest .navPopoverWrap {
-    grid-column: 1;
-    grid-row: 1;
+  .navActionsGuest .navLanguageWrap {
+    display: none;
   }
 
   .navActionsGuest .navPill {
@@ -2703,14 +2706,14 @@ a.accountFriendAction {
   }
 
   .navActionsGuest .navPill:not(.navPillPrimary) {
-    grid-column: 2;
+    grid-column: 1;
     grid-row: 1;
     background: rgba(0,0,0,.34);
   }
 
   .navActionsGuest .navPillPrimary {
-    grid-column: 1 / -1;
-    grid-row: 2;
+    grid-column: 2;
+    grid-row: 1;
     border-radius: 14px;
     box-shadow: 0 10px 28px rgba(178,106,168,.24);
   }
@@ -3896,6 +3899,7 @@ a.accountFriendAction {
 }
 
 .footerCol { min-width: 0; }
+.footerLangMobile { display: none; }
 .footerHeadingDesktop { display: block; }
 .footerAccordionToggle { display: none; }
 
@@ -3966,6 +3970,34 @@ a.accountFriendAction {
 
 .footerTinyDot { opacity: .7; }
 
+.footerLangRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.footerLangBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 34px;
+  padding: 0 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: rgba(0,0,0,.18);
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.footerLangBtn:hover { border-color: var(--borderHover); box-shadow: var(--glow); }
+
+.footerLangBtn.isActive {
+  border-color: rgba(178,106,168,.6);
+  background: rgba(178,106,168,.16);
+}
+
 @media (max-width: 980px) {
   .footerGrid { grid-template-columns: 1.5fr 1fr 1fr; }
   .footerGrid > :last-child { grid-column: 1 / -1; }
@@ -3996,6 +4028,11 @@ a.accountFriendAction {
   }
 
   .footerHeadingDesktop { display: none; }
+  .footerLangMobile {
+    display: block;
+    grid-column: 1 / -1;
+    margin-bottom: 4px;
+  }
 
   .footerAccordionToggle {
     width: 100%;
@@ -4041,6 +4078,65 @@ a.accountFriendAction {
 @media (max-width: 760px) {
   .footerInner { padding-bottom: calc(var(--space-6) + 76px); }
 }
+
+/* =========================
+   LANGUAGE ONBOARDING MODAL
+   ========================= */
+.langModalBackdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 160;
+  display: grid;
+  place-items: center;
+  background: rgba(7, 8, 18, 0.6);
+  backdrop-filter: blur(3px);
+  padding: 16px;
+}
+
+.langModalCard {
+  width: min(420px, 100%);
+  border-radius: 18px;
+  border: 1px solid var(--border);
+  background: linear-gradient(180deg, rgba(20, 23, 46, 0.97), rgba(12, 13, 28, 0.97));
+  box-shadow: 0 22px 56px rgba(0,0,0,.5);
+  padding: 16px;
+}
+
+.langModalTitle {
+  font-size: 18px;
+  font-weight: 900;
+}
+
+.langModalHint {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.langModalGrid {
+  margin-top: 12px;
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 8px;
+}
+
+.langModalBtn {
+  min-height: 42px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: rgba(255,255,255,.03);
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 10px;
+  padding: 0 12px;
+  font-size: 14px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.langModalBtn:hover { border-color: var(--borderHover); }
 
 /* =========================
    LEGAL PAGES

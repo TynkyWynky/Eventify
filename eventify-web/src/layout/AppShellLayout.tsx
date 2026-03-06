@@ -3,6 +3,7 @@ import { Outlet } from "react-router-dom";
 import TopNavigationBar from "../components/TopNavigationBar";
 import CopilotWidget from "../components/CopilotWidget";
 import Footer from "../components/Footer";
+import LanguageOnboardingModal from "../components/LanguageOnboardingModal";
 import { ensureOriginOnFirstVisit } from "../data/location/locationStore";
 
 export default function AppShellLayout() {
@@ -18,6 +19,7 @@ export default function AppShellLayout() {
       </main>
 
       <Footer />
+      <LanguageOnboardingModal />
 
       {/* Global floating assistant (available on every page) */}
       <CopilotWidget />
