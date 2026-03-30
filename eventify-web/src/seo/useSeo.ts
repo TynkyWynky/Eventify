@@ -10,6 +10,7 @@ type SeoInput = {
 };
 
 const DEFAULT_IMAGE = "/Eventify_Logo.png";
+const PRODUCTION_SITE_URL = "https://www.eventium.be";
 
 function upsertMetaByName(name: string, content: string) {
   let node = document.head.querySelector(`meta[name="${name}"]`) as HTMLMetaElement | null;
@@ -44,10 +45,15 @@ function upsertCanonical(href: string) {
 }
 
 function toAbsoluteUrl(pathOrUrl: string) {
+  const baseOrigin =
+    window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1"
+      ? window.location.origin
+      : PRODUCTION_SITE_URL;
+
   try {
-    return new URL(pathOrUrl, window.location.origin).toString();
+    return new URL(pathOrUrl, baseOrigin).toString();
   } catch {
-    return window.location.origin;
+    return baseOrigin;
   }
 }
 
@@ -79,4 +85,3 @@ export function useSeo(input: SeoInput) {
     upsertMetaByProperty("og:site_name", "Eventium");
   }, [input.title, input.description, input.canonicalPath, input.image, input.type, input.noindex]);
 }
-
