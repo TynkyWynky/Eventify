@@ -252,8 +252,7 @@ export default function EventDashboardPage() {
     setSearchParams(sp, { replace: true });
   }
 
-  const [events, setEvents] = useState<EventItem[]>([]);
-  const [mapEvents, setMapEvents] = useState<EventItem[]>([]);
+  const [allEvents, setAllEvents] = useState<EventItem[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [lastLoadedAt, setLastLoadedAt] = useState<number | null>(null);
@@ -282,9 +281,10 @@ export default function EventDashboardPage() {
     return subscribeOrganizerEventsChanged(() => setReloadTick((t) => t + 1));
   }, []);
 
-  // list events (with origin)
+  // Load one broader event set, then derive the list view locally.
   useEffect(() => {
     const controller = new AbortController();
+    const fetchRadiusKm = Math.max(50, maxDistanceKm);
 
     queueMicrotask(() => {
       if (controller.signal.aborted) return;
@@ -296,7 +296,7 @@ export default function EventDashboardPage() {
       .list(
         {
           style: selectedStyle,
-          maxDistanceKm,
+          maxDistanceKm: fetchRadiusKm,
           query: q,
           originLat: origin.lat,
           originLng: origin.lng,
@@ -304,7 +304,7 @@ export default function EventDashboardPage() {
         { signal: controller.signal }
       )
       .then((next) => {
-        setEvents(next);
+        setAllEvents(next);
         setLastLoadedAt(Date.now());
       })
       .catch((err: unknown) => {
@@ -318,31 +318,11 @@ export default function EventDashboardPage() {
     return () => controller.abort();
   }, [maxDistanceKm, q, selectedStyle, reloadTick, origin.lat, origin.lng]);
 
-  // map events: keep style/query/origin, but do not apply max distance filter
-  useEffect(() => {
-    const controller = new AbortController();
-
-    eventsRepo
-      .list(
-        {
-          style: selectedStyle,
-          query: q,
-          originLat: origin.lat,
-          originLng: origin.lng,
-        },
-        { signal: controller.signal }
-      )
-      .then(setMapEvents)
-      .catch((err: unknown) => {
-        if (err instanceof DOMException && err.name === "AbortError") return;
-        console.warn(
-          "Dashboard map events unavailable:",
-          err instanceof Error ? err.message : String(err)
-        );
-      });
-
-    return () => controller.abort();
-  }, [q, selectedStyle, reloadTick, origin.lat, origin.lng]);
+  const events = useMemo(
+    () => allEvents.filter((event) => event.distanceKm <= maxDistanceKm),
+    [allEvents, maxDistanceKm]
+  );
+  const mapEvents = useMemo(() => allEvents, [allEvents]);
 
   // signals for personalization
   const [signalsTick, setSignalsTick] = useState(0);
@@ -499,8 +479,8 @@ export default function EventDashboardPage() {
       const userProfile = {
         preferredGenres: derivedGenres,
         likedEvents: likedPayload,
-        lat: DEFAULT_USER_LAT,
-        lng: DEFAULT_USER_LNG,
+        lat: origin.lat ?? DEFAULT_USER_LAT,
+        lng: origin.lng ?? DEFAULT_USER_LNG,
         maxDistanceKm,
         peerInterestByEventId: goingsMap,
       };
@@ -550,7 +530,7 @@ export default function EventDashboardPage() {
       });
 
     return () => controller.abort();
-  }, [events, maxDistanceKm, prefTags, selectedStyle, signalsTick, userId]);
+  }, [events, maxDistanceKm, origin.lat, origin.lng, prefTags, selectedStyle, signalsTick, userId]);
 
   const eventsWithAi = useMemo(() => {
     const overlay = new Map<string, Partial<EventItem>>();

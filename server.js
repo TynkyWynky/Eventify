@@ -5403,6 +5403,23 @@ function matchesDbDistance(event, { lat, lng, radiusKm }) {
   return haversineKm(lat, lng, eventLat, eventLng) <= radiusKm;
 }
 
+function buildDbDistanceBoundingBox(lat, lng, radiusKm) {
+  if (!Number.isFinite(lat) || !Number.isFinite(lng) || !Number.isFinite(radiusKm) || radiusKm <= 0) {
+    return null;
+  }
+
+  const latDelta = radiusKm / 111.32;
+  const cosLat = Math.cos((lat * Math.PI) / 180);
+  const lngDelta = radiusKm / (111.32 * Math.max(Math.abs(cosLat), 0.2));
+
+  return {
+    minLat: lat - latDelta,
+    maxLat: lat + latDelta,
+    minLng: lng - lngDelta,
+    maxLng: lng + lngDelta,
+  };
+}
+
 async function fetchPublishedEventsFromDb({
   keyword,
   lat,
@@ -5414,6 +5431,7 @@ async function fetchPublishedEventsFromDb({
   if (!pool) return [];
   const db = requireDb();
   const safeLimit = Math.max(80, Math.min(1400, maxResults * 12));
+  const bbox = buildDbDistanceBoundingBox(lat, lng, radiusKm);
 
   const result = await db.query(
     `
@@ -5427,10 +5445,24 @@ async function fetchPublishedEventsFromDb({
       FROM events
       WHERE status = 'published'
         AND start_datetime >= (CURRENT_TIMESTAMP - INTERVAL '6 hours')
+        AND (
+          latitude IS NULL
+          OR longitude IS NULL
+          OR (
+            latitude BETWEEN $2 AND $3
+            AND longitude BETWEEN $4 AND $5
+          )
+        )
       ORDER BY start_datetime ASC, created_at DESC
       LIMIT $1
     `,
-    [safeLimit]
+    [
+      safeLimit,
+      bbox?.minLat ?? -90,
+      bbox?.maxLat ?? 90,
+      bbox?.minLng ?? -180,
+      bbox?.maxLng ?? 180,
+    ]
   );
 
   const mapped = (result.rows || []).map((row) => mapDbEventRowToApiEvent(row));

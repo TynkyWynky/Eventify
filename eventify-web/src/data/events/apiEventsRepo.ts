@@ -313,7 +313,7 @@ const EVENTS_PREFER_DB_FIRST = !["0", "false", "no", "off"].includes(
     .toLowerCase()
 );
 const EVENTS_ALLOW_LIVE_FETCH = !["0", "false", "no", "off"].includes(
-  String(import.meta.env.VITE_EVENTS_ALLOW_LIVE_FETCH ?? "1")
+  String(import.meta.env.VITE_EVENTS_ALLOW_LIVE_FETCH ?? "0")
     .trim()
     .toLowerCase()
 );
