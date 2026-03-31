@@ -328,6 +328,8 @@ function resolveOrigin(params?: EventsListParams) {
 }
 
 const remoteById = new Map<string, EventItem>();
+const remoteListCacheByKey = new Map<string, { at: number; items: EventItem[] }>();
+const remoteListInFlightByKey = new Map<string, Promise<EventItem[]>>();
 let lastRemoteListCache: { at: number; items: EventItem[] } | null = null;
 
 function remember(items: EventItem[]) {
@@ -335,6 +337,32 @@ function remember(items: EventItem[]) {
     remoteById.set(item.id, item);
   }
   lastRemoteListCache = { at: Date.now(), items: items.map((item) => ({ ...item })) };
+}
+
+function buildRemoteFetchCacheKey(
+  params?: EventsListParams,
+  opts?: { sizeOverride?: number }
+) {
+  const origin = resolveOrigin(params);
+  const radiusKm =
+    typeof params?.maxDistanceKm === "number"
+      ? Math.max(1, Math.round(params.maxDistanceKm))
+      : DEFAULT_RADIUS_KM;
+  const style = params?.style && params.style !== "All" ? params.style : "";
+  const query = params?.query?.trim() || "";
+  const size = opts?.sizeOverride ?? DEFAULT_FETCH_SIZE;
+
+  return JSON.stringify({
+    lat: Number(origin.lat.toFixed(4)),
+    lng: Number(origin.lng.toFixed(4)),
+    radiusKm,
+    style,
+    query,
+    size,
+    includeScraped: INCLUDE_SCRAPED,
+    preferDb: EVENTS_PREFER_DB_FIRST,
+    allowLiveFetch: EVENTS_ALLOW_LIVE_FETCH,
+  });
 }
 
 function mergeUnique(organizerEvents: EventItem[], remoteEvents: EventItem[]) {
@@ -498,6 +526,7 @@ async function fetchRemoteEvents(
   opts?: { signal?: AbortSignal; sizeOverride?: number }
 ) {
   const url = new URL("events", apiBaseForUrlConstructor());
+  const cacheKey = buildRemoteFetchCacheKey(params, opts);
 
   const origin = resolveOrigin(params);
   const radiusKm =
@@ -521,37 +550,61 @@ async function fetchRemoteEvents(
   url.searchParams.set("allowLiveFetch", EVENTS_ALLOW_LIVE_FETCH ? "1" : "0");
   if (keyword) url.searchParams.set("keyword", keyword);
 
-  const controller = new AbortController();
-  const timeout = window.setTimeout(() => controller.abort(), EVENTS_FETCH_TIMEOUT_MS);
-  const onAbort = () => controller.abort();
-  opts?.signal?.addEventListener("abort", onAbort, { once: true });
+  const cached = remoteListCacheByKey.get(cacheKey);
+  if (cached && Date.now() - cached.at <= EVENTS_CACHE_TTL_MS) {
+    return cached.items.map((item) => ({ ...item }));
+  }
 
-  let res: Response;
+  const existing = remoteListInFlightByKey.get(cacheKey);
+  if (existing) {
+    return existing.then((items) => items.map((item) => ({ ...item })));
+  }
+
+  const requestPromise = (async () => {
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), EVENTS_FETCH_TIMEOUT_MS);
+    const onAbort = () => controller.abort();
+    opts?.signal?.addEventListener("abort", onAbort, { once: true });
+
+    let res: Response;
+    try {
+      res = await fetch(url.toString(), { signal: controller.signal });
+    } finally {
+      window.clearTimeout(timeout);
+      opts?.signal?.removeEventListener("abort", onAbort);
+    }
+    if (!res.ok) {
+      throw new Error(`Events API request failed (${res.status})`);
+    }
+
+    const payload = (await res.json()) as EventsApiResponse;
+    if (!payload.ok) {
+      throw new Error(payload.error || "Events API returned an error");
+    }
+
+    const items = (payload.events || []).map((e, i) =>
+      mapApiEventToItem(e, i, {
+        originLat: origin.lat,
+        originLng: origin.lng,
+        forcedStyle: style || undefined,
+      })
+    );
+
+    remember(items);
+    remoteListCacheByKey.set(cacheKey, {
+      at: Date.now(),
+      items: items.map((item) => ({ ...item })),
+    });
+    return items;
+  })();
+
+  remoteListInFlightByKey.set(cacheKey, requestPromise);
   try {
-    res = await fetch(url.toString(), { signal: controller.signal });
+    const items = await requestPromise;
+    return items.map((item) => ({ ...item }));
   } finally {
-    window.clearTimeout(timeout);
-    opts?.signal?.removeEventListener("abort", onAbort);
+    remoteListInFlightByKey.delete(cacheKey);
   }
-  if (!res.ok) {
-    throw new Error(`Events API request failed (${res.status})`);
-  }
-
-  const payload = (await res.json()) as EventsApiResponse;
-  if (!payload.ok) {
-    throw new Error(payload.error || "Events API returned an error");
-  }
-
-  const items = (payload.events || []).map((e, i) =>
-    mapApiEventToItem(e, i, {
-      originLat: origin.lat,
-      originLng: origin.lng,
-      forcedStyle: style || undefined,
-    })
-  );
-
-  remember(items);
-  return items;
 }
 
 export const apiEventsRepo: EventsRepo = {

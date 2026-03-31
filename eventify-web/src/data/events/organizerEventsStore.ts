@@ -48,10 +48,12 @@ const AUTH_STORAGE_KEY = "eventify_auth_v2";
 const STORAGE_KEY = "eventify_organizer_events_v1"; // legacy/local fallback + cache
 const EVENTS_CHANGED_EVENT = "eventify:organizer-events-changed";
 const ORGANIZER_PUBLIC_API_RETRY_MS = 5 * 60 * 1000;
+const ORGANIZER_PUBLIC_CACHE_TTL_MS = 30 * 1000;
 
 const BRUSSELS = { lat: 50.8466, lng: 4.3528 };
 let organizerPublicApiMissing = false;
 let organizerPublicApiMissingAt = 0;
+let organizerPublicListCache: { at: number; items: OrganizerEvent[] } | null = null;
 
 type JsonRecord = Record<string, unknown>;
 function isRecord(v: unknown): v is JsonRecord {
@@ -276,6 +278,13 @@ export async function listPublicOrganizerEvents(opts?: {
   originLng?: number;
 }): Promise<EventItem[]> {
   const origin = toOrigin(opts);
+  if (
+    organizerPublicListCache &&
+    Date.now() - organizerPublicListCache.at <= ORGANIZER_PUBLIC_CACHE_TTL_MS
+  ) {
+    return applyOriginDistanceAndTrending(organizerPublicListCache.items, origin);
+  }
+
   if (!shouldTryOrganizerPublicApi()) {
     const local = loadAllLocal().filter((e) => e.status === "approved");
     return applyOriginDistanceAndTrending(local, origin);
@@ -300,6 +309,7 @@ export async function listPublicOrganizerEvents(opts?: {
 
     // Ensure public-only in case server returns more
     const approvedOnly = items.filter((e) => e.status === "approved");
+    organizerPublicListCache = { at: Date.now(), items: approvedOnly };
     return applyOriginDistanceAndTrending(approvedOnly, origin);
   } catch (err: unknown) {
     if (errorLooksLikeMissingPublicApi(err)) {
@@ -409,6 +419,7 @@ export async function createOrganizerEvent(
     if (!created) throw new Error("Invalid server response (event).");
 
     upsertLocalCache([created]);
+    organizerPublicListCache = null;
     notifyChanged();
     return created;
   } catch {
@@ -451,6 +462,7 @@ export async function createOrganizerEvent(
 
     const all = loadAllLocal();
     saveAllLocal([created, ...all]);
+    organizerPublicListCache = null;
     notifyChanged();
     return created;
   }
@@ -477,6 +489,7 @@ export async function updateOrganizerEvent(
     if (!updated) throw new Error("Invalid server response (event).");
 
     upsertLocalCache([updated]);
+    organizerPublicListCache = null;
     notifyChanged();
     return updated;
   } catch {
@@ -495,6 +508,7 @@ export async function updateOrganizerEvent(
 
     all[idx] = updated;
     saveAllLocal(all);
+    organizerPublicListCache = null;
     notifyChanged();
     return updated;
   }
@@ -510,6 +524,7 @@ export async function deleteOrganizerEvent(ownerId: string, eventId: string): Pr
     });
 
     removeFromLocalCache(eventId);
+    organizerPublicListCache = null;
     notifyChanged();
     return true;
   } catch {
@@ -520,6 +535,7 @@ export async function deleteOrganizerEvent(ownerId: string, eventId: string): Pr
     if (found.ownerId !== ownerId) throw new Error("Not allowed");
 
     saveAllLocal(all.filter((e) => e.id !== eventId));
+    organizerPublicListCache = null;
     notifyChanged();
     return true;
   }
@@ -546,6 +562,7 @@ export async function reviewOrganizerEvent(
     if (!updated) throw new Error("Invalid server response (event).");
 
     upsertLocalCache([updated]);
+    organizerPublicListCache = null;
     notifyChanged();
     return updated;
   } catch {
@@ -564,6 +581,7 @@ export async function reviewOrganizerEvent(
     };
 
     saveAllLocal(all);
+    organizerPublicListCache = null;
     notifyChanged();
     return all[idx];
   }
@@ -594,6 +612,7 @@ export async function setPromotion(
     if (!updated) throw new Error("Invalid server response (event).");
 
     upsertLocalCache([updated]);
+    organizerPublicListCache = null;
     notifyChanged();
     return updated;
   } catch {
@@ -627,6 +646,7 @@ export async function setPromotion(
     const updatedAll = [...all];
     updatedAll[idx] = next;
     saveAllLocal(updatedAll);
+    organizerPublicListCache = null;
     notifyChanged();
     return next;
   }

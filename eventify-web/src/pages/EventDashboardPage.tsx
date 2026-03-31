@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useState } from "react";
 import { Link, useLocation, useSearchParams } from "react-router-dom";
 import SelectField from "../components/SelectField";
 import { MUSIC_STYLES, type EventItem } from "../events/eventsStore";
@@ -31,8 +31,9 @@ import {
   setCityOrigin,
   subscribeOriginChanged,
 } from "../data/location/locationStore";
-import EventsMap from "../components/EventsMap";
 import { useI18n } from "../i18n/I18nContext";
+
+const EventsMap = lazy(() => import("../components/EventsMap"));
 
 function clamp(n: number, min: number, max: number) {
   return Math.min(max, Math.max(min, n));
@@ -811,12 +812,14 @@ export default function EventDashboardPage() {
           ) : mapEvents.length === 0 ? (
             <div className="sectionHint">{t("dash.noEvents")}</div>
           ) : (
-            <EventsMap
-              events={mapEvents}
-              origin={{ lat: origin.lat, lng: origin.lng, label: origin.label }}
-              search={location.search}
-              className="leafletMap leafletMapDashboard"
-            />
+            <Suspense fallback={<div className="sectionHint">{t("dash.loading.map")}</div>}>
+              <EventsMap
+                events={mapEvents}
+                origin={{ lat: origin.lat, lng: origin.lng, label: origin.label }}
+                search={location.search}
+                className="leafletMap leafletMapDashboard"
+              />
+            </Suspense>
           )}
         </div>
       ) : viewMode === "split" ? (
@@ -843,12 +846,14 @@ export default function EventDashboardPage() {
             {isLoading && mapEvents.length === 0 ? (
               <div className="sectionHint">{t("dash.loading.map")}</div>
             ) : mapEvents.length === 0 ? null : (
-              <EventsMap
-                events={mapEvents}
-                origin={{ lat: origin.lat, lng: origin.lng, label: origin.label }}
-                search={location.search}
-                className="leafletMap leafletMapDashboard"
-              />
+              <Suspense fallback={<div className="sectionHint">{t("dash.loading.map")}</div>}>
+                <EventsMap
+                  events={mapEvents}
+                  origin={{ lat: origin.lat, lng: origin.lng, label: origin.label }}
+                  search={location.search}
+                  className="leafletMap leafletMapDashboard"
+                />
+              </Suspense>
             )}
           </div>
         </div>

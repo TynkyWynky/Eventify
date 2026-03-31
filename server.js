@@ -5796,7 +5796,7 @@ app.get("/events", async (req, res) => {
 app.get("/events/suggestions", async (req, res) => {
   try {
     const q = cleanText(req.query?.q || "");
-    if (!q || q.length < 1) {
+    if (!q || q.length < 2) {
       return res.json({ ok: true, suggestions: [] });
     }
 
@@ -5804,20 +5804,27 @@ app.get("/events/suggestions", async (req, res) => {
     const lng = Number(req.query?.lng);
     const radiusKm = Number(req.query?.radiusKm);
     const limit = Math.max(1, Math.min(20, Number(req.query?.limit) || 10));
+    const latNum = Number.isFinite(lat) ? lat : 50.8503;
+    const lngNum = Number.isFinite(lng) ? lng : 4.3517;
+    const radiusNum = Number.isFinite(radiusKm) ? radiusKm : 120;
 
-    const events = await resolveEventsForAi({
-      request: req,
-      query: {
+    let events = [];
+    try {
+      events = await fetchPublishedEventsFromDb({
         keyword: q,
-        lat: Number.isFinite(lat) ? lat : 50.8503,
-        lng: Number.isFinite(lng) ? lng : 4.3517,
-        radiusKm: Number.isFinite(radiusKm) ? radiusKm : 1000,
+        lat: latNum,
+        lng: lngNum,
+        radiusKm: radiusNum,
         classificationName: "music",
-        size: 80,
-        maxResults: 180,
-        includeScraped: 1,
-      },
-    });
+        maxResults: Math.max(40, limit * 8),
+      });
+    } catch {
+      events = [];
+    }
+
+    if (events.length === 0) {
+      return res.json({ ok: true, q, count: 0, suggestions: [] });
+    }
 
     const suggestions = buildEventSuggestions(events, q, limit);
     return res.json({

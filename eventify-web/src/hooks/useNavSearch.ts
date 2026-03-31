@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { fetchEventSuggestions } from "../data/events/eventsApi";
 import { getOrigin, subscribeOriginChanged } from "../data/location/locationStore";
@@ -26,6 +26,7 @@ export function useNavSearch() {
   const [recentSearches, setRecentSearches] = useState<string[]>(() => readRecentSearches());
   const [serverSuggestions, setServerSuggestions] = useState<string[]>([]);
   const [origin, setOrigin] = useState(() => getOrigin());
+  const suggestionCacheRef = useRef(new Map<string, string[]>());
 
   useEffect(() => {
     setQuery(qFromUrl);
@@ -37,8 +38,16 @@ export function useNavSearch() {
 
   useEffect(() => {
     const q = query.trim();
-    if (!q) {
+    const qNorm = normalizeSearchText(q);
+    if (qNorm.length < 2) {
       setServerSuggestions([]);
+      return;
+    }
+
+    const cacheKey = `${origin.lat.toFixed(3)}:${origin.lng.toFixed(3)}:${qNorm}`;
+    const cached = suggestionCacheRef.current.get(cacheKey);
+    if (cached) {
+      setServerSuggestions(cached);
       return;
     }
 
@@ -49,17 +58,20 @@ export function useNavSearch() {
           q,
           lat: origin.lat,
           lng: origin.lng,
-          radiusKm: 1000,
+          radiusKm: 120,
           limit: 10,
         },
         controller.signal
       )
-        .then((next) => setServerSuggestions(next))
+        .then((next) => {
+          suggestionCacheRef.current.set(cacheKey, next);
+          setServerSuggestions(next);
+        })
         .catch((err: unknown) => {
           if (err instanceof DOMException && err.name === "AbortError") return;
           setServerSuggestions([]);
         });
-    }, 220);
+    }, 350);
 
     return () => {
       window.clearTimeout(id);
