@@ -39,10 +39,10 @@ function clamp(n: number, min: number, max: number) {
   return Math.min(max, Math.max(min, n));
 }
 
-function parseKm(raw: string | null, fallback: number) {
-  if (!raw) return fallback;
+function parseKm(raw: string | null) {
+  if (!raw) return null;
   const n = Number.parseInt(raw, 10);
-  if (!Number.isFinite(n)) return fallback;
+  if (!Number.isFinite(n)) return null;
   return clamp(n, 1, 100);
 }
 
@@ -180,7 +180,9 @@ export default function EventDashboardPage() {
   const q = (searchParams.get("q") ?? "").trim();
   const styleRaw = (searchParams.get("style") ?? "All").trim();
   const selectedStyle = MUSIC_STYLES.includes(styleRaw) ? styleRaw : "All";
-  const maxDistanceKm = parseKm(searchParams.get("km"), 20);
+  const maxDistanceKm = parseKm(searchParams.get("km"));
+  const distanceFilterEnabled = typeof maxDistanceKm === "number";
+  const sliderDistanceKm = maxDistanceKm ?? 20;
 
   const viewRaw = (searchParams.get("view") ?? "list").trim().toLowerCase();
   const viewMode: "list" | "map" | "split" =
@@ -220,7 +222,7 @@ export default function EventDashboardPage() {
 
   function updateParams(next: {
     style?: string;
-    km?: number;
+    km?: number | null;
     loc?: string;
     view?: "list" | "map" | "split";
   }) {
@@ -233,7 +235,7 @@ export default function EventDashboardPage() {
     }
 
     if (next.km !== undefined) {
-      if (next.km === 20) sp.delete("km");
+      if (next.km == null) sp.delete("km");
       else sp.set("km", String(next.km));
     }
 
@@ -285,7 +287,7 @@ export default function EventDashboardPage() {
   // Load one broader event set, then derive the list view locally.
   useEffect(() => {
     const controller = new AbortController();
-    const fetchRadiusKm = Math.max(50, maxDistanceKm);
+    const fetchRadiusKm = Math.max(50, maxDistanceKm ?? 100);
 
     queueMicrotask(() => {
       if (controller.signal.aborted) return;
@@ -320,8 +322,11 @@ export default function EventDashboardPage() {
   }, [maxDistanceKm, q, selectedStyle, reloadTick, origin.lat, origin.lng]);
 
   const events = useMemo(
-    () => allEvents.filter((event) => event.distanceKm <= maxDistanceKm),
-    [allEvents, maxDistanceKm]
+    () =>
+      distanceFilterEnabled && typeof maxDistanceKm === "number"
+        ? allEvents.filter((event) => event.distanceKm <= maxDistanceKm)
+        : allEvents,
+    [allEvents, distanceFilterEnabled, maxDistanceKm]
   );
   const mapEvents = useMemo(() => allEvents, [allEvents]);
 
@@ -482,7 +487,7 @@ export default function EventDashboardPage() {
         likedEvents: likedPayload,
         lat: origin.lat ?? DEFAULT_USER_LAT,
         lng: origin.lng ?? DEFAULT_USER_LNG,
-        maxDistanceKm,
+        maxDistanceKm: maxDistanceKm ?? undefined,
         peerInterestByEventId: goingsMap,
       };
 
@@ -571,7 +576,9 @@ export default function EventDashboardPage() {
 
   const filterLabel = [
     selectedStyle !== "All" ? selectedStyle : null,
-    `≤ ${maxDistanceKm} km`,
+    distanceFilterEnabled && typeof maxDistanceKm === "number"
+      ? `≤ ${maxDistanceKm} km`
+      : t("dash.distance.all"),
     origin.label ? `${origin.label}` : null,
     q ? `“${q}”` : null,
   ]
@@ -636,15 +643,29 @@ export default function EventDashboardPage() {
               <div className="sliderGroup">
                 <div className="sliderHeader">
                   <span className="sliderLabel">{t("dash.distance")}</span>
-                  <span className="sliderValue">{maxDistanceKm} Km</span>
+                  <span className="sliderValue">
+                    {distanceFilterEnabled ? `${sliderDistanceKm} Km` : t("dash.distance.all")}
+                  </span>
                 </div>
+
+                <button
+                  type="button"
+                  className="btn btnSecondary"
+                  onClick={() =>
+                    updateParams({ km: distanceFilterEnabled ? null : sliderDistanceKm })
+                  }
+                  style={{ marginBottom: 10 }}
+                >
+                  {distanceFilterEnabled ? t("dash.distance.disable") : t("dash.distance.enable")}
+                </button>
 
                 <input
                   className="rangeSlider"
                   type="range"
                   min={1}
                   max={100}
-                  value={maxDistanceKm}
+                  value={sliderDistanceKm}
+                  disabled={!distanceFilterEnabled}
                   onChange={(e) => updateParams({ km: Number(e.target.value) })}
                 />
               </div>
