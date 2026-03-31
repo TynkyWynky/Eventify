@@ -12,8 +12,8 @@ const CONFIG = {
   SYNC_INTERVAL: process.env.SYNC_INTERVAL || "0 * * * *", 
   DEFAULT_LAT: process.env.DEFAULT_LAT || "50.8503",      
   DEFAULT_LNG: process.env.DEFAULT_LNG || "4.3517",
-  DEFAULT_RADIUS_KM: process.env.DEFAULT_RADIUS_KM || "50",
-  FETCH_SIZE: process.env.FETCH_SIZE || "50",
+  DEFAULT_RADIUS_KM: process.env.DEFAULT_RADIUS_KM || "180",
+  FETCH_SIZE: process.env.FETCH_SIZE || "120",
   SYNC_INCLUDE_SCRAPED: process.env.SYNC_INCLUDE_SCRAPED || "1",
   SCRAPE_SYNC_WAIT_MS: process.env.SCRAPE_SYNC_WAIT_MS || "25000",
   
