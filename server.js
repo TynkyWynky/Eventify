@@ -140,6 +140,11 @@ const DEFAULT_SCRAPE_SOURCE_URLS = [
   "https://www.eventbrite.com/d/belgium--ghent/music--events/",
   "https://www.eventbrite.com/d/belgium--liege/music--events/",
   "https://www.eventbrite.com/d/belgium--leuven/music--events/",
+  "https://www.eventbrite.com/d/belgium--bruges/music--events/",
+  "https://www.eventbrite.com/d/belgium--charleroi/music--events/",
+  "https://www.eventbrite.com/d/belgium--namur/music--events/",
+  "https://www.eventbrite.com/d/belgium--mons/music--events/",
+  "https://www.eventbrite.com/d/belgium--hasselt/music--events/",
 ].join(",");
 
 const chatbotReplyCache = new Map();
@@ -2939,16 +2944,16 @@ function summarizeSources(events) {
 const SCRAPE_CONFIG = {
   enabled: toBool(process.env.SCRAPE_ENABLED, true),
   sourceUrls: parseDelimitedUrls(process.env.SCRAPE_SOURCE_URLS || DEFAULT_SCRAPE_SOURCE_URLS),
-  maxEvents: toPositiveInt(process.env.SCRAPE_MAX_EVENTS, 80),
+  maxEvents: toPositiveInt(process.env.SCRAPE_MAX_EVENTS, 120),
   maxEventsPerSource: toPositiveInt(
     process.env.SCRAPE_MAX_EVENTS_PER_SOURCE,
-    30
+    40
   ),
-  maxLinksPerSource: toPositiveInt(process.env.SCRAPE_MAX_LINKS_PER_SOURCE, 30),
+  maxLinksPerSource: toPositiveInt(process.env.SCRAPE_MAX_LINKS_PER_SOURCE, 40),
   timeoutMs: toPositiveInt(process.env.SCRAPE_TIMEOUT_MS, 12000),
   userAgent:
     cleanText(process.env.SCRAPE_USER_AGENT) || DEFAULT_USER_AGENT,
-  sourceConcurrency: toPositiveInt(process.env.SCRAPE_SOURCE_CONCURRENCY, 3),
+  sourceConcurrency: toPositiveInt(process.env.SCRAPE_SOURCE_CONCURRENCY, 4),
   allowedCountries: parseDelimitedList(process.env.SCRAPE_ALLOWED_COUNTRIES),
   allowedCities: parseDelimitedList(process.env.SCRAPE_ALLOWED_CITIES),
   songkickOfficialLookup: toBool(
