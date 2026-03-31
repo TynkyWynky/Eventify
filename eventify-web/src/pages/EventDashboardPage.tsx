@@ -34,6 +34,9 @@ import {
 import { useI18n } from "../i18n/I18nContext";
 
 const EventsMap = lazy(() => import("../components/EventsMap"));
+const DASHBOARD_FETCH_RADIUS_KM = 1200;
+const DASHBOARD_FETCH_SIZE = 140;
+const DASHBOARD_AI_POOL_LIMIT = 60;
 
 function clamp(n: number, min: number, max: number) {
   return Math.min(max, Math.max(min, n));
@@ -287,7 +290,6 @@ export default function EventDashboardPage() {
   // Load one broader event set, then derive the list view locally.
   useEffect(() => {
     const controller = new AbortController();
-    const fetchRadiusKm = Math.max(50, maxDistanceKm ?? 100);
 
     queueMicrotask(() => {
       if (controller.signal.aborted) return;
@@ -299,8 +301,9 @@ export default function EventDashboardPage() {
       .list(
         {
           style: selectedStyle,
-          maxDistanceKm: fetchRadiusKm,
           query: q,
+          fetchRadiusKm: DASHBOARD_FETCH_RADIUS_KM,
+          fetchSize: DASHBOARD_FETCH_SIZE,
           originLat: origin.lat,
           originLng: origin.lng,
         },
@@ -319,7 +322,7 @@ export default function EventDashboardPage() {
       });
 
     return () => controller.abort();
-  }, [maxDistanceKm, q, selectedStyle, reloadTick, origin.lat, origin.lng]);
+  }, [q, selectedStyle, reloadTick, origin.lat, origin.lng]);
 
   const events = useMemo(
     () =>
@@ -329,6 +332,10 @@ export default function EventDashboardPage() {
     [allEvents, distanceFilterEnabled, maxDistanceKm]
   );
   const mapEvents = useMemo(() => allEvents, [allEvents]);
+  const aiSourceEvents = useMemo(
+    () => allEvents.slice(0, DASHBOARD_AI_POOL_LIMIT),
+    [allEvents]
+  );
 
   // signals for personalization
   const [signalsTick, setSignalsTick] = useState(0);
@@ -430,7 +437,7 @@ export default function EventDashboardPage() {
   useEffect(() => {
     const controller = new AbortController();
 
-    if (events.length === 0) {
+    if (!userId || prefTags.length === 0 || aiSourceEvents.length === 0) {
       Promise.resolve().then(() => {
         if (controller.signal.aborted) return;
         setAiRecommendedEvents([]);
@@ -439,8 +446,8 @@ export default function EventDashboardPage() {
     }
 
     (async () => {
-      const goingsMap = countGoingsForEvents(events.map((event) => event.id));
-      const eventsPayload = events.map((event) =>
+      const goingsMap = countGoingsForEvents(aiSourceEvents.map((event) => event.id));
+      const eventsPayload = aiSourceEvents.map((event) =>
         toAiEventPayload(event, {
           interestedCount: goingsMap[event.id] ?? 0,
           peerInterestedCount: goingsMap[event.id] ?? 0,
@@ -453,7 +460,7 @@ export default function EventDashboardPage() {
       const goingSet = new Set(goingIds);
       const likedIds = dedupeIds([...favoriteIds, ...goingIds]).slice(0, 20);
 
-      const localEventById = new Map(events.map((event) => [event.id, event]));
+      const localEventById = new Map(aiSourceEvents.map((event) => [event.id, event]));
       const likedItems: EventItem[] = [];
       for (const id of likedIds) {
         if (controller.signal.aborted) return;
@@ -487,7 +494,6 @@ export default function EventDashboardPage() {
         likedEvents: likedPayload,
         lat: origin.lat ?? DEFAULT_USER_LAT,
         lng: origin.lng ?? DEFAULT_USER_LNG,
-        maxDistanceKm: maxDistanceKm ?? undefined,
         peerInterestByEventId: goingsMap,
       };
 
@@ -507,7 +513,7 @@ export default function EventDashboardPage() {
         throw new Error(msg);
       }
 
-      const byId = new Map(events.map((event) => [event.id, event]));
+      const byId = new Map(aiSourceEvents.map((event) => [event.id, event]));
       const toUiEvent = (raw: EventItem): EventItem | null => {
         const id = String(raw?.id || "");
         const base = byId.get(id);
@@ -536,7 +542,7 @@ export default function EventDashboardPage() {
       });
 
     return () => controller.abort();
-  }, [events, maxDistanceKm, origin.lat, origin.lng, prefTags, selectedStyle, signalsTick, userId]);
+  }, [aiSourceEvents, origin.lat, origin.lng, prefTags, selectedStyle, signalsTick, userId]);
 
   const eventsWithAi = useMemo(() => {
     const overlay = new Map<string, Partial<EventItem>>();
@@ -555,9 +561,19 @@ export default function EventDashboardPage() {
   }, [aiRecommendedEvents, events]);
 
   const recommendedEvents = useMemo(() => {
-    if (aiRecommendedEvents.length > 0) return aiRecommendedEvents;
-    return fallbackRecommendedEvents;
-  }, [aiRecommendedEvents, fallbackRecommendedEvents]);
+    if (!userId || prefTags.length === 0) return [];
+    const base = aiRecommendedEvents.length > 0 ? aiRecommendedEvents : fallbackRecommendedEvents;
+    if (!distanceFilterEnabled) return base;
+    const visibleIds = new Set(events.map((event) => event.id));
+    return base.filter((event) => visibleIds.has(event.id));
+  }, [
+    aiRecommendedEvents,
+    distanceFilterEnabled,
+    events,
+    fallbackRecommendedEvents,
+    prefTags.length,
+    userId,
+  ]);
 
   const recommendedIds = useMemo(
     () => new Set(recommendedEvents.map((event) => event.id)),
@@ -585,8 +601,7 @@ export default function EventDashboardPage() {
     .filter(Boolean)
     .join(" • ");
 
-  const showRecommended =
-    Boolean(userId) && prefTags.length > 0 && recommendedEvents.length > 0;
+  const showRecommended = recommendedEvents.length > 0;
   const resultCount = eventsWithAi.length;
 
   return (

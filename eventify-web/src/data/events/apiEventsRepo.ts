@@ -344,13 +344,21 @@ function buildRemoteFetchCacheKey(
   opts?: { sizeOverride?: number }
 ) {
   const origin = resolveOrigin(params);
-  const radiusKm =
-    typeof params?.maxDistanceKm === "number"
-      ? Math.max(1, Math.round(params.maxDistanceKm))
+  const radiusKmRaw =
+    typeof params?.fetchRadiusKm === "number" && Number.isFinite(params.fetchRadiusKm)
+      ? params.fetchRadiusKm
+      : typeof params?.maxDistanceKm === "number"
+      ? params.maxDistanceKm
       : DEFAULT_RADIUS_KM;
+  const radiusKm =
+    Math.max(1, Math.round(radiusKmRaw));
+  const fetchSizeRaw =
+    typeof params?.fetchSize === "number" && Number.isFinite(params.fetchSize)
+      ? params.fetchSize
+      : opts?.sizeOverride ?? DEFAULT_FETCH_SIZE;
+  const size = Math.max(1, Math.round(fetchSizeRaw));
   const style = params?.style && params.style !== "All" ? params.style : "";
   const query = params?.query?.trim() || "";
-  const size = opts?.sizeOverride ?? DEFAULT_FETCH_SIZE;
 
   return JSON.stringify({
     lat: Number(origin.lat.toFixed(4)),
@@ -529,16 +537,23 @@ async function fetchRemoteEvents(
   const cacheKey = buildRemoteFetchCacheKey(params, opts);
 
   const origin = resolveOrigin(params);
-  const radiusKm =
-    typeof params?.maxDistanceKm === "number"
-      ? Math.max(1, Math.round(params.maxDistanceKm))
+  const radiusKmRaw =
+    typeof params?.fetchRadiusKm === "number" && Number.isFinite(params.fetchRadiusKm)
+      ? params.fetchRadiusKm
+      : typeof params?.maxDistanceKm === "number"
+      ? params.maxDistanceKm
       : DEFAULT_RADIUS_KM;
+  const radiusKm = Math.max(1, Math.round(radiusKmRaw));
 
   const style = params?.style && params.style !== "All" ? params.style : "";
   const query = params?.query?.trim() || "";
   const keyword = [query, style].filter(Boolean).join(" ").trim();
 
-  const size = opts?.sizeOverride ?? DEFAULT_FETCH_SIZE;
+  const fetchSizeRaw =
+    typeof params?.fetchSize === "number" && Number.isFinite(params.fetchSize)
+      ? params.fetchSize
+      : opts?.sizeOverride ?? DEFAULT_FETCH_SIZE;
+  const size = Math.max(1, Math.round(fetchSizeRaw));
   url.searchParams.set("lat", String(origin.lat));
   url.searchParams.set("lng", String(origin.lng));
   url.searchParams.set("radiusKm", String(radiusKm));

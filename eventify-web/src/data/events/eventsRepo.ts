@@ -5,6 +5,8 @@ export type EventsListParams = {
   maxDistanceKm?: number;
   query?: string;
   trendingOnly?: boolean;
+  fetchRadiusKm?: number;
+  fetchSize?: number;
 
   // ✅ NEW: origin for distance calculation
   originLat?: number;
