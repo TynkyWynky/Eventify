@@ -14,6 +14,12 @@ const CONFIG = {
   DEFAULT_LNG: process.env.DEFAULT_LNG || "4.3517",
   DEFAULT_RADIUS_KM: process.env.DEFAULT_RADIUS_KM || "180",
   FETCH_SIZE: process.env.FETCH_SIZE || "120",
+  SYNC_MULTI_CITY_ENABLED: process.env.SYNC_MULTI_CITY_ENABLED || "1",
+  SYNC_CITY_SEEDS: process.env.SYNC_CITY_SEEDS || "",
+  SYNC_MAX_SEEDS: process.env.SYNC_MAX_SEEDS || "5",
+  SYNC_SEED_CONCURRENCY: process.env.SYNC_SEED_CONCURRENCY || "2",
+  SYNC_RADIUS_KM_PER_SEED: process.env.SYNC_RADIUS_KM_PER_SEED || "140",
+  SYNC_FETCH_SIZE_PER_SEED: process.env.SYNC_FETCH_SIZE_PER_SEED || "180",
   SYNC_INCLUDE_SCRAPED: process.env.SYNC_INCLUDE_SCRAPED || "1",
   SCRAPE_SYNC_WAIT_MS: process.env.SCRAPE_SYNC_WAIT_MS || "25000",
   
@@ -30,6 +36,17 @@ const CONFIG = {
   // DB SSL mode: true/1/require to enable, otherwise disabled
   DATABASE_SSL: process.env.DATABASE_SSL || "",
 };
+
+const DEFAULT_SYNC_CITY_SEEDS = Object.freeze([
+  { label: "Brussels", lat: 50.8503, lng: 4.3517 },
+  { label: "Antwerp", lat: 51.2194, lng: 4.4025 },
+  { label: "Ghent", lat: 51.0543, lng: 3.7174 },
+  { label: "Liege", lat: 50.6326, lng: 5.5797 },
+  { label: "Charleroi", lat: 50.4108, lng: 4.4446 },
+  { label: "Leuven", lat: 50.8798, lng: 4.7005 },
+  { label: "Bruges", lat: 51.2093, lng: 3.2247 },
+  { label: "Hasselt", lat: 50.9307, lng: 5.3325 },
+]);
 
 function parseDbSsl(value) {
   const normalized = String(value || "").trim().toLowerCase();
@@ -68,6 +85,11 @@ function toBool(value, fallback = false) {
   if (["1", "true", "yes", "on"].includes(normalized)) return true;
   if (["0", "false", "no", "off"].includes(normalized)) return false;
   return fallback;
+}
+
+function toPositiveInt(value, fallback) {
+  const n = Number.parseInt(String(value ?? ""), 10);
+  return Number.isFinite(n) && n > 0 ? n : fallback;
 }
 
 function toNumberOrNull(value) {
@@ -168,6 +190,115 @@ function buildSourceId(apiEvent, source) {
   return digest.slice(0, 64);
 }
 
+function parseSyncCitySeeds(raw) {
+  const input = cleanText(raw);
+  if (!input) return [];
+
+  return input
+    .split(/[|\n;]+/)
+    .map((entry) => entry.trim())
+    .filter(Boolean)
+    .map((entry, index) => {
+      const colonIdx = entry.indexOf(":");
+      const label = colonIdx >= 0 ? cleanText(entry.slice(0, colonIdx)) : null;
+      const coords = colonIdx >= 0 ? entry.slice(colonIdx + 1) : entry;
+      const [latRaw, lngRaw] = String(coords)
+        .split(",")
+        .map((value) => value.trim());
+      const lat = toNumberOrNull(latRaw);
+      const lng = toNumberOrNull(lngRaw);
+      if (lat == null || lng == null) return null;
+      return {
+        label: label || `Seed ${index + 1}`,
+        lat,
+        lng,
+      };
+    })
+    .filter(Boolean);
+}
+
+function buildSyncCitySeeds() {
+  const defaultLat = toNumberOrNull(CONFIG.DEFAULT_LAT);
+  const defaultLng = toNumberOrNull(CONFIG.DEFAULT_LNG);
+  const defaultSeed =
+    defaultLat != null && defaultLng != null
+      ? {
+          label: "Default",
+          lat: defaultLat,
+          lng: defaultLng,
+        }
+      : null;
+
+  if (!toBool(CONFIG.SYNC_MULTI_CITY_ENABLED, true)) {
+    if (defaultSeed) return [defaultSeed];
+    return [DEFAULT_SYNC_CITY_SEEDS[0]];
+  }
+
+  const parsedSeeds = parseSyncCitySeeds(CONFIG.SYNC_CITY_SEEDS);
+  const sourceSeeds = parsedSeeds.length > 0 ? parsedSeeds : DEFAULT_SYNC_CITY_SEEDS;
+  const maxSeeds = toPositiveInt(CONFIG.SYNC_MAX_SEEDS, 5);
+  const out = [];
+  const seen = new Set();
+
+  const addSeed = (seed) => {
+    if (!seed || out.length >= maxSeeds) return;
+    const key = `${Number(seed.lat).toFixed(4)},${Number(seed.lng).toFixed(4)}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push(seed);
+  };
+
+  addSeed(defaultSeed);
+  for (const seed of sourceSeeds) addSeed(seed);
+
+  return out.length > 0 ? out : [DEFAULT_SYNC_CITY_SEEDS[0]];
+}
+
+function scoreApiEventCompleteness(apiEvent) {
+  if (!apiEvent || typeof apiEvent !== "object") return 0;
+  let score = 0;
+  if (cleanText(apiEvent.title)) score += 2;
+  if (cleanText(apiEvent.description)) score += 1;
+  if (cleanText(apiEvent.venue)) score += 1;
+  if (cleanText(apiEvent.city)) score += 1;
+  if (cleanText(apiEvent.url) || cleanText(apiEvent.ticketUrl)) score += 1;
+  if (cleanText(apiEvent.imageUrl)) score += 1;
+  if (toNumberOrNull(apiEvent.lat) != null && toNumberOrNull(apiEvent.lng) != null) score += 2;
+  if (toNumberOrNull(apiEvent.priceMin) != null || toNumberOrNull(apiEvent.priceMax) != null) score += 1;
+  if (toNumberOrNull(apiEvent.cost) != null || toBool(apiEvent.isFree, false)) score += 1;
+  return score;
+}
+
+function buildApiEventDedupKey(apiEvent) {
+  const source = cleanText(apiEvent?.source)?.toLowerCase() || "unknown";
+  const sourceId = cleanText(apiEvent?.sourceId)?.toLowerCase();
+  if (sourceId) return `source|${source}|${sourceId}`;
+
+  const url = cleanText(apiEvent?.url || apiEvent?.ticketUrl)?.toLowerCase();
+  if (url) return `url|${source}|${url}`;
+
+  return [
+    "fallback",
+    source,
+    cleanText(apiEvent?.title)?.toLowerCase() || "",
+    cleanText(apiEvent?.start)?.toLowerCase() || "",
+    cleanText(apiEvent?.city)?.toLowerCase() || "",
+    cleanText(apiEvent?.venue)?.toLowerCase() || "",
+  ].join("|");
+}
+
+function dedupeApiEvents(events) {
+  const byKey = new Map();
+  for (const apiEvent of Array.isArray(events) ? events : []) {
+    const key = buildApiEventDedupKey(apiEvent);
+    const existing = byKey.get(key);
+    if (!existing || scoreApiEventCompleteness(apiEvent) > scoreApiEventCompleteness(existing)) {
+      byKey.set(key, apiEvent);
+    }
+  }
+  return Array.from(byKey.values());
+}
+
 const pool = new Pool({
   connectionString: CONFIG.DATABASE_URL,
   ssl:
@@ -207,15 +338,18 @@ async function fetchEventsFromAPI({
   size = CONFIG.FETCH_SIZE,
   keyword = "",
   apiBaseUrl,
+  includeScraped = toBool(CONFIG.SYNC_INCLUDE_SCRAPED, true),
+  seedLabel = "",
 } = {}) {
   const baseUrl = resolveApiBaseUrl(apiBaseUrl);
   const url = `${baseUrl}/events`;
   
   console.log(` Fetching events from API: ${url}`);
-  console.log(`   Params: lat=${lat}, lng=${lng}, radius=${radiusKm}km, size=${size}`);
+  console.log(
+    `   Params: seed=${seedLabel || "n/a"}, lat=${lat}, lng=${lng}, radius=${radiusKm}km, size=${size}, includeScraped=${includeScraped ? 1 : 0}`
+  );
   
   try {
-    const includeScraped = toBool(CONFIG.SYNC_INCLUDE_SCRAPED, true) ? 1 : 0;
     const { data } = await axios.get(url, {
       params: {
         lat,
@@ -223,7 +357,7 @@ async function fetchEventsFromAPI({
         radiusKm,
         size,
         maxResults: size,
-        includeScraped,
+        includeScraped: includeScraped ? 1 : 0,
         scrapeWaitMs: CONFIG.SCRAPE_SYNC_WAIT_MS,
         keyword: keyword || undefined,
         // Sync must fetch fresh upstream data, not the DB-first view.
@@ -247,6 +381,75 @@ async function fetchEventsFromAPI({
     console.error(" API fetch failed:", err.message);
     throw err;
   }
+}
+
+async function fetchEventsAcrossSyncSeeds({ apiBaseUrl } = {}) {
+  const seeds = buildSyncCitySeeds();
+  const radiusKm = CONFIG.SYNC_RADIUS_KM_PER_SEED || CONFIG.DEFAULT_RADIUS_KM;
+  const size = CONFIG.SYNC_FETCH_SIZE_PER_SEED || CONFIG.FETCH_SIZE;
+  const includeScraped = toBool(CONFIG.SYNC_INCLUDE_SCRAPED, true);
+  const concurrency = Math.min(
+    toPositiveInt(CONFIG.SYNC_SEED_CONCURRENCY, 2),
+    Math.max(1, seeds.length)
+  );
+
+  const queue = seeds.map((seed, index) => ({
+    ...seed,
+    includeScraped: includeScraped && index === 0,
+  }));
+  const rawEvents = [];
+  const seedFetches = [];
+
+  console.log(
+    ` Sync seeds: ${queue.map((seed) => `${seed.label}(${seed.lat},${seed.lng})`).join(", ")}`
+  );
+
+  const workers = Array.from({ length: concurrency }, async () => {
+    while (queue.length > 0) {
+      const seed = queue.shift();
+      if (!seed) continue;
+
+      try {
+        const events = await fetchEventsFromAPI({
+          lat: seed.lat,
+          lng: seed.lng,
+          radiusKm,
+          size,
+          apiBaseUrl,
+          includeScraped: seed.includeScraped,
+          seedLabel: seed.label,
+        });
+        rawEvents.push(...events);
+        seedFetches.push({
+          seed: seed.label,
+          lat: seed.lat,
+          lng: seed.lng,
+          includeScraped: seed.includeScraped,
+          fetched: events.length,
+        });
+      } catch (err) {
+        const message = String(err?.message || err);
+        console.error(` Seed fetch failed (${seed.label}): ${message}`);
+        seedFetches.push({
+          seed: seed.label,
+          lat: seed.lat,
+          lng: seed.lng,
+          includeScraped: seed.includeScraped,
+          fetched: 0,
+          error: message,
+        });
+      }
+    }
+  });
+
+  await Promise.all(workers);
+
+  return {
+    seeds,
+    rawEvents,
+    uniqueEvents: dedupeApiEvents(rawEvents),
+    seedFetches,
+  };
 }
 
 
@@ -712,8 +915,15 @@ async function syncEvents({ apiBaseUrl } = {}) {
   try {
     await ensureSourceColumns();
 
-    const apiEvents = await fetchEventsFromAPI({ apiBaseUrl });
+    const seedResult = await fetchEventsAcrossSyncSeeds({ apiBaseUrl });
+    const apiEvents = seedResult.uniqueEvents;
     fetched = apiEvents.length;
+
+    if (seedResult.rawEvents.length !== apiEvents.length) {
+      console.log(
+        ` Deduped fetched events: raw=${seedResult.rawEvents.length}, unique=${apiEvents.length}`
+      );
+    }
 
     if (apiEvents.length === 0) {
       console.log(" No events fetched from API");
@@ -728,11 +938,13 @@ async function syncEvents({ apiBaseUrl } = {}) {
         totalSynced: null,
         upcomingEvents: null,
         bySource: [],
+        seedFetches: seedResult.seedFetches,
+        rawFetched: seedResult.rawEvents.length,
         durationSeconds,
       };
     }
 
-    console.log(`\n Processing ${apiEvents.length} events...`);
+    console.log(`\n Processing ${apiEvents.length} unique events...`);
     
     for (const apiEvent of apiEvents) {
       try {
@@ -781,6 +993,8 @@ async function syncEvents({ apiBaseUrl } = {}) {
       totalSynced: stats.totalSynced,
       upcomingEvents: stats.upcomingEvents,
       bySource: stats.bySource,
+      seedFetches: seedResult.seedFetches,
+      rawFetched: seedResult.rawEvents.length,
       durationSeconds: Number(duration),
     };
 

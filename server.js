@@ -134,6 +134,13 @@ const PRICE_TIER_THRESHOLDS = Object.freeze({
   mid: 45,
   high: 80,
 });
+const DEFAULT_SCRAPE_SOURCE_URLS = [
+  "https://www.eventbrite.com/d/belgium--brussels/music--events/",
+  "https://www.eventbrite.com/d/belgium--antwerp/music--events/",
+  "https://www.eventbrite.com/d/belgium--ghent/music--events/",
+  "https://www.eventbrite.com/d/belgium--liege/music--events/",
+  "https://www.eventbrite.com/d/belgium--leuven/music--events/",
+].join(",");
 
 const chatbotReplyCache = new Map();
 const PRICE_ENRICH_CONFIG = {
@@ -2931,13 +2938,13 @@ function summarizeSources(events) {
 
 const SCRAPE_CONFIG = {
   enabled: toBool(process.env.SCRAPE_ENABLED, true),
-  sourceUrls: parseDelimitedUrls(process.env.SCRAPE_SOURCE_URLS),
-  maxEvents: toPositiveInt(process.env.SCRAPE_MAX_EVENTS, 40),
+  sourceUrls: parseDelimitedUrls(process.env.SCRAPE_SOURCE_URLS || DEFAULT_SCRAPE_SOURCE_URLS),
+  maxEvents: toPositiveInt(process.env.SCRAPE_MAX_EVENTS, 80),
   maxEventsPerSource: toPositiveInt(
     process.env.SCRAPE_MAX_EVENTS_PER_SOURCE,
-    25
+    30
   ),
-  maxLinksPerSource: toPositiveInt(process.env.SCRAPE_MAX_LINKS_PER_SOURCE, 20),
+  maxLinksPerSource: toPositiveInt(process.env.SCRAPE_MAX_LINKS_PER_SOURCE, 30),
   timeoutMs: toPositiveInt(process.env.SCRAPE_TIMEOUT_MS, 12000),
   userAgent:
     cleanText(process.env.SCRAPE_USER_AGENT) || DEFAULT_USER_AGENT,
