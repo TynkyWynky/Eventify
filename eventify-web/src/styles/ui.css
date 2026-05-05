@@ -814,27 +814,6 @@ textarea.input { min-height: 110px; resize: vertical; }
   font-size: 13px;
 }
 
-.seoIntro {
-  margin-top: var(--space-5);
-}
-
-.seoIntroGrid {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: var(--space-4);
-}
-
-.seoIntroCard {
-  margin: 0;
-  padding: var(--space-4);
-  border: 1px solid var(--border);
-  border-radius: var(--radius2);
-  background: color-mix(in srgb, var(--panel) 86%, white 14%);
-  color: var(--text);
-  box-shadow: var(--glow);
-  line-height: 1.6;
-}
-
 /* =========================
    HERO (supports 2 layouts)
    - heroContent (left)
@@ -2831,10 +2810,6 @@ a.accountFriendAction {
     flex-direction: column;
     align-items: flex-start;
     gap: 6px;
-  }
-
-  .seoIntroGrid {
-    grid-template-columns: 1fr;
   }
 
   .heroCenter { place-items: start center; }

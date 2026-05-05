@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useMemo, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useSearchParams } from "react-router-dom";
 import SelectField from "../components/SelectField";
 import { MUSIC_STYLES, type EventItem } from "../events/eventsStore";
@@ -259,12 +259,14 @@ export default function EventDashboardPage() {
   }
 
   const [allEvents, setAllEvents] = useState<EventItem[]>([]);
-  const [isLoading, setIsLoading] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [lastLoadedAt, setLastLoadedAt] = useState<number | null>(null);
+  const [hasLoadedOnce, setHasLoadedOnce] = useState(false);
   const [isOffline, setIsOffline] = useState(
     typeof navigator !== "undefined" ? !navigator.onLine : false
   );
+  const autoRetryRef = useRef(false);
 
   useEffect(() => {
     const onOnline = () => setIsOffline(false);
@@ -312,10 +314,12 @@ export default function EventDashboardPage() {
       .then((next) => {
         setAllEvents(next);
         setLastLoadedAt(Date.now());
+        setHasLoadedOnce(true);
       })
       .catch((err: unknown) => {
         if (err instanceof DOMException && err.name === "AbortError") return;
         setError(err instanceof Error ? err.message : String(err));
+        setHasLoadedOnce(true);
       })
       .finally(() => {
         if (!controller.signal.aborted) setIsLoading(false);
@@ -603,6 +607,24 @@ export default function EventDashboardPage() {
 
   const showRecommended = recommendedEvents.length > 0;
   const resultCount = eventsWithAi.length;
+  const shouldAutoRetry =
+    hasLoadedOnce &&
+    !isLoading &&
+    !error &&
+    !autoRetryRef.current &&
+    allEvents.length === 0 &&
+    !q &&
+    selectedStyle === "All" &&
+    !distanceFilterEnabled;
+
+  useEffect(() => {
+    if (!shouldAutoRetry) return;
+    autoRetryRef.current = true;
+    const timer = window.setTimeout(() => {
+      setReloadTick((tick) => tick + 1);
+    }, 700);
+    return () => window.clearTimeout(timer);
+  }, [shouldAutoRetry]);
 
   return (
     <div>
@@ -723,32 +745,6 @@ export default function EventDashboardPage() {
         </div>
       </section>
 
-      <section className="seoIntro" aria-labelledby="eventium-intro-title">
-        <div className="sectionTitleRow">
-          <div>
-            <h2 id="eventium-intro-title" className="sectionTitle">Why Eventium</h2>
-            <p className="sectionHint">
-              Eventium is built to help people discover concerts, nightlife, and local events in
-              Brussels and across Belgium.
-            </p>
-          </div>
-        </div>
-        <div className="seoIntroGrid">
-          <p className="seoIntroCard">
-            Search events by music style, city, and distance to quickly find what is happening near
-            you.
-          </p>
-          <p className="seoIntroCard">
-            Explore hyper-local recommendations powered by your preferences, social activity, and
-            nearby venues.
-          </p>
-          <p className="seoIntroCard">
-            Eventium brings concerts and local event discovery into one place for people in Belgium
-            who want a faster way to plan their next night out.
-          </p>
-        </div>
-      </section>
-
       {/* RECOMMENDED (only when useful) */}
       {isOffline && recentlyViewed.length > 0 ? (
         <>
@@ -812,7 +808,7 @@ export default function EventDashboardPage() {
       </div>
 
       <div className="trendingRow">
-        {isLoading && events.length === 0 ? (
+        {!hasLoadedOnce || (isLoading && events.length === 0) ? (
           Array.from({ length: 3 }).map((_, idx) => <EventCardSkeleton key={`trend-sk-${idx}`} />)
         ) : trendingEvents.length === 0 ? (
           <div className="sectionHint">{t("dash.noTrending")}</div>
@@ -869,7 +865,7 @@ export default function EventDashboardPage() {
 
       {viewMode === "map" ? (
         <div className="eventsMapPanel">
-          {isLoading && mapEvents.length === 0 ? (
+          {!hasLoadedOnce || (isLoading && mapEvents.length === 0) ? (
             <div className="sectionHint">{t("dash.loading.map")}</div>
           ) : mapEvents.length === 0 ? (
             <div className="sectionHint">{t("dash.noEvents")}</div>
@@ -888,7 +884,7 @@ export default function EventDashboardPage() {
         <div className="dashSplit">
           <div className="dashSplitList">
             <div className="eventsGrid eventsGridSplit">
-              {isLoading && events.length === 0 ? (
+              {!hasLoadedOnce || (isLoading && events.length === 0) ? (
                 Array.from({ length: 3 }).map((_, idx) => <EventCardSkeleton key={`split-sk-${idx}`} />)
               ) : eventsWithAi.length === 0 ? (
                 <div className="sectionHint">{t("dash.noEvents")}</div>
@@ -905,7 +901,7 @@ export default function EventDashboardPage() {
           </div>
 
           <div className="dashSplitMap">
-            {isLoading && mapEvents.length === 0 ? (
+            {!hasLoadedOnce || (isLoading && mapEvents.length === 0) ? (
               <div className="sectionHint">{t("dash.loading.map")}</div>
             ) : mapEvents.length === 0 ? null : (
               <Suspense fallback={<div className="sectionHint">{t("dash.loading.map")}</div>}>
@@ -921,7 +917,7 @@ export default function EventDashboardPage() {
         </div>
       ) : (
         <div className="eventsGrid">
-          {isLoading && events.length === 0 ? (
+          {!hasLoadedOnce || (isLoading && events.length === 0) ? (
             Array.from({ length: 6 }).map((_, idx) => <EventCardSkeleton key={`list-sk-${idx}`} />)
           ) : eventsWithAi.length === 0 ? (
             <div className="sectionHint">{t("dash.noEvents")}</div>
