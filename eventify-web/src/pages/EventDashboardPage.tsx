@@ -723,6 +723,32 @@ export default function EventDashboardPage() {
         </div>
       </section>
 
+      <section className="seoIntro" aria-labelledby="eventium-intro-title">
+        <div className="sectionTitleRow">
+          <div>
+            <h2 id="eventium-intro-title" className="sectionTitle">Why Eventium</h2>
+            <p className="sectionHint">
+              Eventium is built to help people discover concerts, nightlife, and local events in
+              Brussels and across Belgium.
+            </p>
+          </div>
+        </div>
+        <div className="seoIntroGrid">
+          <p className="seoIntroCard">
+            Search events by music style, city, and distance to quickly find what is happening near
+            you.
+          </p>
+          <p className="seoIntroCard">
+            Explore hyper-local recommendations powered by your preferences, social activity, and
+            nearby venues.
+          </p>
+          <p className="seoIntroCard">
+            Eventium brings concerts and local event discovery into one place for people in Belgium
+            who want a faster way to plan their next night out.
+          </p>
+        </div>
+      </section>
+
       {/* RECOMMENDED (only when useful) */}
       {isOffline && recentlyViewed.length > 0 ? (
         <>
