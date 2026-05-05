@@ -35,8 +35,8 @@ import { useI18n } from "../i18n/I18nContext";
 
 const EventsMap = lazy(() => import("../components/EventsMap"));
 const DASHBOARD_FETCH_RADIUS_KM = 1200;
-const DASHBOARD_FETCH_SIZE = 140;
-const DASHBOARD_AI_POOL_LIMIT = 60;
+const DASHBOARD_FETCH_SIZE = 320;
+const DASHBOARD_AI_POOL_LIMIT = 100;
 
 function clamp(n: number, min: number, max: number) {
   return Math.min(max, Math.max(min, n));
