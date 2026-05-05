@@ -452,6 +452,7 @@ function inferLocationFromHost(sourceHost) {
     { pattern: /bozar\.be$/, city: "Brussels", country: "Belgium" },
     { pattern: /trixonline\.be$/, city: "Antwerp", country: "Belgium" },
     { pattern: /hetdepot\.be$/, city: "Leuven", country: "Belgium" },
+    { pattern: /uitin\.mechelen\.be$/, city: "Mechelen", country: "Belgium" },
   ];
 
   const match = hostDefaults.find((entry) => entry.pattern.test(host));
@@ -491,6 +492,362 @@ function normalizeEventDate(value) {
   }
 
   return text;
+}
+
+function normalizeAsciiishText(value) {
+  const text = cleanText(value);
+  if (!text) return "";
+  return text
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+}
+
+const LOCALIZED_MONTH_INDEX = Object.freeze({
+  january: 1,
+  jan: 1,
+  janvier: 1,
+  januari: 1,
+  february: 2,
+  feb: 2,
+  fevrier: 2,
+  fevr: 2,
+  fev: 2,
+  februari: 2,
+  march: 3,
+  mar: 3,
+  mars: 3,
+  maart: 3,
+  april: 4,
+  avril: 4,
+  may: 5,
+  mai: 5,
+  mei: 5,
+  june: 6,
+  jun: 6,
+  juin: 6,
+  juni: 6,
+  july: 7,
+  jul: 7,
+  juillet: 7,
+  juli: 7,
+  august: 8,
+  aug: 8,
+  aout: 8,
+  augustus: 8,
+  september: 9,
+  sept: 9,
+  octobre: 10,
+  october: 10,
+  okt: 10,
+  oktober: 10,
+  november: 11,
+  december: 12,
+  dec: 12,
+  decembre: 12,
+});
+
+function pad2(value) {
+  return String(Number(value) || 0).padStart(2, "0");
+}
+
+function parseMonthIndex(rawValue) {
+  const token = normalizeAsciiishText(rawValue)
+    .replace(/[^a-z]/g, "")
+    .trim();
+  if (!token) return null;
+  return LOCALIZED_MONTH_INDEX[token] || null;
+}
+
+function parseTimeParts(value) {
+  const text = cleanText(value);
+  if (!text) return null;
+
+  const amPmMatch = text.match(/\b(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b/i);
+  if (amPmMatch) {
+    let hour = Number(amPmMatch[1]);
+    const minute = Number(amPmMatch[2] || 0);
+    const meridiem = amPmMatch[3].toLowerCase();
+    if (meridiem === "pm" && hour < 12) hour += 12;
+    if (meridiem === "am" && hour === 12) hour = 0;
+    return { hour, minute, second: 0 };
+  }
+
+  const twentyFourHour = text.match(/\b(\d{1,2})(?:[:hHuU](\d{2}))(?::(\d{2}))?\b/);
+  if (twentyFourHour) {
+    return {
+      hour: Number(twentyFourHour[1]),
+      minute: Number(twentyFourHour[2] || 0),
+      second: Number(twentyFourHour[3] || 0),
+    };
+  }
+
+  return null;
+}
+
+function parseNumericDateParts(value) {
+  const text = cleanText(value);
+  if (!text) return null;
+
+  let match = text.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (match) {
+    return {
+      year: Number(match[1]),
+      month: Number(match[2]),
+      day: Number(match[3]),
+    };
+  }
+
+  match = text.match(/^(\d{1,2})[./-](\d{1,2})[./-](\d{4})$/);
+  if (match) {
+    return {
+      year: Number(match[3]),
+      month: Number(match[2]),
+      day: Number(match[1]),
+    };
+  }
+
+  return null;
+}
+
+function parseLocalizedSingleDateParts(value) {
+  const text = cleanText(value);
+  if (!text) return null;
+
+  const numeric = parseNumericDateParts(text);
+  if (numeric) return numeric;
+
+  const monthPattern = Object.keys(LOCALIZED_MONTH_INDEX)
+    .sort((a, b) => b.length - a.length)
+    .join("|");
+  const singleRegex = new RegExp(
+    `(?:^|\\b)(?:[a-z]{2,12}\\.?\\s+)?(\\d{1,2})\\s+(${monthPattern})\\s+(\\d{4})(?:\\b|$)`,
+    "i"
+  );
+  const monthOnlyRegex = new RegExp(`(?:^|\\b)(${monthPattern})\\s+(\\d{4})(?:\\b|$)`, "i");
+
+  let match = normalizeAsciiishText(text).match(singleRegex);
+  if (match) {
+    const month = parseMonthIndex(match[2]);
+    if (month) {
+      return {
+        year: Number(match[3]),
+        month,
+        day: Number(match[1]),
+      };
+    }
+  }
+
+  match = normalizeAsciiishText(text).match(monthOnlyRegex);
+  if (match) {
+    const month = parseMonthIndex(match[1]);
+    if (month) {
+      return {
+        year: Number(match[2]),
+        month,
+        day: 1,
+      };
+    }
+  }
+
+  return null;
+}
+
+function resolveEuropeBrusselsOffset(parts) {
+  const guess = new Date(
+    Date.UTC(
+      parts.year,
+      Math.max(0, parts.month - 1),
+      Math.max(1, parts.day),
+      parts.hour || 0,
+      parts.minute || 0,
+      parts.second || 0
+    )
+  );
+
+  try {
+    const dtf = new Intl.DateTimeFormat("en-US", {
+      timeZone: "Europe/Brussels",
+      timeZoneName: "longOffset",
+    });
+    const zoneName = dtf
+      .formatToParts(guess)
+      .find((entry) => entry.type === "timeZoneName")?.value;
+    const match = cleanText(zoneName)?.match(/GMT([+-]\d{1,2})(?::?(\d{2}))?/i);
+    if (match) {
+      const hours = match[1].replace(/([+-])(\d)$/, "$10$2");
+      return `${hours}:${match[2] || "00"}`;
+    }
+  } catch {
+    // Fall back below.
+  }
+
+  return parts.month >= 4 && parts.month <= 9 ? "+02:00" : "+01:00";
+}
+
+function buildEuropeBrusselsIso(parts, timeValue) {
+  if (!parts) return null;
+  const time = parseTimeParts(timeValue) || { hour: 0, minute: 0, second: 0 };
+  const offset = resolveEuropeBrusselsOffset({
+    year: parts.year,
+    month: parts.month,
+    day: parts.day,
+    hour: time.hour,
+    minute: time.minute,
+    second: time.second,
+  });
+  const iso = `${parts.year}-${pad2(parts.month)}-${pad2(parts.day)}T${pad2(time.hour)}:${pad2(
+    time.minute
+  )}:${pad2(time.second)}${offset}`;
+  const parsed = new Date(iso);
+  return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
+}
+
+function parseLocalizedDateRange(value, timeValue) {
+  const text = cleanText(value)?.replace(/[–—]/g, "-");
+  if (!text) return { start: null, end: null };
+
+  const numericRanges = text.match(/\d{1,2}[./-]\d{1,2}[./-]\d{4}/g) || [];
+  if (numericRanges.length >= 2) {
+    const startParts = parseNumericDateParts(numericRanges[0]);
+    const endParts = parseNumericDateParts(numericRanges[1]);
+    return {
+      start: buildEuropeBrusselsIso(startParts, timeValue),
+      end: buildEuropeBrusselsIso(endParts, timeValue),
+    };
+  }
+  if (numericRanges.length === 1) {
+    const parts = parseNumericDateParts(numericRanges[0]);
+    const iso = buildEuropeBrusselsIso(parts, timeValue);
+    return { start: iso, end: iso };
+  }
+
+  const normalized = normalizeAsciiishText(text);
+  const monthPattern = Object.keys(LOCALIZED_MONTH_INDEX)
+    .sort((a, b) => b.length - a.length)
+    .join("|");
+  const crossMonthRegex = new RegExp(
+    `(?:^|\\b)(?:from\\s+)?(?:[a-z]{2,12}\\.?\\s+)?(\\d{1,2})\\s+(${monthPattern})\\s+(?:until|untill|to|au|tot(?:\\s+en\\s+met)?|-)\\s+(?:[a-z]{2,12}\\.?\\s+)?(\\d{1,2})\\s+(${monthPattern})\\s+(\\d{4})(?:\\b|$)`,
+    "i"
+  );
+  const sameMonthRegex = new RegExp(
+    `(?:^|\\b)(?:from\\s+)?(?:[a-z]{2,12}\\.?\\s+)?(\\d{1,2})\\s+(?:until|untill|to|au|tot(?:\\s+en\\s+met)?|-)\\s+(?:[a-z]{2,12}\\.?\\s+)?(\\d{1,2})\\s+(${monthPattern})\\s+(\\d{4})(?:\\b|$)`,
+    "i"
+  );
+
+  let match = normalized.match(crossMonthRegex);
+  if (match) {
+    const startParts = {
+      year: Number(match[5]),
+      month: parseMonthIndex(match[2]),
+      day: Number(match[1]),
+    };
+    const endParts = {
+      year: Number(match[5]),
+      month: parseMonthIndex(match[4]),
+      day: Number(match[3]),
+    };
+    return {
+      start: buildEuropeBrusselsIso(startParts, timeValue),
+      end: buildEuropeBrusselsIso(endParts, timeValue),
+    };
+  }
+
+  match = normalized.match(sameMonthRegex);
+  if (match) {
+    const month = parseMonthIndex(match[3]);
+    const year = Number(match[4]);
+    const startParts = { year, month, day: Number(match[1]) };
+    const endParts = { year, month, day: Number(match[2]) };
+    return {
+      start: buildEuropeBrusselsIso(startParts, timeValue),
+      end: buildEuropeBrusselsIso(endParts, timeValue),
+    };
+  }
+
+  const single = parseLocalizedSingleDateParts(text);
+  if (single) {
+    const iso = buildEuropeBrusselsIso(single, timeValue);
+    return { start: iso, end: iso };
+  }
+
+  const fallback = normalizeEventDate(text);
+  return { start: fallback, end: fallback };
+}
+
+function createNormalizedScrapedEvent(fields, context = {}) {
+  const title = cleanText(fields?.title);
+  const start = cleanText(fields?.start);
+  if (!title || !start || !hasConcreteIsoDate(start)) return null;
+
+  const sourceHost =
+    cleanText(context.sourceHost) ||
+    hostnameFromUrl(context.pageUrl) ||
+    hostnameFromUrl(context.sourceUrl);
+  const eventUrl =
+    normalizeEventUrl(fields?.url || fields?.ticketUrl || context.pageUrl, context.pageUrl) ||
+    normalizeEventUrl(context.pageUrl, context.pageUrl);
+  const hostLocation = inferLocationFromHost(sourceHost);
+  const tags = parseTagsFromKeywords(
+    [
+      ...(Array.isArray(fields?.tags) ? fields.tags : []),
+      cleanText(fields?.genre),
+      cleanText(fields?.category),
+      cleanText(fields?.artistName),
+      cleanText(fields?.city),
+    ].filter(Boolean)
+  );
+
+  return {
+    source: "webscrape",
+    sourceId: buildSourceId({
+      eventUrl,
+      title,
+      start,
+      venue: cleanText(fields?.venue),
+      sourceHost,
+    }),
+    title,
+    description: cleanText(fields?.description),
+    start,
+    end: cleanText(fields?.end),
+    timezone: cleanText(fields?.timezone) || "Europe/Brussels",
+    venue: cleanText(fields?.venue),
+    address: cleanText(fields?.address),
+    city: cleanText(fields?.city) || hostLocation.city,
+    state: cleanText(fields?.state),
+    country: cleanText(fields?.country) || hostLocation.country || "Belgium",
+    postalCode: cleanText(fields?.postalCode),
+    lat: toFiniteNumber(fields?.lat),
+    lng: toFiniteNumber(fields?.lng),
+    isVirtual: Boolean(fields?.isVirtual),
+    virtualLink: cleanText(fields?.virtualLink),
+    isFree: Boolean(fields?.isFree),
+    cost: toFiniteNumber(fields?.cost),
+    priceMin: toFiniteNumber(fields?.priceMin),
+    priceMax: toFiniteNumber(fields?.priceMax),
+    currency: cleanText(fields?.currency) || "EUR",
+    url: eventUrl,
+    ticketUrl: normalizeEventUrl(fields?.ticketUrl || eventUrl, context.pageUrl),
+    imageUrl: resolveUrlMaybe(fields?.imageUrl, context.pageUrl || context.sourceUrl),
+    genre: cleanText(fields?.genre),
+    category: cleanText(fields?.category),
+    tags,
+    artistName: cleanText(fields?.artistName),
+    organizerName: cleanText(fields?.organizerName),
+    status: cleanText(fields?.status),
+    metadata: {
+      scrapedFrom: cleanText(context.pageUrl),
+      sourceListingUrl: cleanText(context.sourceUrl) || cleanText(context.pageUrl),
+      sourceHost,
+      raw: fields?.raw ?? null,
+    },
+  };
+}
+
+function hasConcreteIsoDate(value) {
+  const text = cleanText(value);
+  return Boolean(text && /^\d{4}-\d{2}-\d{2}t/i.test(text.replace("T", "t")));
 }
 
 function resolveMergedIsFree(primary, secondary, merged) {
@@ -1201,6 +1558,23 @@ async function fetchHtml(url, options) {
   return typeof data === "string" ? data : String(data || "");
 }
 
+async function fetchJson(url, options) {
+  const { data } = await axios.get(url, {
+    timeout: options.timeoutMs,
+    responseType: "json",
+    maxRedirects: 5,
+    headers: {
+      "User-Agent": options.userAgent || DEFAULT_USER_AGENT,
+      Accept: "application/json,text/plain,*/*",
+    },
+    validateStatus(status) {
+      return status >= 200 && status < 400;
+    },
+  });
+
+  return data && typeof data === "object" ? data : null;
+}
+
 function buildEventDedupeKey(event) {
   const sourceKey = cleanText(event?.sourceId);
   if (sourceKey) return sourceKey;
@@ -1272,7 +1646,904 @@ function dedupeEvents(events, limit) {
   return out;
 }
 
+function pickElementImageUrl($root, baseUrl) {
+  const direct =
+    cleanText($root.find("img").first().attr("src")) ||
+    cleanText($root.find("img").first().attr("data-src"));
+  if (direct) return resolveUrlMaybe(direct, baseUrl);
+
+  const srcset = cleanText($root.find("source").first().attr("srcset"));
+  if (!srcset) return null;
+  const firstCandidate = cleanText(srcset.split(",")[0]?.trim().split(/\s+/)[0]);
+  return resolveUrlMaybe(firstCandidate, baseUrl);
+}
+
+function isVisitBrusselsFeedUrl(value) {
+  const url = cleanText(value)?.toLowerCase() || "";
+  return url.includes("visit.brussels") && url.includes("agendafinder.feed.json");
+}
+
+function isVisitGentConcertsUrl(value) {
+  const url = cleanText(value)?.toLowerCase() || "";
+  return url.includes("visit.gent.be") && url.includes("/calendar/events");
+}
+
+function isVisitLeuvenEventsUrl(value) {
+  const url = cleanText(value)?.toLowerCase() || "";
+  return url.includes("visitleuven.be") && /\/events(?:$|\?)/.test(url);
+}
+
+function isVisitLiegeMusicUrl(value) {
+  const url = cleanText(value)?.toLowerCase() || "";
+  return url.includes("visitezliege.be") && url.includes("/catalogue/evenement/musique");
+}
+
+function isVisitBrugesEventsUrl(value) {
+  const url = cleanText(value)?.toLowerCase() || "";
+  return url.includes("visitbruges.be") && url.includes("/events-calendar");
+}
+
+function isVisitMonsConcertsUrl(value) {
+  const url = cleanText(value)?.toLowerCase() || "";
+  return url.includes("visitmons.be") && url.includes("/agenda/concerts");
+}
+
+function isCharleroiAgendaUrl(value) {
+  const url = cleanText(value)?.toLowerCase() || "";
+  return url.includes("charleroi.be/agenda");
+}
+
+function isVisitNamurAgendaUrl(value) {
+  const url = cleanText(value)?.toLowerCase() || "";
+  return url.includes("destination.visitnamur.eu/agenda");
+}
+
+function isTrixConcertsUrl(value) {
+  const url = cleanText(value)?.toLowerCase() || "";
+  return url.includes("trixonline.be") && url.includes("/program/") && url.includes("type=concert");
+}
+
+function isCchaConcertsUrl(value) {
+  const url = cleanText(value)?.toLowerCase() || "";
+  return url.includes("ccha.be/concerten");
+}
+
+function isUitInMechelenAgendaUrl(value) {
+  const url = cleanText(value)?.toLowerCase() || "";
+  return url.includes("uitin.mechelen.be/agenda");
+}
+
+function pickVisitBrusselsTranslation(item) {
+  const translations = item?.translations || {};
+  return (
+    translations.en ||
+    translations.fr ||
+    translations.nl ||
+    Object.values(translations).find((value) => value && typeof value === "object") ||
+    {}
+  );
+}
+
+function pickVisitBrusselsPlaceTranslation(item) {
+  const translations = item?.place?.translations || {};
+  return (
+    translations.en ||
+    translations.fr ||
+    translations.nl ||
+    Object.values(translations).find((value) => value && typeof value === "object") ||
+    {}
+  );
+}
+
+function flattenVisitBrusselsCategoryLabels(item) {
+  const out = [];
+  const main = item?.categories?.main?.translations || {};
+  const others = item?.categories?.others?.translations || {};
+
+  for (const value of Object.values(main)) {
+    const label = cleanText(value);
+    if (label) out.push(label);
+  }
+
+  for (const value of Object.values(others)) {
+    for (const entry of toArray(value)) {
+      const label = cleanText(entry);
+      if (label) out.push(label);
+    }
+  }
+
+  return Array.from(new Set(out.map((label) => label.trim()))).filter(Boolean);
+}
+
+function pickVisitBrusselsOccurrence(item) {
+  const occurrences = toArray(item?.dates)
+    .filter((entry) => entry && entry.day && entry.is_canceled !== true)
+    .sort((a, b) => {
+      const left = `${cleanText(a?.day) || ""} ${cleanText(a?.start) || ""}`;
+      const right = `${cleanText(b?.day) || ""} ${cleanText(b?.start) || ""}`;
+      return left.localeCompare(right);
+    });
+  return occurrences[0] || null;
+}
+
+function extractVisitBrusselsPrice(prices, eventUrl) {
+  const rawText = JSON.stringify(toArray(prices));
+  if (!rawText) {
+    return {
+      cost: null,
+      priceMin: null,
+      priceMax: null,
+      currency: "EUR",
+      isFree: false,
+    };
+  }
+
+  const fallback = parseTextPriceFallback(rawText, eventUrl);
+  if (!fallback) {
+    return {
+      cost: null,
+      priceMin: null,
+      priceMax: null,
+      currency: "EUR",
+      isFree: false,
+    };
+  }
+  return {
+    cost: fallback.cost,
+    priceMin: fallback.priceMin,
+    priceMax: fallback.priceMax,
+    currency: fallback.currency || "EUR",
+    isFree: fallback.isFree,
+  };
+}
+
+function looksMusicLikeText(value) {
+  const text = normalizeAsciiishText(value);
+  if (!text) return false;
+  return /\b(concert|music|musique|muziek|festival|jazz|opera|dj|live|choral|choir|orchestra|symphon|folk|hip ?hop|rap|electro|electronic|classical|blues|rock|pop|soul|latin|world)\b/.test(
+    text
+  );
+}
+
+async function scrapeVisitBrusselsFeed(sourceUrl, options) {
+  const payload = await fetchJson(sourceUrl, options);
+  const sourceHost = hostnameFromUrl(sourceUrl);
+  const items = toArray(payload?.data);
+  const events = [];
+
+  for (const item of items) {
+    if (events.length >= options.maxEventsPerSource) break;
+
+    const translation = pickVisitBrusselsTranslation(item);
+    const place = pickVisitBrusselsPlaceTranslation(item);
+    const occurrence = pickVisitBrusselsOccurrence(item);
+    if (!occurrence) continue;
+
+    const title = cleanText(translation?.name);
+    if (!title) continue;
+
+    const categoryLabels = flattenVisitBrusselsCategoryLabels(item);
+    const description =
+      cleanText(translation?.longdescr) ||
+      cleanText(translation?.shortdescr) ||
+      cleanText(translation?.performers);
+    const musicBlob = [title, description, categoryLabels.join(", ")].filter(Boolean).join(" ");
+    if (!looksMusicLikeText(musicBlob)) continue;
+
+    const start = buildEuropeBrusselsIso(parseNumericDateParts(occurrence.day), occurrence.start);
+    const end = buildEuropeBrusselsIso(parseNumericDateParts(occurrence.day), occurrence.end);
+    if (!start) continue;
+
+    const agendaUrl =
+      normalizeEventUrl(translation?.agenda_url, sourceUrl) ||
+      normalizeEventUrl(translation?.boxoffice_url, sourceUrl) ||
+      normalizeEventUrl(translation?.website, sourceUrl) ||
+      sourceUrl;
+    const price = extractVisitBrusselsPrice(item?.prices, agendaUrl);
+    const addressLine1 = cleanText(place?.address_line1);
+    const addressLine2 = cleanText(place?.address_line2);
+
+    const normalized = createNormalizedScrapedEvent(
+      {
+        title,
+        description,
+        start,
+        end,
+        venue: cleanText(place?.name),
+        address: [addressLine1, addressLine2].filter(Boolean).join(", "),
+        city: cleanText(place?.address_city) || "Brussels",
+        postalCode: cleanText(place?.address_zip),
+        country: "Belgium",
+        cost: price.cost,
+        priceMin: price.priceMin,
+        priceMax: price.priceMax,
+        currency: price.currency,
+        isFree: price.isFree,
+        url: agendaUrl,
+        ticketUrl:
+          normalizeEventUrl(translation?.boxoffice_url, sourceUrl) ||
+          normalizeEventUrl(translation?.website, sourceUrl) ||
+          agendaUrl,
+        imageUrl:
+          cleanText(item?.firstImagePath) ||
+          cleanText(item?.media?.[0]?.link) ||
+          null,
+        category: categoryLabels[0] || "Concert",
+        tags: categoryLabels,
+        organizerName: cleanText(place?.name),
+        status: occurrence.is_canceled ? "cancelled" : "published",
+        raw: {
+          id: item?.id,
+          categories: item?.categories,
+          occurrence,
+          translation,
+          place,
+        },
+      },
+      { pageUrl: agendaUrl, sourceUrl, sourceHost }
+    );
+
+    if (normalized) events.push(normalized);
+  }
+
+  return dedupeEvents(events, options.maxEventsPerSource);
+}
+
+async function scrapeVisitGentConcerts(sourceUrl, options) {
+  const html = await fetchHtml(sourceUrl, options);
+  const $ = cheerio.load(html);
+  const sourceHost = hostnameFromUrl(sourceUrl);
+  const events = [];
+
+  $(".view-event-index .views-row article.node--type-event").each((_, element) => {
+    if (events.length >= options.maxEventsPerSource) return;
+
+    const $card = $(element);
+    const href = cleanText($card.find(".node--title a").attr("href"));
+    const url = normalizeEventUrl(href, sourceUrl);
+    const dateText = cleanText($card.find(".vg-schedule-short").first().text());
+    const schedule = parseLocalizedDateRange(dateText);
+    const title = cleanText($card.find(".node--title").first().text());
+    const description =
+      cleanText($card.find(".field--name-field-introduction").first().text()) ||
+      cleanText($card.find(".field--name-field-subtitle").first().text());
+
+    const normalized = createNormalizedScrapedEvent(
+      {
+        title,
+        description,
+        start: schedule.start,
+        end: schedule.end,
+        city: "Ghent",
+        country: "Belgium",
+        url,
+        ticketUrl: url,
+        imageUrl: pickElementImageUrl($card, sourceUrl),
+        category: cleanText($card.find(".field--name-field-category").first().text()) || "Concerts",
+        tags: ["Concerts", "Ghent"],
+        raw: {
+          dateText,
+          href,
+        },
+      },
+      { pageUrl: url || sourceUrl, sourceUrl, sourceHost }
+    );
+
+    if (normalized) events.push(normalized);
+  });
+
+  return dedupeEvents(events, options.maxEventsPerSource);
+}
+
+async function scrapeVisitLeuvenEvents(sourceUrl, options) {
+  const html = await fetchHtml(sourceUrl, options);
+  const $ = cheerio.load(html);
+  const sourceHost = hostnameFromUrl(sourceUrl);
+  const events = [];
+
+  $("a.state--published.card--size-normal").each((_, element) => {
+    if (events.length >= options.maxEventsPerSource) return;
+
+    const $card = $(element);
+    const title = cleanText(
+      $card.find(".field--name-extra-field-f-content-navigation-title span").first().text()
+    );
+    const dateText = cleanText($card.find(".field--name-field-ct-intertitle").first().text());
+    const description = cleanText($card.find(".field--name-field-ct-description").first().text());
+    const href = cleanText($card.attr("href"));
+    const url = normalizeEventUrl(href, sourceUrl) || resolveUrlMaybe(href, sourceUrl);
+    const schedule = parseLocalizedDateRange(dateText);
+    const category = cleanText(title?.split(":")[0]);
+
+    const normalized = createNormalizedScrapedEvent(
+      {
+        title,
+        description,
+        start: schedule.start,
+        end: schedule.end,
+        city: "Leuven",
+        country: "Belgium",
+        url,
+        ticketUrl: url,
+        imageUrl: pickElementImageUrl($card, sourceUrl),
+        category,
+        tags: ["Leuven", category].filter(Boolean),
+        raw: {
+          dateText,
+          href,
+        },
+      },
+      { pageUrl: url || sourceUrl, sourceUrl, sourceHost }
+    );
+
+    if (normalized) events.push(normalized);
+  });
+
+  return dedupeEvents(events, options.maxEventsPerSource);
+}
+
+async function scrapeVisitLiegeMusic(sourceUrl, options) {
+  const html = await fetchHtml(sourceUrl, options);
+  const $ = cheerio.load(html);
+  const sourceHost = hostnameFromUrl(sourceUrl);
+  const events = [];
+
+  $(".insertStd.insertLink > a[href]").each((_, element) => {
+    if (events.length >= options.maxEventsPerSource) return;
+
+    const $card = $(element);
+    const dateText = cleanText($card.find(".date").first().text());
+    const schedule = parseLocalizedDateRange(dateText);
+    const title = cleanText($card.find(".titreH4").first().text());
+    const description = cleanText($card.find(".text").first().text());
+    const href = cleanText($card.attr("href"));
+    const url = normalizeEventUrl(href, sourceUrl);
+
+    const normalized = createNormalizedScrapedEvent(
+      {
+        title,
+        description,
+        start: schedule.start,
+        end: schedule.end,
+        city: "Liege",
+        country: "Belgium",
+        url,
+        ticketUrl: url,
+        imageUrl: pickElementImageUrl($card, sourceUrl),
+        category: "Music",
+        tags: ["Music", "Liege"],
+        raw: {
+          dateText,
+          href,
+        },
+      },
+      { pageUrl: url || sourceUrl, sourceUrl, sourceHost }
+    );
+
+    if (normalized) events.push(normalized);
+  });
+
+  return dedupeEvents(events, options.maxEventsPerSource);
+}
+
+async function scrapeVisitBrugesEvents(sourceUrl, options) {
+  const html = await fetchHtml(sourceUrl, options);
+  const $ = cheerio.load(html);
+  const sourceHost = hostnameFromUrl(sourceUrl);
+  const events = [];
+
+  $("article.card--event").each((_, element) => {
+    if (events.length >= options.maxEventsPerSource) return;
+
+    const $card = $(element);
+    const href = cleanText($card.find("a.card__link").first().attr("href"));
+    const url = normalizeEventUrl(href, sourceUrl);
+    const title = cleanText($card.find(".card__title__text").first().text());
+    const dateText = cleanText($card.find(".card__content__date span").first().text());
+    const schedule = parseLocalizedDateRange(dateText);
+    const description = cleanText($card.find(".card__content__summary").first().text());
+    const tags = $card
+      .find(".tags a")
+      .map((__, node) => cleanText($(node).text()))
+      .get()
+      .filter(Boolean);
+
+    const normalized = createNormalizedScrapedEvent(
+      {
+        title,
+        description,
+        start: schedule.start,
+        end: schedule.end,
+        city: "Bruges",
+        country: "Belgium",
+        url,
+        ticketUrl: url,
+        imageUrl: pickElementImageUrl($card, sourceUrl),
+        category: tags[0] || "Event",
+        tags: ["Bruges", ...tags],
+        raw: {
+          dateText,
+          href,
+        },
+      },
+      { pageUrl: url || sourceUrl, sourceUrl, sourceHost }
+    );
+
+    if (normalized) events.push(normalized);
+  });
+
+  return dedupeEvents(events, options.maxEventsPerSource);
+}
+
+async function scrapeVisitMonsConcerts(sourceUrl, options) {
+  const html = await fetchHtml(sourceUrl, options);
+  const $ = cheerio.load(html);
+  const sourceHost = hostnameFromUrl(sourceUrl);
+  const events = [];
+
+  $('a[href*="/fr/agenda/"]').each((_, element) => {
+    if (events.length >= options.maxEventsPerSource) return;
+
+    const $card = $(element);
+    const href = cleanText($card.attr("href"));
+    if (!href || /\/agenda\/(?:concerts|all)(?:$|[/?#])/.test(href)) return;
+
+    const url = normalizeEventUrl(href, sourceUrl);
+    const title = cleanText($card.find("h3").first().text());
+    const dateText = cleanText(
+      $card
+        .find("p")
+        .filter((__, node) => /\d{2}\/\d{2}\/\d{4}/.test($(node).text()))
+        .first()
+        .text()
+    );
+    const schedule = parseLocalizedDateRange(dateText);
+
+    const normalized = createNormalizedScrapedEvent(
+      {
+        title,
+        description: null,
+        start: schedule.start,
+        end: schedule.end,
+        city: "Mons",
+        country: "Belgium",
+        url,
+        ticketUrl: url,
+        imageUrl: pickElementImageUrl($card, sourceUrl),
+        category: "Concert",
+        tags: ["Concert", "Mons"],
+        raw: {
+          dateText,
+          href,
+        },
+      },
+      { pageUrl: url || sourceUrl, sourceUrl, sourceHost }
+    );
+
+    if (normalized) events.push(normalized);
+  });
+
+  return dedupeEvents(events, options.maxEventsPerSource);
+}
+
+function extractBackgroundImageUrl(styleText) {
+  const text = cleanText(styleText);
+  if (!text) return null;
+  return cleanText(text.match(/background-image\s*:\s*url\(['"]?([^'")]+)['"]?\)/i)?.[1]);
+}
+
+async function scrapeVisitNamurAgenda(sourceUrl, options) {
+  const html = await fetchHtml(sourceUrl, options);
+  const $ = cheerio.load(html);
+  const sourceHost = hostnameFromUrl(sourceUrl);
+  const events = [];
+
+  $(".ag-card > a[href*='/agenda-item/']").each((_, element) => {
+    if (events.length >= options.maxEventsPerSource) return;
+
+    const $card = $(element);
+    const href = cleanText($card.attr("href"));
+    const url = normalizeEventUrl(href, sourceUrl);
+    const title = cleanText($card.find(".ag-card-title").first().text());
+    const dateText = cleanText($card.find(".ag-card-date-badge").first().text());
+    const schedule = parseLocalizedDateRange(dateText);
+    const description = cleanText($card.find(".ag-card-excerpt").first().text());
+    const imageUrl =
+      extractBackgroundImageUrl($card.find(".ag-card-img-inner").attr("style")) ||
+      pickElementImageUrl($card, sourceUrl);
+
+    const normalized = createNormalizedScrapedEvent(
+      {
+        title,
+        description,
+        start: schedule.start,
+        end: schedule.end,
+        city: "Namur",
+        country: "Belgium",
+        url,
+        ticketUrl: url,
+        imageUrl,
+        category: "Event",
+        tags: ["Namur"],
+        raw: {
+          dateText,
+          href,
+        },
+      },
+      { pageUrl: url || sourceUrl, sourceUrl, sourceHost }
+    );
+
+    if (normalized) events.push(normalized);
+  });
+
+  return dedupeEvents(events, options.maxEventsPerSource);
+}
+
+function parseCharleroiAgendaDetail(detailHtml, detailUrl, sourceUrl, sourceHost) {
+  const $ = cheerio.load(detailHtml);
+  const title =
+    cleanText($("h1").first().text()) ||
+    cleanText(extractMetaContent(detailHtml, "og:title"))?.replace(/\s*\|\s*Ville de Charleroi$/i, "");
+  const description =
+    cleanText(extractMetaContent(detailHtml, "description")) ||
+    cleanText($("article p").first().text());
+  const startRaw = cleanText(
+    detailHtml.match(/Date de d[ée]but\s*:\s*([0-9]{2}\.[0-9]{2}\.[0-9]{4})/i)?.[1]
+  );
+  const endRaw = cleanText(
+    detailHtml.match(/Date de fin\s*:\s*([0-9]{2}\.[0-9]{2}\.[0-9]{4})/i)?.[1]
+  );
+  const timeRaw = cleanText(detailHtml.match(/\bDe\s+([0-9]{1,2}[h:.][0-9]{2})/i)?.[1]);
+  const priceHeading = $("h2").filter((_, node) => /^prix$/i.test(cleanText($(node).text()) || "")).first();
+  const linksHeading = $("h2")
+    .filter((_, node) => /^liens$/i.test(cleanText($(node).text()) || ""))
+    .first();
+  const organizerHeading = $("h2")
+    .filter((_, node) => /^organisateur$/i.test(cleanText($(node).text()) || ""))
+    .first();
+  const priceText = cleanText(priceHeading.next("ul").text());
+  const price = parseTextPriceFallback(priceText || "", detailUrl);
+  const ticketUrl =
+    normalizeEventUrl(linksHeading.next("ul").find("a[href]").first().attr("href"), detailUrl) ||
+    normalizeEventUrl(organizerHeading.next("ul").find("a[href]").first().attr("href"), detailUrl) ||
+    detailUrl;
+  const category = cleanText(
+    $("ul")
+      .filter((_, node) => $(node).text().includes("Charleroi"))
+      .first()
+      .find("li")
+      .last()
+      .text()
+  );
+
+  return createNormalizedScrapedEvent(
+    {
+      title,
+      description,
+      start: buildEuropeBrusselsIso(parseNumericDateParts(startRaw), timeRaw),
+      end: buildEuropeBrusselsIso(parseNumericDateParts(endRaw || startRaw), timeRaw),
+      city: "Charleroi",
+      country: "Belgium",
+      url: detailUrl,
+      ticketUrl,
+      imageUrl: extractMetaContent(detailHtml, "og:image"),
+      category,
+      tags: ["Charleroi", category].filter(Boolean),
+      organizerName: cleanText(organizerHeading.next("ul").text()),
+      cost: price?.cost,
+      priceMin: price?.priceMin,
+      priceMax: price?.priceMax,
+      currency: price?.currency || "EUR",
+      isFree: price?.isFree || /gratuit|gratuite|free/i.test(priceText || ""),
+      raw: {
+        startRaw,
+        endRaw,
+        timeRaw,
+      },
+    },
+    { pageUrl: detailUrl, sourceUrl, sourceHost }
+  );
+}
+
+async function scrapeCharleroiAgenda(sourceUrl, options) {
+  const html = await fetchHtml(sourceUrl, options);
+  const $ = cheerio.load(html);
+  const sourceHost = hostnameFromUrl(sourceUrl);
+  const detailUrls = [];
+  const seen = new Set();
+
+  $('a[href*="/agenda/"]').each((_, element) => {
+    if (detailUrls.length >= options.maxLinksPerSource) return;
+    const href = cleanText($(element).attr("href"));
+    if (!href || /\/agenda\/page\/\d+/i.test(href)) return;
+    const absolute = normalizeEventUrl(href, sourceUrl);
+    if (!absolute || seen.has(absolute) || absolute === sourceUrl) return;
+    seen.add(absolute);
+    detailUrls.push(absolute);
+  });
+
+  const events = [];
+  for (const detailUrl of detailUrls) {
+    if (events.length >= options.maxEventsPerSource) break;
+    try {
+      const detailHtml = await fetchHtml(detailUrl, options);
+      const normalized = parseCharleroiAgendaDetail(detailHtml, detailUrl, sourceUrl, sourceHost);
+      if (normalized) events.push(normalized);
+    } catch {
+      // Skip detail failures and keep the rest of the source flowing.
+    }
+  }
+
+  return dedupeEvents(events, options.maxEventsPerSource);
+}
+
+async function scrapeTrixConcerts(sourceUrl, options) {
+  const html = await fetchHtml(sourceUrl, options);
+  const $ = cheerio.load(html);
+  const sourceHost = hostnameFromUrl(sourceUrl);
+  const events = [];
+
+  $("ul.program-list--programs > li").each((_, element) => {
+    if (events.length >= options.maxEventsPerSource) return;
+
+    const $item = $(element);
+    const $eventLink = $item.find("a.program-list__item").first();
+    const href = cleanText($eventLink.attr("href"));
+    const url = normalizeEventUrl(href, sourceUrl);
+    const title = cleanText(
+      $eventLink
+        .find(".program-list__artist")
+        .clone()
+        .find(".h-small")
+        .remove()
+        .end()
+        .text()
+    );
+    const dateValue =
+      cleanText($eventLink.find(".program-list__date time").attr("datetime")) ||
+      cleanText($eventLink.find(".program-list__date").first().text());
+    const description = cleanText($eventLink.find(".program-list__description").first().text());
+    const priceText = cleanText($item.find(".program-list__buttons-wrapper").first().text());
+    const price = parseTextPriceFallback(priceText || "", url || sourceUrl);
+
+    const normalized = createNormalizedScrapedEvent(
+      {
+        title,
+        description,
+        start: buildEuropeBrusselsIso(parseNumericDateParts(dateValue)),
+        end: buildEuropeBrusselsIso(parseNumericDateParts(dateValue)),
+        venue: "Trix Antwerp",
+        address: "Noordersingel 28-30, 2140 Antwerpen (Borgerhout)",
+        city: "Antwerp",
+        postalCode: "2140",
+        country: "Belgium",
+        url,
+        ticketUrl:
+          normalizeEventUrl($item.find(".program-list__buttons-wrapper a.ticket-link").first().attr("href"), sourceUrl) ||
+          url,
+        imageUrl: pickElementImageUrl($item, sourceUrl),
+        category: "Concert",
+        tags: ["Concert", "Antwerp", "Trix"],
+        artistName: title,
+        status: /cancelled/i.test(priceText || "") ? "cancelled" : "published",
+        cost: price?.cost,
+        priceMin: price?.priceMin,
+        priceMax: price?.priceMax,
+        currency: price?.currency || "EUR",
+        isFree: /free/i.test(priceText || "") || price?.isFree === true,
+        raw: {
+          dateValue,
+          priceText,
+        },
+      },
+      { pageUrl: url || sourceUrl, sourceUrl, sourceHost }
+    );
+
+    if (normalized) events.push(normalized);
+  });
+
+  return dedupeEvents(events, options.maxEventsPerSource);
+}
+
+async function scrapeCchaConcerts(sourceUrl, options) {
+  const html = await fetchHtml(sourceUrl, options);
+  const $ = cheerio.load(html);
+  const sourceHost = hostnameFromUrl(sourceUrl);
+  const events = [];
+
+  $("li.eventCard").each((_, element) => {
+    if (events.length >= options.maxEventsPerSource) return;
+
+    const $item = $(element);
+    const $descLink = $item.find("a.desc").first();
+    const href = cleanText($descLink.attr("href"));
+    const url = normalizeEventUrl(href, sourceUrl);
+    const dateText = cleanText($descLink.find(".top-date .start").first().text());
+    const timeText = cleanText($descLink.find(".top-date .time").first().text())?.replace(/^-+\s*/, "");
+    const schedule = parseLocalizedDateRange(dateText, timeText);
+    const title = cleanText($descLink.find(".title").first().text());
+    const subtitle = cleanText($descLink.find(".subtitle").first().text());
+    const venue = cleanText($descLink.find(".venue").first().text());
+    const ticketUrl =
+      normalizeEventUrl($item.find("a.btn-order").first().attr("href"), sourceUrl) || url;
+
+    const normalized = createNormalizedScrapedEvent(
+      {
+        title,
+        description: subtitle,
+        start: schedule.start,
+        end: schedule.end,
+        venue,
+        city: "Hasselt",
+        country: "Belgium",
+        url,
+        ticketUrl,
+        imageUrl: pickElementImageUrl($item, sourceUrl),
+        category: "Concert",
+        tags: ["Concert", "Hasselt", "CCHA"],
+        artistName: subtitle || title,
+        raw: {
+          dateText,
+          timeText,
+        },
+      },
+      { pageUrl: url || sourceUrl, sourceUrl, sourceHost }
+    );
+
+    if (normalized) events.push(normalized);
+  });
+
+  return dedupeEvents(events, options.maxEventsPerSource);
+}
+
+const UIT_IN_MECHELEN_WIDGET_PAGE_ID = "f19fb0d8fe653c3bb25377e0ac25fbb2";
+const UIT_IN_MECHELEN_SEARCH_WIDGET_ID = "78ed6b8b-8da7-9b56-e577-1484b0e5b29a";
+const UIT_IN_MECHELEN_API_BASE =
+  `https://projectaanvraag-api.uitdatabank.be/widgets/api/render/${UIT_IN_MECHELEN_WIDGET_PAGE_ID}/${UIT_IN_MECHELEN_SEARCH_WIDGET_ID}/search-results-with-facets`;
+
+function buildUitInMechelenApiUrl(sourceUrl, pageIndex = 0) {
+  const parsed = new URL(sourceUrl);
+  const params = new URLSearchParams(parsed.searchParams);
+  params.set("origin", `${parsed.origin}${parsed.pathname}`);
+  if (pageIndex > 0) {
+    params.set("search-result[0][page]", String(pageIndex));
+  } else {
+    params.delete("search-result[0][page]");
+  }
+  return `${UIT_IN_MECHELEN_API_BASE}?${params.toString()}`;
+}
+
+function findUitInMechelenCardValue($, $card, label) {
+  let value = null;
+  const labelNeedle = normalizeAsciiishText(label);
+  $card.find(".list-item").each((_, element) => {
+    const $item = $(element);
+    const itemLabel = normalizeAsciiishText(
+      cleanText($item.find(".cnw_searchresult-detail-label").first().text())
+    );
+    if (itemLabel !== labelNeedle) return;
+    value = cleanText($item.find(".list-item-content").first().text());
+    return false;
+  });
+  return value;
+}
+
+function parseUitInMechelenCard($, $card, sourceUrl, sourceHost) {
+  const title = cleanText($card.find(".cnw_card-title").first().text());
+  if (!title) return null;
+
+  const url = normalizeEventUrl($card.find(".cnw_card-title a").first().attr("href"), sourceUrl);
+  const description = cleanText($card.find("p.cnw_card-description").last().text());
+  const badgeTexts = $card
+    .find(".cnw_badge")
+    .toArray()
+    .map((element) => cleanText($(element).text()))
+    .filter(Boolean);
+  const whenText = findUitInMechelenCardValue($, $card, "Wanneer");
+  const whereText = findUitInMechelenCardValue($, $card, "Waar");
+  const schedule = parseLocalizedDateRange(whenText, whenText);
+  const musicBlob = [title, description, badgeTexts.join(" "), whenText].filter(Boolean).join(" ");
+  if (!looksMusicLikeText(musicBlob) || !schedule.start) return null;
+
+  const imageUrl = resolveUrlMaybe($card.find("img").first().attr("src"), sourceUrl);
+  const venueLine = cleanText(whereText);
+  const venue = cleanText(venueLine?.split(",")[0]);
+  const category =
+    badgeTexts.find((value) => /concert|festival|party|fuif/i.test(normalizeAsciiishText(value))) ||
+    badgeTexts[0] ||
+    "Concert";
+  const genre =
+    badgeTexts.find((value) =>
+      /muziek|music|jazz|blues|rock|folk|pop|dance|klassiek|classique|wereld/i.test(
+        normalizeAsciiishText(value)
+      )
+    ) || null;
+
+  return createNormalizedScrapedEvent(
+    {
+      title,
+      description,
+      start: schedule.start,
+      end: schedule.end || schedule.start,
+      venue,
+      address: venueLine,
+      city: "Mechelen",
+      country: "Belgium",
+      url,
+      ticketUrl: url,
+      imageUrl,
+      category,
+      genre,
+      tags: ["Mechelen", ...badgeTexts],
+      raw: {
+        badges: badgeTexts,
+        whenText,
+        whereText,
+      },
+    },
+    { pageUrl: url || sourceUrl, sourceUrl, sourceHost }
+  );
+}
+
+async function scrapeUitInMechelenAgenda(sourceUrl, options) {
+  const sourceHost = hostnameFromUrl(sourceUrl);
+  const events = [];
+  const visitedPages = new Set();
+
+  for (let pageIndex = 0; events.length < options.maxEventsPerSource; pageIndex++) {
+    const apiUrl = buildUitInMechelenApiUrl(sourceUrl, pageIndex);
+    if (visitedPages.has(apiUrl)) break;
+    visitedPages.add(apiUrl);
+
+    const payload = await fetchJson(apiUrl, options);
+    const searchResultsHtml = cleanText(payload?.data?.search_results);
+    if (!searchResultsHtml) break;
+
+    const $ = cheerio.load(searchResultsHtml);
+    let pageEventCount = 0;
+    $(".cnw_searchresult--block").each((_, element) => {
+      if (events.length >= options.maxEventsPerSource) return false;
+      const normalized = parseUitInMechelenCard($, $(element), sourceUrl, sourceHost);
+      if (normalized) {
+        events.push(normalized);
+        pageEventCount += 1;
+      }
+      return undefined;
+    });
+
+    const pageTargets = $(".cnw_page-link[data-target-page]")
+      .map((_, element) => Number(cleanText($(element).attr("data-target-page"))))
+      .get()
+      .filter((value) => Number.isFinite(value));
+    const maxPageIndex = pageTargets.length > 0 ? Math.max(...pageTargets) : pageIndex;
+
+    if (pageEventCount === 0 || pageIndex >= maxPageIndex) break;
+  }
+
+  return dedupeEvents(events, options.maxEventsPerSource);
+}
+
+function pickCustomSourceScraper(sourceUrl) {
+  if (isVisitBrusselsFeedUrl(sourceUrl)) return scrapeVisitBrusselsFeed;
+  if (isVisitGentConcertsUrl(sourceUrl)) return scrapeVisitGentConcerts;
+  if (isVisitLeuvenEventsUrl(sourceUrl)) return scrapeVisitLeuvenEvents;
+  if (isVisitLiegeMusicUrl(sourceUrl)) return scrapeVisitLiegeMusic;
+  if (isVisitBrugesEventsUrl(sourceUrl)) return scrapeVisitBrugesEvents;
+  if (isVisitMonsConcertsUrl(sourceUrl)) return scrapeVisitMonsConcerts;
+  if (isCharleroiAgendaUrl(sourceUrl)) return scrapeCharleroiAgenda;
+  if (isVisitNamurAgendaUrl(sourceUrl)) return scrapeVisitNamurAgenda;
+  if (isTrixConcertsUrl(sourceUrl)) return scrapeTrixConcerts;
+  if (isCchaConcertsUrl(sourceUrl)) return scrapeCchaConcerts;
+  if (isUitInMechelenAgendaUrl(sourceUrl)) return scrapeUitInMechelenAgenda;
+  return null;
+}
+
 async function scrapeSource(sourceUrl, options) {
+  const customScraper = pickCustomSourceScraper(sourceUrl);
+  if (customScraper) {
+    return customScraper(sourceUrl, options);
+  }
+
   const sourceHost = new URL(sourceUrl).hostname;
   const sourceIsSongkick = isSongkickHost(sourceHost);
   const sourceIsEventbrite = isEventbriteHost(sourceHost);

@@ -51,7 +51,8 @@ De backend kan nu events uit extra websites scrapen en samenvoegen met Ticketmas
 - `GET /events` combineert:
   - Ticketmaster events
   - JSON-LD (`schema.org/Event`) scraping van URL's in `SCRAPE_SOURCE_URLS`
-  - Eventbrite listing pages (`/d/.../events/`) worden direct ondersteund, inclusief detail-verrijking
+  - Officiële city/venue agenda's worden direct ondersteund, inclusief aangepaste parsers voor o.a. `visit.brussels`, `visit.gent`, `visitleuven`, `visitezliege`, `visitmons`, `charleroi.be`, `trixonline.be`, `ccha.be` en `uitin.mechelen.be`
+  - Eventbrite listing pages (`/d/.../events/`) blijven ondersteund als optionele extra bron
   - Venue agenda pages werken ook (bv. `.../agenda`, `.../calendar`) zolang event detailpagina's JSON-LD Event bevatten
 - Cross-source dedupe: events met dezelfde titel+tijd+stad+venue worden samengevoegd
 - Scrape cache (stale-while-refresh) houdt laadtijd laag
@@ -62,7 +63,7 @@ De backend kan nu events uit extra websites scrapen en samenvoegen met Ticketmas
 
 - `SCRAPE_ENABLED=true|false`
 - `SCRAPE_SOURCE_URLS=https://site-a.com/events,https://site-b.com/calendar`
-- Voorbeeld: `SCRAPE_SOURCE_URLS=https://www.eventbrite.com/d/belgium--brussels/music--events/,https://www.eventbrite.com/d/belgium--antwerp/music--events/`
+- Voorbeeld: `SCRAPE_SOURCE_URLS=https://www.visit.brussels/content/visitbrussels/en/visitors/agenda/all-events-wizard/jcr:content/root/container/agendafinder.feed.json,https://visit.gent.be/en/calendar/events?f%5B0%5D=event_category%3A17,https://uitin.mechelen.be/agenda?facets%5B1%5D%5Bwhat%5D%5B0.50.4.0.0%5D=Concert`
 - `SCRAPE_MAX_EVENTS=40`
 - `SCRAPE_MAX_EVENTS_PER_SOURCE=25`
 - `SCRAPE_MAX_LINKS_PER_SOURCE=20`
