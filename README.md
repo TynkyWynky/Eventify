@@ -64,12 +64,13 @@ De backend kan nu events uit extra websites scrapen en samenvoegen met Ticketmas
 - `SCRAPE_ENABLED=true|false`
 - `SCRAPE_SOURCE_URLS=https://site-a.com/events,https://site-b.com/calendar`
 - Voorbeeld: `SCRAPE_SOURCE_URLS=https://www.visit.brussels/content/visitbrussels/en/visitors/agenda/all-events-wizard/jcr:content/root/container/agendafinder.feed.json,https://visit.gent.be/en/calendar/events?f%5B0%5D=event_category%3A17,https://uitin.mechelen.be/agenda?facets%5B1%5D%5Bwhat%5D%5B0.50.4.0.0%5D=Concert`
-- `SCRAPE_MAX_EVENTS=40`
-- `SCRAPE_MAX_EVENTS_PER_SOURCE=25`
+- `SCRAPE_MAX_EVENTS=360`
+- `SCRAPE_MAX_EVENTS_PER_SOURCE=80`
 - `SCRAPE_MAX_LINKS_PER_SOURCE=20`
 - `SCRAPE_TIMEOUT_MS=12000`
 - `SCRAPE_SOURCE_CONCURRENCY=3`
 - `SCRAPE_REQUEST_WAIT_MS=2500` (hoe lang `/events` op first-run op scrape-cache wacht)
+- `SCRAPE_COLD_START_WAIT_MS=10000` (extra wachttijd voor een koude eerste scrape op serverless)
 - `SCRAPE_SYNC_WAIT_MS=25000` (extra wachttijd voor interne sync-calls naar `/events`)
 - `SCRAPE_EVENTBRITE_DETAIL_LOOKUP=true`
 - `SCRAPE_EVENTBRITE_DETAIL_ENRICH_LIMIT=8`

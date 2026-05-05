@@ -292,7 +292,7 @@ const DEFAULT_LNG = toEnvNum(import.meta.env.VITE_DEFAULT_LNG, 4.3517);
 const DEFAULT_RADIUS_KM = 50;
 const DEFAULT_FETCH_SIZE = Math.max(
   1,
-  Math.floor(toEnvNum(import.meta.env.VITE_EVENTS_FETCH_SIZE, 40))
+  Math.floor(toEnvNum(import.meta.env.VITE_EVENTS_FETCH_SIZE, 240))
 );
 const EVENTS_FETCH_TIMEOUT_MS = Math.max(
   1200,
@@ -313,7 +313,7 @@ const EVENTS_PREFER_DB_FIRST = !["0", "false", "no", "off"].includes(
     .toLowerCase()
 );
 const EVENTS_ALLOW_LIVE_FETCH = !["0", "false", "no", "off"].includes(
-  String(import.meta.env.VITE_EVENTS_ALLOW_LIVE_FETCH ?? "0")
+  String(import.meta.env.VITE_EVENTS_ALLOW_LIVE_FETCH ?? "1")
     .trim()
     .toLowerCase()
 );

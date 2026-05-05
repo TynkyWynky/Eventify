@@ -850,6 +850,7 @@ async function ensureApiBootstrap() {
 
   apiBootstrapPromise = (async () => {
     await ensureDatabaseSchemaCompatibility();
+    ensureScrapeWarmupStarted();
   })().catch((err) => {
     // Allow retries after transient startup failures.
     apiBootstrapPromise = null;
@@ -2955,10 +2956,10 @@ function summarizeSources(events) {
 const SCRAPE_CONFIG = {
   enabled: toBool(process.env.SCRAPE_ENABLED, true),
   sourceUrls: parseDelimitedUrls(process.env.SCRAPE_SOURCE_URLS || DEFAULT_SCRAPE_SOURCE_URLS),
-  maxEvents: toPositiveInt(process.env.SCRAPE_MAX_EVENTS, 120),
+  maxEvents: toPositiveInt(process.env.SCRAPE_MAX_EVENTS, 360),
   maxEventsPerSource: toPositiveInt(
     process.env.SCRAPE_MAX_EVENTS_PER_SOURCE,
-    40
+    80
   ),
   maxLinksPerSource: toPositiveInt(process.env.SCRAPE_MAX_LINKS_PER_SOURCE, 40),
   timeoutMs: toPositiveInt(process.env.SCRAPE_TIMEOUT_MS, 12000),
@@ -3004,6 +3005,7 @@ const SCRAPE_CONFIG = {
 const SCRAPE_CACHE_CONFIG = {
   ttlMs: toPositiveInt(process.env.SCRAPE_CACHE_TTL_MS, 15 * 60 * 1000),
   requestWaitMs: toPositiveInt(process.env.SCRAPE_REQUEST_WAIT_MS, 2500),
+  coldStartWaitMs: toPositiveInt(process.env.SCRAPE_COLD_START_WAIT_MS, 10000),
 };
 const SCRAPE_SYNC_WAIT_MS = Math.max(
   SCRAPE_CACHE_CONFIG.requestWaitMs,
@@ -3539,6 +3541,16 @@ function startScrapeRefresh() {
   return scrapeCache.inFlight;
 }
 
+function ensureScrapeWarmupStarted() {
+  if (!SCRAPE_CONFIG.enabled || SCRAPE_CONFIG.sourceUrls.length === 0) return;
+  if (isScrapeCacheFresh()) return;
+  if (scrapeCache.inFlight) return;
+
+  startScrapeRefresh().catch(() => {
+    // Error is captured in scrapeCache.lastError.
+  });
+}
+
 async function getScrapedEventsForRequest({ waitMsOverride } = {}) {
   const waitMs = Math.max(
     250,
@@ -3560,11 +3572,7 @@ async function getScrapedEventsForRequest({ waitMsOverride } = {}) {
     };
   }
 
-  if (!scrapeCache.inFlight) {
-    startScrapeRefresh().catch(() => {
-      // Error is captured in scrapeCache.lastError.
-    });
-  }
+  ensureScrapeWarmupStarted();
 
   // Serve stale cache immediately while refresh runs in background.
   if (Array.isArray(scrapeCache.events) && scrapeCache.events.length > 0) {
@@ -3579,6 +3587,7 @@ async function getScrapedEventsForRequest({ waitMsOverride } = {}) {
   }
 
   // First-run path: wait briefly for scrape results, then fall back.
+  const effectiveWaitMs = Math.max(waitMs, SCRAPE_CACHE_CONFIG.coldStartWaitMs);
   let timedOut = false;
   try {
     await Promise.race([
@@ -3587,7 +3596,7 @@ async function getScrapedEventsForRequest({ waitMsOverride } = {}) {
         setTimeout(() => {
           timedOut = true;
           reject(new Error("scrape_wait_timeout"));
-        }, waitMs)
+        }, effectiveWaitMs)
       ),
     ]);
   } catch (err) {
@@ -3608,7 +3617,7 @@ async function getScrapedEventsForRequest({ waitMsOverride } = {}) {
     ageMs: getScrapeCacheAgeMs(),
     timedOut,
     lastError: scrapeCache.lastError,
-    waitMs,
+    waitMs: effectiveWaitMs,
   };
 }
 
@@ -5552,6 +5561,7 @@ app.get("/events", async (req, res) => {
       : toPositiveInt(scrapeWaitMs, SCRAPE_CACHE_CONFIG.requestWaitMs);
     const preferDbFirst = toBool(preferDb, true);
     const allowLiveFetchBool = toBool(allowLiveFetch, true);
+    let dbSeedEvents = [];
 
     if (preferDbFirst) {
       try {
@@ -5564,7 +5574,7 @@ app.get("/events", async (req, res) => {
           maxResults: maxResultsNum,
         });
 
-        if (dbEvents.length > 0 || !allowLiveFetchBool) {
+        if (!allowLiveFetchBool) {
           const events = dedupe(dbEvents).slice(0, maxResultsNum);
           const withAnyPrice = events.filter((event) => event?.hasAnyPrice).length;
           const unknownPrice = Math.max(0, events.length - withAnyPrice);
@@ -5599,6 +5609,8 @@ app.get("/events", async (req, res) => {
             events,
           });
         }
+
+        dbSeedEvents = dbEvents;
       } catch (err) {
         sourceErrors.push({ source: "db", error: String(err?.message || err) });
       }
@@ -5701,7 +5713,7 @@ app.get("/events", async (req, res) => {
     if (scrapeResult.lastError) {
       sourceErrors.push({ source: "webscrape-cache", error: scrapeResult.lastError });
     }
-    const combinedEvents = dedupe([...tmEvents, ...scrapedEvents]);
+    const combinedEvents = dedupe([...dbSeedEvents, ...tmEvents, ...scrapedEvents]);
     let events = interleaveBySource(combinedEvents, maxResultsNum);
 
     // Admin moderation: hide disabled events (they can be re-fetched from external APIs)
@@ -5785,6 +5797,8 @@ app.get("/events", async (req, res) => {
         waitMs: scrapeResult.waitMs ?? scrapeWaitMsResolved,
       },
       includeSetlists: wantSetlists,
+      dbSeedCount: dbSeedEvents.length,
+      liveFetchAttempted: true,
       sourceCounts: summarizeSources(events),
       disabledFilteredOut,
       sourceWarnings: sourceErrors.length > 0 ? sourceErrors : undefined,
