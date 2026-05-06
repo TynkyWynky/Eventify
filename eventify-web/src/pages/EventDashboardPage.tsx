@@ -607,12 +607,12 @@ export default function EventDashboardPage() {
   const resultCount = eventsWithAi.length;
   const locationLabel = origin.label || t("dash.banner.nearYou");
   const bannerEyebrow = origin.label
-    ? `${t("dash.banner.near")} ${origin.label}`
+    ? `${t("dash.banner.tonightIn")} ${origin.label}`
     : t("dash.banner.nearYou");
   const resultLabel = t(resultCount === 1 ? "dash.event.one" : "dash.event.many");
   const bannerHeadline = isLoading
     ? t("dash.loading.events")
-    : `${resultCount} ${resultLabel} ${origin.label ? `${t("dash.banner.near")} ${origin.label}` : t("dash.banner.nearYou")}`;
+    : `${resultCount} ${resultLabel}`;
   const bannerSubline = error
     ? error
     : filterLabel || `${t("dash.banner.tonightIn")} ${locationLabel}`;
