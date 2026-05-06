@@ -523,6 +523,7 @@ async function fetchRemoteEvents(
   const radiusKm = Math.max(1, Math.round(radiusKmRaw));
 
   const query = params?.query?.trim() || "";
+  const allowLiveFetch = opts?.allowLiveFetchOverride ?? EVENTS_ALLOW_LIVE_FETCH;
 
   const fetchSizeRaw =
     typeof params?.fetchSize === "number" && Number.isFinite(params.fetchSize)
@@ -539,7 +540,7 @@ async function fetchRemoteEvents(
   url.searchParams.set("preferDb", EVENTS_PREFER_DB_FIRST ? "1" : "0");
   url.searchParams.set(
     "allowLiveFetch",
-    (opts?.allowLiveFetchOverride ?? EVENTS_ALLOW_LIVE_FETCH) ? "1" : "0"
+    allowLiveFetch ? "1" : "0"
   );
   if (opts?.skipPriceEnrichment) url.searchParams.set("enrichPrices", "0");
   if (query) url.searchParams.set("keyword", query);
@@ -603,6 +604,7 @@ async function fetchRemoteEvents(
 export const apiEventsRepo: EventsRepo = {
   async list(params, opts) {
     const origin = resolveOrigin(params);
+    const hasQuery = Boolean(params?.query?.trim());
     const [organizerEvents, remoteEvents] = await Promise.all([
       listPublicOrganizerEvents({
         originLat: origin.lat,
@@ -611,7 +613,7 @@ export const apiEventsRepo: EventsRepo = {
       fetchRemoteEvents(params, {
         signal: opts?.signal,
         skipPriceEnrichment: true,
-        allowLiveFetchOverride: false,
+        allowLiveFetchOverride: hasQuery ? true : false,
       }).catch((err) => {
         if (
           lastRemoteListCache &&

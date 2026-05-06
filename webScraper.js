@@ -1576,6 +1576,24 @@ async function fetchJson(url, options) {
   return data && typeof data === "object" ? data : null;
 }
 
+async function postJson(url, body, options) {
+  const { data } = await axios.post(url, body, {
+    timeout: options.timeoutMs,
+    responseType: "json",
+    maxRedirects: 5,
+    headers: {
+      "User-Agent": options.userAgent || DEFAULT_USER_AGENT,
+      Accept: "application/json,text/plain,*/*",
+      "Content-Type": "application/json",
+    },
+    validateStatus(status) {
+      return status >= 200 && status < 500;
+    },
+  });
+
+  return data && typeof data === "object" ? data : null;
+}
+
 function buildEventDedupeKey(event) {
   const sourceKey = cleanText(event?.sourceId);
   if (sourceKey) return sourceKey;
@@ -1717,6 +1735,11 @@ function isUitInMechelenAgendaUrl(value) {
 function isUitInLeuvenAgendaUrl(value) {
   const url = cleanText(value)?.toLowerCase() || "";
   return url.includes("uitinleuven.be/agenda");
+}
+
+function isUitInVlaanderenMusicUrl(value) {
+  const url = cleanText(value)?.toLowerCase() || "";
+  return url.includes("uitinvlaanderen.be/agenda/muziek");
 }
 
 function isGenericUitInAgendaUrl(value) {
@@ -2608,6 +2631,339 @@ async function scrapeUitInLeuvenAgenda(sourceUrl, options) {
   return dedupeEvents(events, options.maxEventsPerSource);
 }
 
+function isMusicLikeEventRecord(event) {
+  const blob = [
+    cleanText(event?.title),
+    cleanText(event?.description),
+    cleanText(event?.genre),
+    cleanText(event?.category),
+    cleanText(event?.artistName),
+    cleanText(event?.organizerName),
+    cleanText(event?.venue),
+    ...(Array.isArray(event?.tags) ? event.tags : []),
+  ]
+    .filter(Boolean)
+    .join(" ");
+
+  return looksMusicLikeText(blob);
+}
+
+const UITIN_VLAANDEREN_GRAPHQL_URL = "https://www.uitinvlaanderen.be/api/graphql";
+const UITIN_VLAANDEREN_MUSIC_THEME_IDS = Object.freeze([
+  "1.8.1.0.0",
+  "1.8.2.0.0",
+  "1.8.3.1.0.0",
+  "1.8.3.2.0.0",
+  "1.8.3.3.0.0",
+  "1.8.4.0.0",
+  "1.8.3.5.0.0",
+]);
+const UITIN_VLAANDEREN_MUSIC_QUERY = `
+  query EventiumUitInVlaanderenMusic($themes: [String!], $limit: Float, $offset: Float, $dateFrom: DateTimeISO) {
+    events(themes: $themes, limit: $limit, offset: $offset, dateFrom: $dateFrom) {
+      totalItems
+      data {
+        __typename
+        ... on Event {
+          id
+          name
+          description
+          isOnline
+          onlineUrl
+          attendanceMode
+          bookingAvailability
+          workflowStatus
+          calendar {
+            summary {
+              small
+              large
+            }
+          }
+          subEvent {
+            startDate
+            endDate
+          }
+          location {
+            name
+            address {
+              locality
+              postalCode
+              streetAddress
+            }
+            geo {
+              lat
+              lng
+            }
+          }
+          organizer {
+            name
+          }
+          prices {
+            name
+            category
+            value
+          }
+          images {
+            url
+          }
+          bookingInfo {
+            url
+            urlLabel
+          }
+          types {
+            id
+            name
+          }
+          themes {
+            id
+            name
+          }
+          benefits
+        }
+      }
+    }
+  }
+`;
+
+function getEuropeBrusselsCalendarDayParts(value = new Date()) {
+  const formatter = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Europe/Brussels",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  });
+  const parts = formatter.formatToParts(value);
+  const pick = (type) => Number(parts.find((part) => part.type === type)?.value || 0);
+  return {
+    year: pick("year"),
+    month: pick("month"),
+    day: pick("day"),
+  };
+}
+
+function buildUitInVlaanderenDetailUrl(id, title) {
+  const normalizedId = cleanText(id);
+  if (!normalizedId) return null;
+
+  const slugSeed = normalizeAsciiishText(title || "event")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  const slug = slugSeed || "event";
+  return `https://www.uitinvlaanderen.be/agenda/e/${slug}/${normalizedId}`;
+}
+
+function pickUitInVlaanderenOccurrence(eventNode) {
+  const occurrences = Array.isArray(eventNode?.subEvent) ? eventNode.subEvent : [];
+  const validOccurrences = occurrences
+    .map((occurrence) => ({
+      start: cleanText(occurrence?.startDate),
+      end: cleanText(occurrence?.endDate),
+    }))
+    .filter((occurrence) => occurrence.start && hasConcreteIsoDate(occurrence.start))
+    .sort((left, right) => {
+      const leftTs = new Date(left.start).getTime();
+      const rightTs = new Date(right.start).getTime();
+      return leftTs - rightTs;
+    });
+
+  if (validOccurrences.length > 0) return validOccurrences[0];
+  return { start: null, end: null };
+}
+
+function extractUitInVlaanderenPrice(prices) {
+  const normalizedPrices = Array.isArray(prices) ? prices : [];
+  const amounts = normalizedPrices
+    .map((entry) => ({
+      category: cleanText(entry?.category)?.toLowerCase(),
+      value: toFiniteNumber(entry?.value),
+    }))
+    .filter((entry) => entry.value != null);
+
+  if (amounts.length === 0) {
+    return {
+      cost: null,
+      priceMin: null,
+      priceMax: null,
+      currency: "EUR",
+      isFree: false,
+    };
+  }
+
+  const sortedAmounts = amounts
+    .map((entry) => entry.value)
+    .filter((value) => Number.isFinite(value))
+    .sort((left, right) => left - right);
+  const basePrice =
+    amounts.find((entry) => entry.category === "base")?.value ?? sortedAmounts[0] ?? null;
+  const priceMin = sortedAmounts[0] ?? null;
+  const priceMax = sortedAmounts[sortedAmounts.length - 1] ?? null;
+  const isFree = priceMin != null && priceMin <= 0;
+
+  return {
+    cost: basePrice,
+    priceMin,
+    priceMax,
+    currency: "EUR",
+    isFree,
+  };
+}
+
+function normalizeUitInVlaanderenGraphqlEvent(eventNode, sourceUrl, sourceHost) {
+  if (!eventNode || cleanText(eventNode.__typename) !== "Event") return null;
+
+  const title = cleanText(eventNode.name);
+  const occurrence = pickUitInVlaanderenOccurrence(eventNode);
+  if (!title || !occurrence.start) return null;
+
+  const description = extractHtmlTextWithBreaks(eventNode.description);
+  const venue = cleanText(eventNode?.location?.name);
+  const city = cleanText(eventNode?.location?.address?.locality);
+  const category =
+    cleanText(eventNode?.types?.[0]?.name) ||
+    cleanText(eventNode?.themes?.[0]?.name) ||
+    "Concert";
+  const tags = [
+    ...toArray(eventNode?.themes).map((theme) => cleanText(theme?.name)).filter(Boolean),
+    ...toArray(eventNode?.types).map((type) => cleanText(type?.name)).filter(Boolean),
+  ];
+  const hasUiTPAS = toArray(eventNode?.benefits).some(
+    (benefit) => cleanText(benefit)?.toLowerCase() === "uitpas"
+  );
+  if (hasUiTPAS) tags.push("UiTPAS");
+
+  const price = extractUitInVlaanderenPrice(eventNode?.prices);
+  const detailUrl =
+    buildUitInVlaanderenDetailUrl(eventNode.id, title) ||
+    cleanText(eventNode?.onlineUrl) ||
+    sourceUrl;
+  const ticketUrl =
+    normalizeEventUrl(eventNode?.bookingInfo?.url, detailUrl) ||
+    normalizeEventUrl(eventNode?.onlineUrl, detailUrl) ||
+    detailUrl;
+
+  return createNormalizedScrapedEvent(
+    {
+      title,
+      description,
+      start: occurrence.start,
+      end: occurrence.end || occurrence.start,
+      venue,
+      address: cleanText(eventNode?.location?.address?.streetAddress),
+      city,
+      postalCode: cleanText(eventNode?.location?.address?.postalCode),
+      country: "Belgium",
+      lat: toFiniteNumber(eventNode?.location?.geo?.lat),
+      lng: toFiniteNumber(eventNode?.location?.geo?.lng),
+      isVirtual: Boolean(eventNode?.isOnline),
+      virtualLink: cleanText(eventNode?.onlineUrl),
+      url: detailUrl,
+      ticketUrl,
+      imageUrl: cleanText(eventNode?.images?.[0]?.url),
+      category,
+      genre: cleanText(eventNode?.themes?.[0]?.name),
+      tags,
+      organizerName: cleanText(eventNode?.organizer?.name),
+      status: cleanText(eventNode?.workflowStatus)?.toLowerCase() || "published",
+      cost: price.cost,
+      priceMin: price.priceMin,
+      priceMax: price.priceMax,
+      currency: price.currency,
+      isFree: price.isFree,
+    },
+    {
+      pageUrl: detailUrl,
+      sourceUrl,
+      sourceHost,
+    }
+  );
+}
+
+function parseUitInVlaanderenCard($, $card, sourceUrl) {
+  const link = normalizeEventUrl($card.attr("href"), sourceUrl);
+  const title = cleanText($card.find(".app-event-teaser__title").first().text());
+  const addressText = cleanText($card.find(".app-event-teaser__address").first().text());
+  const category = cleanText($card.find(".app-event-teaser__category span").first().text());
+  const rawDateText = cleanText($card.find(".app-event-teaser__date").first().text());
+  const venue = cleanText(addressText?.split(" - ")[0]);
+  const city = cleanText(addressText?.split(" - ").slice(1).join(" - "));
+  const teaserImage = resolveUrlMaybe($card.find("img").first().attr("src"), sourceUrl);
+  const hasUiTPAS = $card.find(".app-icon-logo-uitpas").length > 0;
+
+  return {
+    link,
+    title,
+    addressText,
+    category,
+    rawDateText,
+    venue,
+    city,
+    teaserImage,
+    hasUiTPAS,
+  };
+}
+
+function isLikelyUitInVlaanderenMusicCard(card) {
+  const blob = [
+    card?.title,
+    card?.venue,
+    card?.city,
+    card?.category,
+    card?.rawDateText,
+  ]
+    .filter(Boolean)
+    .join(" ");
+
+  return looksMusicLikeText(blob);
+}
+
+async function scrapeUitInVlaanderenMusic(sourceUrl, options) {
+  const sourceHost = hostnameFromUrl(sourceUrl);
+  const events = [];
+
+  const pageSize = Math.max(1, Math.min(options.maxEventsPerSource, 50));
+  const dateFrom = buildEuropeBrusselsIso(getEuropeBrusselsCalendarDayParts(), "00:00");
+
+  for (let offset = 0; events.length < options.maxEventsPerSource; offset += pageSize) {
+    const payload = await postJson(
+      UITIN_VLAANDEREN_GRAPHQL_URL,
+      {
+        query: UITIN_VLAANDEREN_MUSIC_QUERY,
+        variables: {
+          themes: UITIN_VLAANDEREN_MUSIC_THEME_IDS,
+          limit: pageSize,
+          offset,
+          dateFrom,
+        },
+      },
+      options
+    );
+
+    if (Array.isArray(payload?.errors) && payload.errors.length > 0) {
+      throw new Error(
+        cleanText(payload.errors.map((entry) => cleanText(entry?.message)).filter(Boolean).join("; ")) ||
+          "UiTinVlaanderen GraphQL error"
+      );
+    }
+
+    const pageEvents = toArray(payload?.data?.events?.data);
+    if (pageEvents.length === 0) break;
+
+    for (const eventNode of pageEvents) {
+      if (events.length >= options.maxEventsPerSource) break;
+      const normalized = normalizeUitInVlaanderenGraphqlEvent(
+        eventNode,
+        sourceUrl,
+        sourceHost
+      );
+      if (normalized && isMusicLikeEventRecord(normalized)) events.push(normalized);
+    }
+
+    if (pageEvents.length < pageSize) break;
+  }
+
+  return dedupeEvents(events, options.maxEventsPerSource);
+}
+
 function extractHtmlTextWithBreaks(fragmentHtml) {
   if (!fragmentHtml) return null;
   const normalized = String(fragmentHtml)
@@ -2759,6 +3115,7 @@ function pickCustomSourceScraper(sourceUrl) {
   if (isVisitNamurAgendaUrl(sourceUrl)) return scrapeVisitNamurAgenda;
   if (isTrixConcertsUrl(sourceUrl)) return scrapeTrixConcerts;
   if (isCchaConcertsUrl(sourceUrl)) return scrapeCchaConcerts;
+  if (isUitInVlaanderenMusicUrl(sourceUrl)) return scrapeUitInVlaanderenMusic;
   if (isUitInLeuvenAgendaUrl(sourceUrl)) return scrapeUitInLeuvenAgenda;
   if (isUitInMechelenAgendaUrl(sourceUrl)) return scrapeUitInMechelenAgenda;
   if (isGenericUitInAgendaUrl(sourceUrl)) return scrapeGenericUitInAgenda;
