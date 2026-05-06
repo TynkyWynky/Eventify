@@ -451,6 +451,7 @@ function inferLocationFromHost(sourceHost) {
     { pattern: /botanique\.be$/, city: "Brussels", country: "Belgium" },
     { pattern: /bozar\.be$/, city: "Brussels", country: "Belgium" },
     { pattern: /trixonline\.be$/, city: "Antwerp", country: "Belgium" },
+    { pattern: /deroma\.be$/, city: "Antwerp", country: "Belgium" },
     { pattern: /hetdepot\.be$/, city: "Leuven", country: "Belgium" },
     { pattern: /uitinleuven\.be$/, city: "Leuven", country: "Belgium" },
     { pattern: /uitin\.mechelen\.be$/, city: "Mechelen", country: "Belgium" },

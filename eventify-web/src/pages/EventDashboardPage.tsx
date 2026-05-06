@@ -317,6 +317,7 @@ export default function EventDashboardPage() {
           fetchSize: DASHBOARD_FETCH_SIZE,
           originLat: origin.lat,
           originLng: origin.lng,
+          originCity: origin.source === "city" ? origin.cityName || origin.label : undefined,
         },
         { signal: controller.signal }
       )

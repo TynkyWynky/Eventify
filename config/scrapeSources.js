@@ -1,19 +1,5 @@
-module.exports = [
-  "https://www.visit.brussels/content/visitbrussels/en/visitors/agenda/all-events-wizard/jcr:content/root/container/agendafinder.feed.json",
-  "https://visit.gent.be/en/calendar/events?f%5B0%5D=event_category%3A17",
-  "https://www.visitleuven.be/en/events",
-  "https://www.visitezliege.be/fr/catalogue/evenement/musique?commune=liege&compatibleindividuel=True",
-  "https://www.visitbruges.be/en/whats-on/events-calendar?field_tags%5B309%5D=309",
-  "https://www.visitmons.be/fr/agenda/concerts",
-  "https://www.charleroi.be/agenda",
-  "https://destination.visitnamur.eu/agenda/",
-  "https://www.visitlimburg.be/nl/hasselt/hasselt",
-  "https://www.brussels.be/agenda",
-  "https://www.trixonline.be/en/program/?type=concert",
-  "https://www.ccha.be/concerten",
-  "https://www.abconcerts.be/en/agenda",
-  "https://www.uitinvlaanderen.be/agenda/muziek",
-  "https://www.uitinleuven.be/agenda",
-  "https://uitin.mechelen.be/agenda?facets%5B1%5D%5Bwhat%5D%5B0.50.4.0.0%5D=Concert",
-  "https://www.eventbrite.com/b/belgium/music/",
-];
+const venueRegistry = require("./venueRegistry");
+
+module.exports = venueRegistry
+  .filter((entry) => entry && entry.active && entry.agendaUrl)
+  .map((entry) => entry.agendaUrl);

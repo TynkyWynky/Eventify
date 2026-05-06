@@ -11,6 +11,7 @@ export type EventsListParams = {
   // ✅ NEW: origin for distance calculation
   originLat?: number;
   originLng?: number;
+  originCity?: string;
 };
 
 export type EventsRepo = {

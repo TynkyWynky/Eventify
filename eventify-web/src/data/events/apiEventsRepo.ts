@@ -340,12 +340,14 @@ function buildRemoteFetchCacheKey(
       : opts?.sizeOverride ?? DEFAULT_FETCH_SIZE;
   const size = Math.max(1, Math.round(fetchSizeRaw));
   const query = params?.query?.trim() || "";
+  const originCity = params?.originCity?.trim() || "";
 
   return JSON.stringify({
     lat: Number(origin.lat.toFixed(4)),
     lng: Number(origin.lng.toFixed(4)),
     radiusKm,
     query,
+    originCity,
     size,
     includeScraped: INCLUDE_SCRAPED,
     preferDb: EVENTS_PREFER_DB_FIRST,
@@ -548,6 +550,9 @@ async function fetchRemoteEvents(
     "allowLiveFetch",
     allowLiveFetch ? "1" : "0"
   );
+  if (params?.originCity?.trim()) {
+    url.searchParams.set("scrapeCity", params.originCity.trim());
+  }
   if (opts?.skipPriceEnrichment) url.searchParams.set("enrichPrices", "0");
   if (query) url.searchParams.set("keyword", query);
 

@@ -5,6 +5,7 @@ const jwt = require("jsonwebtoken");
 const { Pool } = require("pg");
 require("dotenv").config();
 const configuredScrapeSources = require("./config/scrapeSources");
+const venueRegistry = require("./config/venueRegistry");
 const {
   DEFAULT_USER_AGENT,
   fetchScrapedEvents,
@@ -155,6 +156,102 @@ function resolveScrapeSourceUrls() {
   const envSources = parseDelimitedUrls(process.env.SCRAPE_SOURCE_URLS);
   const fileSources = parseDelimitedUrls(configuredScrapeSources.join(","));
   return mergeUniqueStrings(fileSources, envSources);
+}
+
+const BELGIUM_CITY_COORDS = Object.freeze([
+  { name: "Brussels", lat: 50.8466, lng: 4.3528 },
+  { name: "Antwerp", lat: 51.2194, lng: 4.4025 },
+  { name: "Ghent", lat: 51.0543, lng: 3.7174 },
+  { name: "Liege", lat: 50.6326, lng: 5.5797 },
+  { name: "Charleroi", lat: 50.4108, lng: 4.4446 },
+  { name: "Bruges", lat: 51.2093, lng: 3.2247 },
+  { name: "Namur", lat: 50.4669, lng: 4.8675 },
+  { name: "Leuven", lat: 50.8798, lng: 4.7005 },
+  { name: "Hasselt", lat: 50.9307, lng: 5.3325 },
+  { name: "Mons", lat: 50.4542, lng: 3.9567 },
+  { name: "Mechelen", lat: 51.0257, lng: 4.4776 },
+]);
+
+function normalizeVenueRegistryEntry(entry) {
+  if (!entry || typeof entry !== "object") return null;
+  const id = cleanText(entry.id);
+  const name = cleanText(entry.name);
+  const city = cleanText(entry.city);
+  const website = cleanText(entry.website);
+  const agendaUrl = cleanText(entry.agendaUrl);
+  if (!id || !name || !website || !agendaUrl) return null;
+  return {
+    id,
+    name,
+    city: city || "Belgium",
+    website,
+    agendaUrl,
+    kind: cleanText(entry.kind) || "venue",
+    active: entry.active !== false,
+  };
+}
+
+function getVenueRegistryEntries({ activeOnly = false } = {}) {
+  return (Array.isArray(venueRegistry) ? venueRegistry : [])
+    .map(normalizeVenueRegistryEntry)
+    .filter(Boolean)
+    .filter((entry) => (activeOnly ? entry.active : true));
+}
+
+function findNearestBelgiumCity(lat, lng) {
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+  let best = null;
+  for (const city of BELGIUM_CITY_COORDS) {
+    const distanceKm = haversineKm(lat, lng, city.lat, city.lng);
+    if (!best || distanceKm < best.distanceKm) {
+      best = { name: city.name, distanceKm };
+    }
+  }
+  return best;
+}
+
+function resolveScrapeCity(rawCity) {
+  const normalized = normalizeCityText(rawCity);
+  if (!normalized) return null;
+  const entry = BELGIUM_CITY_COORDS.find(
+    (city) => normalizeCityText(city.name) === normalized
+  );
+  return entry ? entry.name : null;
+}
+
+function resolveVenueEntriesForCity(cityName) {
+  const normalizedCity = resolveScrapeCity(cityName);
+  if (!normalizedCity) return [];
+  const normalizedTarget = normalizeCityText(normalizedCity);
+  return getVenueRegistryEntries({ activeOnly: true }).filter((entry) => {
+    const entryCity = normalizeCityText(entry.city);
+    return entryCity === normalizedTarget;
+  });
+}
+
+function resolveScrapeSourceUrlsForRequest({ scrapeCity, lat, lng } = {}) {
+  const explicitCity = resolveScrapeCity(scrapeCity);
+  const cityEntries = explicitCity ? resolveVenueEntriesForCity(explicitCity) : [];
+  if (cityEntries.length > 0) {
+    return {
+      scrapeCity: explicitCity,
+      venueEntries: cityEntries,
+      sourceUrls: mergeUniqueStrings(cityEntries.map((entry) => entry.agendaUrl)),
+      inferredFromCoords: false,
+    };
+  }
+
+  const nearest =
+    !explicitCity && Number.isFinite(lat) && Number.isFinite(lng)
+      ? findNearestBelgiumCity(lat, lng)
+      : null;
+
+  return {
+    scrapeCity: nearest && nearest.distanceKm <= 8 ? nearest.name : explicitCity,
+    venueEntries: [],
+    sourceUrls: SCRAPE_CONFIG.sourceUrls,
+    inferredFromCoords: Boolean(nearest && nearest.distanceKm <= 8 && !explicitCity),
+  };
 }
 
 const chatbotReplyCache = new Map();
@@ -3011,12 +3108,7 @@ const SCRAPE_SYNC_WAIT_MS = Math.max(
   toPositiveInt(process.env.SCRAPE_SYNC_WAIT_MS, 25000)
 );
 
-const scrapeCache = {
-  events: [],
-  fetchedAt: 0,
-  inFlight: null,
-  lastError: null,
-};
+const scrapeCacheByKey = new Map();
 const priceEnrichCache = new Map();
 const priceBlockedHosts = new Map();
 const priceEnrichRoundRobin = {
@@ -3044,17 +3136,39 @@ const SCRAPE_ALLOWED_CITIES_NORMALIZED = SCRAPE_CONFIG.allowedCities
   .map((value) => value.toLowerCase())
   .filter(Boolean);
 
-function isScrapeCacheFresh() {
-  if (!Array.isArray(scrapeCache.events) || scrapeCache.events.length === 0) {
+function getScrapeCacheKey(sourceUrls) {
+  return mergeUniqueStrings(sourceUrls || []).join("|");
+}
+
+function getScrapeCacheEntry(sourceUrls) {
+  const normalizedSourceUrls = mergeUniqueStrings(sourceUrls || []);
+  const key = getScrapeCacheKey(normalizedSourceUrls);
+  const existing = scrapeCacheByKey.get(key);
+  if (existing) return existing;
+
+  const created = {
+    key,
+    sourceUrls: normalizedSourceUrls,
+    events: [],
+    fetchedAt: 0,
+    inFlight: null,
+    lastError: null,
+  };
+  scrapeCacheByKey.set(key, created);
+  return created;
+}
+
+function isScrapeCacheFresh(entry) {
+  if (!entry || !Array.isArray(entry.events) || entry.events.length === 0) {
     return false;
   }
-  const ageMs = Date.now() - scrapeCache.fetchedAt;
+  const ageMs = Date.now() - entry.fetchedAt;
   return ageMs >= 0 && ageMs < SCRAPE_CACHE_CONFIG.ttlMs;
 }
 
-function getScrapeCacheAgeMs() {
-  if (!scrapeCache.fetchedAt) return null;
-  const ageMs = Date.now() - scrapeCache.fetchedAt;
+function getScrapeCacheAgeMs(entry) {
+  if (!entry?.fetchedAt) return null;
+  const ageMs = Date.now() - entry.fetchedAt;
   return ageMs >= 0 ? ageMs : 0;
 }
 
@@ -3499,9 +3613,9 @@ function filterDisabledApiEvents(events, disabledKeys) {
 }
 
 
-function buildScrapeFetchOptions() {
+function buildScrapeFetchOptions(sourceUrls = SCRAPE_CONFIG.sourceUrls) {
   return {
-    sourceUrls: SCRAPE_CONFIG.sourceUrls,
+    sourceUrls: mergeUniqueStrings(sourceUrls || []),
     maxEvents: SCRAPE_CONFIG.maxEvents,
     maxEventsPerSource: SCRAPE_CONFIG.maxEventsPerSource,
     maxLinksPerSource: SCRAPE_CONFIG.maxLinksPerSource,
@@ -3519,68 +3633,74 @@ function buildScrapeFetchOptions() {
   };
 }
 
-function startScrapeRefresh() {
-  if (scrapeCache.inFlight) return scrapeCache.inFlight;
+function startScrapeRefresh(sourceUrls = SCRAPE_CONFIG.sourceUrls) {
+  const entry = getScrapeCacheEntry(sourceUrls);
+  if (entry.inFlight) return entry.inFlight;
 
-  scrapeCache.inFlight = (async () => {
+  entry.inFlight = (async () => {
     try {
-      const events = await fetchScrapedEvents(buildScrapeFetchOptions());
-      scrapeCache.events = Array.isArray(events) ? events : [];
-      scrapeCache.fetchedAt = Date.now();
-      scrapeCache.lastError = null;
-      return scrapeCache.events;
+      const events = await fetchScrapedEvents(buildScrapeFetchOptions(entry.sourceUrls));
+      entry.events = Array.isArray(events) ? events : [];
+      entry.fetchedAt = Date.now();
+      entry.lastError = null;
+      return entry.events;
     } catch (err) {
-      scrapeCache.lastError = String(err?.message || err);
+      entry.lastError = String(err?.message || err);
       throw err;
     } finally {
-      scrapeCache.inFlight = null;
+      entry.inFlight = null;
     }
   })();
 
-  return scrapeCache.inFlight;
+  return entry.inFlight;
 }
 
-function ensureScrapeWarmupStarted() {
-  if (!SCRAPE_CONFIG.enabled || SCRAPE_CONFIG.sourceUrls.length === 0) return;
-  if (isScrapeCacheFresh()) return;
-  if (scrapeCache.inFlight) return;
+function ensureScrapeWarmupStarted(sourceUrls = SCRAPE_CONFIG.sourceUrls) {
+  const entry = getScrapeCacheEntry(sourceUrls);
+  if (!SCRAPE_CONFIG.enabled || entry.sourceUrls.length === 0) return;
+  if (isScrapeCacheFresh(entry)) return;
+  if (entry.inFlight) return;
 
-  startScrapeRefresh().catch(() => {
+  startScrapeRefresh(entry.sourceUrls).catch(() => {
     // Error is captured in scrapeCache.lastError.
   });
 }
 
-async function getScrapedEventsForRequest({ waitMsOverride } = {}) {
+async function getScrapedEventsForRequest({
+  waitMsOverride,
+  sourceUrls = SCRAPE_CONFIG.sourceUrls,
+} = {}) {
   const waitMs = Math.max(
     250,
     toPositiveInt(waitMsOverride, SCRAPE_CACHE_CONFIG.requestWaitMs)
   );
+  const entry = getScrapeCacheEntry(sourceUrls);
 
-  if (!SCRAPE_CONFIG.enabled || SCRAPE_CONFIG.sourceUrls.length === 0) {
+  if (!SCRAPE_CONFIG.enabled || entry.sourceUrls.length === 0) {
     return { events: [], cacheMode: "disabled", ageMs: null, timedOut: false, waitMs };
   }
 
-  if (isScrapeCacheFresh()) {
+  if (isScrapeCacheFresh(entry)) {
     return {
-      events: scrapeCache.events,
+      events: entry.events,
       cacheMode: "fresh",
-      ageMs: getScrapeCacheAgeMs(),
+      ageMs: getScrapeCacheAgeMs(entry),
       timedOut: false,
-      lastError: scrapeCache.lastError,
+      lastError: entry.lastError,
       waitMs,
     };
   }
 
-  ensureScrapeWarmupStarted();
+  ensureScrapeWarmupStarted(entry.sourceUrls);
 
   // Serve stale cache immediately while refresh runs in background.
-  if (Array.isArray(scrapeCache.events) && scrapeCache.events.length > 0) {
+  if (Array.isArray(entry.events) && entry.events.length > 0) {
     return {
-      events: scrapeCache.events,
+      events: entry.events,
       cacheMode: "stale",
-      ageMs: getScrapeCacheAgeMs(),
+      ageMs: getScrapeCacheAgeMs(entry),
       timedOut: false,
-      lastError: scrapeCache.lastError,
+      lastError: entry.lastError,
       waitMs,
     };
   }
@@ -3590,7 +3710,7 @@ async function getScrapedEventsForRequest({ waitMsOverride } = {}) {
   let timedOut = false;
   try {
     await Promise.race([
-      scrapeCache.inFlight,
+      entry.inFlight,
       new Promise((_, reject) =>
         setTimeout(() => {
           timedOut = true;
@@ -3601,21 +3721,21 @@ async function getScrapedEventsForRequest({ waitMsOverride } = {}) {
   } catch (err) {
     const msg = String(err?.message || err);
     if (msg !== "scrape_wait_timeout") {
-      scrapeCache.lastError = msg;
+      entry.lastError = msg;
     }
   }
 
   return {
-    events: Array.isArray(scrapeCache.events) ? scrapeCache.events : [],
+    events: Array.isArray(entry.events) ? entry.events : [],
     cacheMode:
-      scrapeCache.events.length > 0
+      entry.events.length > 0
         ? timedOut
           ? "warm_after_timeout"
           : "fresh_after_wait"
         : "empty_after_timeout",
-    ageMs: getScrapeCacheAgeMs(),
+    ageMs: getScrapeCacheAgeMs(entry),
     timedOut,
-    lastError: scrapeCache.lastError,
+    lastError: entry.lastError,
     waitMs: effectiveWaitMs,
   };
 }
@@ -5538,6 +5658,7 @@ app.get("/events", async (req, res) => {
       scrapeWaitMs = "",
       preferDb = "1",
       allowLiveFetch = "1",
+      scrapeCity = "",
     } = req.query;
 
     const latNum = Number(lat);
@@ -5561,6 +5682,12 @@ app.get("/events", async (req, res) => {
       : toPositiveInt(scrapeWaitMs, SCRAPE_CACHE_CONFIG.requestWaitMs);
     const preferDbFirst = toBool(preferDb, true);
     const allowLiveFetchBool = toBool(allowLiveFetch, true);
+    const scrapeSelection = resolveScrapeSourceUrlsForRequest({
+      scrapeCity,
+      lat: latNum,
+      lng: lngNum,
+    });
+    const scrapeSourceUrls = scrapeSelection.sourceUrls;
     let dbSeedEvents = [];
 
     if (preferDbFirst) {
@@ -5664,11 +5791,12 @@ app.get("/events", async (req, res) => {
     const wantScraped =
       toBool(includeScraped, true) &&
       SCRAPE_CONFIG.enabled &&
-      SCRAPE_CONFIG.sourceUrls.length > 0;
+      scrapeSourceUrls.length > 0;
 
     const scrapePromise = wantScraped
       ? getScrapedEventsForRequest({
-          waitMsOverride: scrapeWaitMsResolved,
+        waitMsOverride: scrapeWaitMsResolved,
+        sourceUrls: scrapeSourceUrls,
         }).catch((err) => {
           sourceErrors.push({ source: "webscrape", error: String(err.message || err) });
           return {
@@ -5696,11 +5824,12 @@ app.get("/events", async (req, res) => {
       tmEvents.length === 0 &&
       (scrapeResult.events || []).length === 0 &&
       scrapeResult.cacheMode === "empty_after_timeout" &&
-      scrapeCache.inFlight
+      getScrapeCacheEntry(scrapeSourceUrls).inFlight
     ) {
       try {
         const warmedScrapeResult = await getScrapedEventsForRequest({
           waitMsOverride: SCRAPE_SYNC_WAIT_MS,
+          sourceUrls: scrapeSourceUrls,
         });
         if ((warmedScrapeResult.events || []).length > 0) {
           scrapeResult = warmedScrapeResult;
@@ -5811,7 +5940,17 @@ app.get("/events", async (req, res) => {
       radiusKm: radiusNum,
       classificationName,
       includeScraped: wantScraped,
-      scrapeConfiguredSources: SCRAPE_CONFIG.sourceUrls.length,
+      scrapeConfiguredSources: scrapeSourceUrls.length,
+      scrapeCity: scrapeSelection.scrapeCity,
+      scrapeCityInferredFromCoords: scrapeSelection.inferredFromCoords,
+      scrapeVenues: scrapeSelection.venueEntries.map((entry) => ({
+        id: entry.id,
+        name: entry.name,
+        city: entry.city,
+        website: entry.website,
+        agendaUrl: entry.agendaUrl,
+        kind: entry.kind,
+      })),
       scrapeLocationFilters: {
         allowedCountries: SCRAPE_CONFIG.allowedCountries,
         allowedCities: SCRAPE_CONFIG.allowedCities,
@@ -5850,6 +5989,36 @@ app.get("/events", async (req, res) => {
     });
   } catch (err) {
     return res.status(500).json({ ok: false, error: String(err) });
+  }
+});
+
+app.get("/venues", async (req, res) => {
+  try {
+    const city = cleanText(req.query?.city);
+    const activeOnly = toBool(req.query?.activeOnly, true);
+    const normalizedCity = resolveScrapeCity(city);
+    const entries = normalizedCity
+      ? getVenueRegistryEntries({ activeOnly }).filter(
+          (entry) => normalizeCityText(entry.city) === normalizeCityText(normalizedCity)
+        )
+      : getVenueRegistryEntries({ activeOnly });
+
+    return res.json({
+      ok: true,
+      count: entries.length,
+      city: normalizedCity || null,
+      venues: entries.map((entry) => ({
+        id: entry.id,
+        name: entry.name,
+        city: entry.city,
+        website: entry.website,
+        agendaUrl: entry.agendaUrl,
+        kind: entry.kind,
+        active: entry.active,
+      })),
+    });
+  } catch (err) {
+    return res.status(500).json({ ok: false, error: String(err?.message || err) });
   }
 });
 

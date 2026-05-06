@@ -51,6 +51,8 @@ De backend kan nu events uit extra websites scrapen en samenvoegen met Ticketmas
 - `GET /events` combineert:
   - Ticketmaster events
   - JSON-LD (`schema.org/Event`) scraping van URL's in `SCRAPE_SOURCE_URLS`
+  - Een gecureerde venue-registry (`config/venueRegistry.js`) met `name`, `city`, `website` en `agendaUrl`
+  - Bij city-based origin kan `/events` met `scrapeCity=<City>` gericht scrapen op venue/city-bronnen voor die stad
   - Officiële city/venue agenda's worden direct ondersteund, inclusief aangepaste parsers voor o.a. `visit.brussels`, `visit.gent`, `visitleuven`, `visitezliege`, `visitmons`, `visitlimburg` (Hasselt), `charleroi.be`, `trixonline.be`, `ccha.be` en `uitin.mechelen.be`
   - Eventbrite listing pages (`/d/.../events/`) blijven ondersteund als optionele extra bron
   - Venue agenda pages werken ook (bv. `.../agenda`, `.../calendar`) zolang event detailpagina's JSON-LD Event bevatten
@@ -219,10 +221,11 @@ Postgres draait niet op Vercel. Gebruik een managed DB (Neon, Supabase, Render, 
   - `api/[...all].js` -> Express app
   - `api/cron/sync.js` -> scheduled sync endpoint
 - Belangrijke runtime routes:
-  - `GET /api/health`
-  - `GET /api/events`
-  - `POST /api/chatbot`
-  - `POST /api/copilot`
+- `GET /api/health`
+- `GET /api/events`
+- `GET /api/venues`
+- `POST /api/chatbot`
+- `POST /api/copilot`
 
 ### 2) Environment variables in Vercel
 
