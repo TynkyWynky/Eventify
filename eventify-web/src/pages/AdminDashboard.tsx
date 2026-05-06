@@ -17,6 +17,7 @@ import {
   subscribeOrganizerEventsChanged,
   type OrganizerEvent,
 } from "../data/events/organizerEventsStore";
+import { invalidateRemoteEventsCache } from "../data/events/apiEventsRepo";
 
 function StatusPill({ status }: { status: OrganizerEvent["status"] }) {
   return <span className={`adminStatusPill adminStatus_${status}`}>{status}</span>;
@@ -330,6 +331,7 @@ export default function AdminDashboard() {
         token,
         body: { disabled: false },
       });
+      invalidateRemoteEventsCache(eventKey);
       setRefreshKey((k) => k + 1);
     } catch (e: unknown) {
       setActionError(e instanceof Error ? e.message : String(e));

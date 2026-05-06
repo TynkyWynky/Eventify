@@ -5617,7 +5617,9 @@ async function fetchPublishedEventsFromDb({
   );
 
   const mapped = (result.rows || []).map((row) => mapDbEventRowToApiEvent(row));
-  const filtered = mapped
+  const disabledKeys = await getDisabledEventKeysOptional();
+  const moderationFiltered = filterDisabledApiEvents(mapped, disabledKeys).events;
+  const filtered = moderationFiltered
     .filter((event) => matchesDbClassification(event, classificationName))
     .filter((event) => matchesDbEventKeyword(event, keyword))
     .filter((event) => matchesDbDistance(event, { lat, lng, radiusKm }));

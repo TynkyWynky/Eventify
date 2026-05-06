@@ -310,6 +310,13 @@ const remoteListCacheByKey = new Map<string, { at: number; items: EventItem[] }>
 const remoteListInFlightByKey = new Map<string, Promise<EventItem[]>>();
 let lastRemoteListCache: { at: number; items: EventItem[] } | null = null;
 
+export function invalidateRemoteEventsCache(eventId?: string) {
+  if (eventId) remoteById.delete(eventId);
+  else remoteById.clear();
+  remoteListCacheByKey.clear();
+  lastRemoteListCache = null;
+}
+
 function remember(items: EventItem[]) {
   for (const item of items) {
     remoteById.set(item.id, item);

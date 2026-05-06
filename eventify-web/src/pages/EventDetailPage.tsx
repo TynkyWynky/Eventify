@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import type { EventItem } from "../events/eventsStore";
 import { eventsRepo } from "../data/events";
+import { invalidateRemoteEventsCache } from "../data/events/apiEventsRepo";
 import { getGenreFallbackImage } from "../data/events/genreImages";
 import { rememberViewedEvent } from "../data/events/recentlyViewedEventsStore";
 import { useAuth } from "../auth/AuthContext";
@@ -1410,6 +1411,7 @@ export default function EventDetailPage() {
                       }
                     );
 
+                    invalidateRemoteEventsCache(eventId);
                     notify("Event disabled.", "success");
                     navigate(backTo);
                   } catch (err: unknown) {
