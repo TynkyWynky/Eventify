@@ -1051,7 +1051,10 @@ export default function EventDetailPage() {
   }
 
   const fullAddress = `${event.addressLine}, ${event.postalCode} ${event.city}, ${event.country}`;
-  const googleMapsUrl = `https://www.google.com/maps?q=${event.latitude},${event.longitude}`;
+  const hasExactCoords = Number.isFinite(event.latitude) && Number.isFinite(event.longitude);
+  const googleMapsUrl = hasExactCoords
+    ? `https://www.google.com/maps?q=${event.latitude},${event.longitude}`
+    : `https://www.google.com/maps?q=${encodeURIComponent(fullAddress)}`;
   const startLabel = formatStartIso(event.startIso) || event.dateLabel;
   const priceRangeLabel = formatPriceRangeLabel(event);
   const cleanDescription = sanitizeDetailDescription(event.description, {

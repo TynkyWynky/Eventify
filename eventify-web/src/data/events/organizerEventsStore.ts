@@ -66,6 +66,10 @@ function num(v: unknown, fallback = 0): number {
   const n = typeof v === "number" ? v : Number(v);
   return Number.isFinite(n) ? n : fallback;
 }
+function numOrNaN(v: unknown): number {
+  const n = typeof v === "number" ? v : Number(v);
+  return Number.isFinite(n) ? n : Number.NaN;
+}
 function arrStr(v: unknown): string[] {
   return Array.isArray(v) ? v.filter((x) => typeof x === "string") : [];
 }
@@ -167,8 +171,8 @@ function coerceOrganizerEvent(item: unknown): OrganizerEvent | null {
   const ownerId = str(item.ownerId);
   if (!id || !ownerId) return null;
 
-  const latitude = num(item.latitude, BRUSSELS.lat);
-  const longitude = num(item.longitude, BRUSSELS.lng);
+  const latitude = numOrNaN(item.latitude);
+  const longitude = numOrNaN(item.longitude);
 
   return {
     id,
@@ -251,9 +255,10 @@ function applyOriginDistanceAndTrending(
   origin: { lat: number; lng: number }
 ): EventItem[] {
   return items.map((e) => {
-    const d =
-      Math.round(haversineKm(origin.lat, origin.lng, e.latitude, e.longitude) * 10) /
-      10;
+    const hasCoords = Number.isFinite(e.latitude) && Number.isFinite(e.longitude);
+    const d = hasCoords
+      ? Math.round(haversineKm(origin.lat, origin.lng, e.latitude, e.longitude) * 10) / 10
+      : 9_999;
 
     const activePromo = promotionIsActive(e);
 

@@ -266,7 +266,8 @@ export default function EventDashboardPage() {
   const [isOffline, setIsOffline] = useState(
     typeof navigator !== "undefined" ? !navigator.onLine : false
   );
-  const autoRetryRef = useRef(false);
+  const autoRetryCountRef = useRef(0);
+  const autoRetryTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
     const onOnline = () => setIsOffline(false);
@@ -288,6 +289,14 @@ export default function EventDashboardPage() {
   useEffect(() => {
     return subscribeOrganizerEventsChanged(() => setReloadTick((t) => t + 1));
   }, []);
+
+  useEffect(() => {
+    autoRetryCountRef.current = 0;
+    if (autoRetryTimerRef.current != null) {
+      window.clearTimeout(autoRetryTimerRef.current);
+      autoRetryTimerRef.current = null;
+    }
+  }, [q, selectedStyle, distanceFilterEnabled, origin.lat, origin.lng]);
 
   // Load one broader event set, then derive the list view locally.
   useEffect(() => {
@@ -611,19 +620,26 @@ export default function EventDashboardPage() {
     hasLoadedOnce &&
     !isLoading &&
     !error &&
-    !autoRetryRef.current &&
     allEvents.length === 0 &&
     !q &&
     selectedStyle === "All" &&
-    !distanceFilterEnabled;
+    !distanceFilterEnabled &&
+    autoRetryCountRef.current < 4;
 
   useEffect(() => {
     if (!shouldAutoRetry) return;
-    autoRetryRef.current = true;
-    const timer = window.setTimeout(() => {
+    const delayMs = 900 + autoRetryCountRef.current * 1200;
+    autoRetryTimerRef.current = window.setTimeout(() => {
+      autoRetryCountRef.current += 1;
       setReloadTick((tick) => tick + 1);
-    }, 700);
-    return () => window.clearTimeout(timer);
+      autoRetryTimerRef.current = null;
+    }, delayMs);
+    return () => {
+      if (autoRetryTimerRef.current != null) {
+        window.clearTimeout(autoRetryTimerRef.current);
+        autoRetryTimerRef.current = null;
+      }
+    };
   }, [shouldAutoRetry]);
 
   return (

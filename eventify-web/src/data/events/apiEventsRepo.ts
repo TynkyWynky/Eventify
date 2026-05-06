@@ -167,6 +167,10 @@ function toFiniteOrNull(value: unknown) {
   return Number.isFinite(n) ? n : null;
 }
 
+function isLikelyBelgiumCoordinate(lat: number, lng: number) {
+  return lat >= 49 && lat <= 52 && lng >= 2 && lng <= 7;
+}
+
 function hashText(input: string) {
   let h = 0;
   for (let i = 0; i < input.length; i++) {
@@ -368,11 +372,12 @@ function withDistanceFromCurrentOrigin(items: EventItem[], origin: { lat: number
     const latRaw = toFiniteOrNull(item.latitude);
     const lngRaw = toFiniteOrNull(item.longitude);
     const cityCoords = findBelgiumCityCoords(item.city);
-    const hasCoords = latRaw != null && lngRaw != null;
+    const hasCoords =
+      latRaw != null && lngRaw != null && isLikelyBelgiumCoordinate(latRaw, lngRaw);
     const hasCityCoords = cityCoords != null;
 
-    const lat = latRaw ?? (hasCityCoords ? cityCoords.lat : origin.lat);
-    const lng = lngRaw ?? (hasCityCoords ? cityCoords.lng : origin.lng);
+    const lat = hasCoords ? latRaw : hasCityCoords ? cityCoords.lat : Number.NaN;
+    const lng = hasCoords ? lngRaw : hasCityCoords ? cityCoords.lng : Number.NaN;
     const distanceKm = hasCoords || hasCityCoords
       ? Math.round(haversineKm(origin.lat, origin.lng, lat, lng) * 10) / 10
       : 9_999;
@@ -404,11 +409,12 @@ function mapApiEventToItem(
   const latRaw = toFiniteOrNull(apiEvent.lat);
   const lngRaw = toFiniteOrNull(apiEvent.lng);
   const cityCoords = findBelgiumCityCoords(apiEvent.city);
-  const hasApiCoords = latRaw != null && lngRaw != null;
+  const hasApiCoords =
+    latRaw != null && lngRaw != null && isLikelyBelgiumCoordinate(latRaw, lngRaw);
   const hasCityCoords = cityCoords != null;
 
-  const lat = latRaw ?? (hasCityCoords ? cityCoords.lat : opts.originLat);
-  const lng = lngRaw ?? (hasCityCoords ? cityCoords.lng : opts.originLng);
+  const lat = hasApiCoords ? latRaw : hasCityCoords ? cityCoords.lat : Number.NaN;
+  const lng = hasApiCoords ? lngRaw : hasCityCoords ? cityCoords.lng : Number.NaN;
   const distanceKm = hasApiCoords || hasCityCoords
     ? Math.round(haversineKm(opts.originLat, opts.originLng, lat, lng) * 10) / 10
     : 9_999;

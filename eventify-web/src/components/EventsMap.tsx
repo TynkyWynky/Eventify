@@ -70,6 +70,10 @@ function isFiniteNumber(n: unknown): n is number {
   return typeof n === "number" && Number.isFinite(n);
 }
 
+function isLikelyBelgiumCoordinate(lat: number, lng: number) {
+  return lat >= 49 && lat <= 52 && lng >= 2 && lng <= 7;
+}
+
 export default function EventsMap({
   events,
   origin,
@@ -84,24 +88,38 @@ export default function EventsMap({
   const navigate = useNavigate();
 
   const mappable = useMemo(() => {
-    return events
-      .filter((e) => isFiniteNumber(e.latitude) && isFiniteNumber(e.longitude))
-      .map((e) => {
+    const grouped = new Map<string, EventItem[]>();
+    for (const event of events) {
+      if (!isFiniteNumber(event.latitude) || !isFiniteNumber(event.longitude)) continue;
+      if (!isLikelyBelgiumCoordinate(event.latitude, event.longitude)) continue;
+      const key = `${event.latitude.toFixed(4)}:${event.longitude.toFixed(4)}`;
+      const bucket = grouped.get(key) ?? [];
+      bucket.push(event);
+      grouped.set(key, bucket);
+    }
+
+    return [...grouped.values()].flatMap((bucket) =>
+      bucket.map((e, index) => {
         const tag0 = e.tags?.[0] || "All";
         const fallback = getGenreFallbackImage(tag0);
+        const angle = (Math.PI * 2 * index) / Math.max(1, bucket.length);
+        const radius = bucket.length > 1 ? 0.0035 * Math.ceil(index / 6) : 0;
+        const lat = e.latitude + Math.sin(angle) * radius;
+        const lng = e.longitude + Math.cos(angle) * radius;
 
         return {
           id: e.id,
           title: e.title,
           venue: e.venue,
           city: e.city,
-          lat: e.latitude,
-          lng: e.longitude,
+          lat,
+          lng,
           tag0,
           fallback,
           imageUrl: (e.imageUrl || "").trim(),
         };
-      });
+      })
+    );
   }, [events]);
 
   const bounds = useMemo(() => {
