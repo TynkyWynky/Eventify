@@ -254,5 +254,9 @@ Optioneel maar aanbevolen:
 
 ### 4) Frontend koppelen
 
-- Voor aparte frontend deploy: zet `VITE_API_BASE_URL=https://<backend>.vercel.app/api`
-- Voor frontend + backend in dezelfde Vercel app: zet `VITE_API_BASE_URL=/api`
+Frontend defaults zitten nu in `eventify-web/src/config/appConfig.ts`, zodat een
+normale deploy geen extra frontend env vars in Vercel nodig heeft.
+
+- Voor frontend + backend in dezelfde Vercel app: geen extra frontend env nodig, de app valt in productie automatisch terug op `/api`
+- Voor lokale dev zonder override: de app gebruikt automatisch `http://localhost:3000`
+- Alleen voor een aparte frontend deploy naar een andere backend: zet `VITE_API_BASE_URL=https://<backend>.vercel.app/api`

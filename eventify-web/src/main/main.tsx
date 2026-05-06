@@ -6,6 +6,7 @@ import { AuthProvider } from "../auth/AuthContext";
 import { NotificationProvider } from "../components/NotificationProvider";
 import AppLoadingScreen from "../components/AppLoadingScreen";
 import { I18nProvider } from "../i18n/I18nContext";
+import { appConfig } from "../config/appConfig";
 import "leaflet/dist/leaflet.css";
 import "../styles/ui.css";
 
@@ -24,7 +25,7 @@ async function clearEventifyCaches() {
 }
 
 if ("serviceWorker" in navigator) {
-  const swEnabled = import.meta.env.PROD && String(import.meta.env.VITE_ENABLE_SW || "").toLowerCase() === "true";
+  const swEnabled = import.meta.env.PROD && appConfig.serviceWorkerEnabled;
 
   if (!swEnabled) {
     navigator.serviceWorker

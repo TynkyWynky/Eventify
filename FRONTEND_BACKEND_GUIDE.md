@@ -75,13 +75,19 @@ Your existing pages do not need changes because they already read from:
   - `startIso`
   - `/setlists?artistName=...` for recent setlists
 
-Repo mode is env-driven:
-- `VITE_EVENTS_REPO_MODE=auto` (default): API first, fallback to mock
+Repo mode can still be overridden by env, but shared defaults now live in:
+- `eventify-web/src/config/appConfig.ts`
+
+Frontend defaults:
+- production fallback API base: `/api`
+- local dev fallback API base: `http://localhost:3000`
+- repo mode default: `api`
+
+Optional frontend env overrides:
+- `VITE_EVENTS_REPO_MODE=auto`: API first, fallback to mock
 - `VITE_EVENTS_REPO_MODE=api`: API only
 - `VITE_EVENTS_REPO_MODE=mock`: mock only
-
-Frontend env file:
-- copy `eventify-web/.env.example` to `.env`
+- copy `eventify-web/.env.example` to `.env` only if you want to override the checked-in defaults
 
 Backend env file:
 - copy `.env.example` to `.env`
@@ -94,7 +100,7 @@ Backend env file:
 - `venue` <- `venue`
 - `city` <- `city`
 - `dateLabel` <- formatted `start`
-- `distanceKm` <- computed from default origin (`VITE_DEFAULT_LAT/LNG`) and event coords
+- `distanceKm` <- computed from default origin (`appConfig.defaultLocation`) and event coords
 - `tags` <- inferred from title/artist (or forced by selected filter)
 
 Additional backend fields now available in `GET /events` for DB sync:

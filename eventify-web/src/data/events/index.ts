@@ -1,11 +1,7 @@
 import type { EventsRepo } from "./eventsRepo";
 import { apiEventsRepo } from "./apiEventsRepo";
 import { mockEventsRepo } from "./mockEventsRepo";
-
-type RepoMode = "auto" | "api" | "mock";
-
-const modeRaw = (import.meta.env.VITE_EVENTS_REPO_MODE as string | undefined) || "api";
-const mode = modeRaw.toLowerCase() as RepoMode;
+import { appConfig } from "../../config/appConfig";
 
 export const eventsRepo: EventsRepo =
-  mode === "mock" ? mockEventsRepo : apiEventsRepo;
+  appConfig.eventsRepoMode === "mock" ? mockEventsRepo : apiEventsRepo;

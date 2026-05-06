@@ -7,6 +7,7 @@ import {
 import { getGenreFallbackImage } from "./genreImages";
 import { apiBaseForUrlConstructor } from "../../auth/apiClient";
 import { BELGIUM_CITIES } from "../location/locationStore";
+import { appConfig } from "../../config/appConfig";
 
 type ApiEvent = {
   source?: string | null;
@@ -161,12 +162,6 @@ function formatPriceLabel(opts: {
   return "Price unknown";
 }
 
-function toEnvNum(raw: string | undefined, fallback: number) {
-  if (!raw) return fallback;
-  const n = Number(raw);
-  return Number.isFinite(n) ? n : fallback;
-}
-
 function toFiniteOrNull(value: unknown) {
   const n = typeof value === "number" ? value : Number(value);
   return Number.isFinite(n) ? n : null;
@@ -287,36 +282,15 @@ function applyFilters(items: EventItem[], params?: EventsListParams) {
   });
 }
 
-const DEFAULT_LAT = toEnvNum(import.meta.env.VITE_DEFAULT_LAT, 50.8503);
-const DEFAULT_LNG = toEnvNum(import.meta.env.VITE_DEFAULT_LNG, 4.3517);
+const DEFAULT_LAT = appConfig.defaultLocation.lat;
+const DEFAULT_LNG = appConfig.defaultLocation.lng;
 const DEFAULT_RADIUS_KM = 50;
-const DEFAULT_FETCH_SIZE = Math.max(
-  1,
-  Math.floor(toEnvNum(import.meta.env.VITE_EVENTS_FETCH_SIZE, 240))
-);
-const EVENTS_FETCH_TIMEOUT_MS = Math.max(
-  1200,
-  Math.floor(toEnvNum(import.meta.env.VITE_EVENTS_FETCH_TIMEOUT_MS, 15000))
-);
-const EVENTS_CACHE_TTL_MS = Math.max(
-  3000,
-  Math.floor(toEnvNum(import.meta.env.VITE_EVENTS_CACHE_TTL_MS, 60000))
-);
-const INCLUDE_SCRAPED = !["0", "false", "no", "off"].includes(
-  String(import.meta.env.VITE_EVENTS_INCLUDE_SCRAPED ?? "1")
-    .trim()
-    .toLowerCase()
-);
-const EVENTS_PREFER_DB_FIRST = !["0", "false", "no", "off"].includes(
-  String(import.meta.env.VITE_EVENTS_PREFER_DB_FIRST ?? "1")
-    .trim()
-    .toLowerCase()
-);
-const EVENTS_ALLOW_LIVE_FETCH = !["0", "false", "no", "off"].includes(
-  String(import.meta.env.VITE_EVENTS_ALLOW_LIVE_FETCH ?? "1")
-    .trim()
-    .toLowerCase()
-);
+const DEFAULT_FETCH_SIZE = appConfig.events.fetchSize;
+const EVENTS_FETCH_TIMEOUT_MS = appConfig.events.fetchTimeoutMs;
+const EVENTS_CACHE_TTL_MS = appConfig.events.cacheTtlMs;
+const INCLUDE_SCRAPED = appConfig.events.includeScraped;
+const EVENTS_PREFER_DB_FIRST = appConfig.events.preferDbFirst;
+const EVENTS_ALLOW_LIVE_FETCH = appConfig.events.allowLiveFetch;
 
 function resolveOrigin(params?: EventsListParams) {
   const originLat = toFiniteOrNull(params?.originLat);

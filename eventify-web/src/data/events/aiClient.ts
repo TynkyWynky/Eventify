@@ -1,5 +1,6 @@
 import type { EventItem } from "../../events/eventsStore";
 import { API_BASE_URL } from "../../auth/apiClient";
+import { appConfig } from "../../config/appConfig";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -94,14 +95,8 @@ export type AiSuccessPredictorResponse = {
   error?: string;
 };
 
-function toEnvNum(raw: string | undefined, fallback: number) {
-  if (!raw) return fallback;
-  const n = Number(raw);
-  return Number.isFinite(n) ? n : fallback;
-}
-
-export const DEFAULT_USER_LAT = toEnvNum(import.meta.env.VITE_DEFAULT_LAT, 50.8503);
-export const DEFAULT_USER_LNG = toEnvNum(import.meta.env.VITE_DEFAULT_LNG, 4.3517);
+export const DEFAULT_USER_LAT = appConfig.defaultLocation.lat;
+export const DEFAULT_USER_LNG = appConfig.defaultLocation.lng;
 
 async function postJson<T>(path: string, body: unknown, signal?: AbortSignal): Promise<T> {
   const base = API_BASE_URL;

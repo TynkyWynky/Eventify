@@ -1,3 +1,5 @@
+import { appConfig } from "../config/appConfig";
+
 function shouldUpgradeHttpBase(baseUrl: string): boolean {
   if (!/^http:\/\//i.test(baseUrl)) return false;
   if (typeof window === "undefined") return false;
@@ -16,18 +18,14 @@ function shouldAppendApiPath(baseUrl: string): boolean {
 }
 
 function resolveApiBaseUrl(): string {
-  const envBase = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.trim();
+  const envBase = appConfig.apiBaseUrl;
   const fallbackBase = import.meta.env.DEV ? "http://localhost:3000" : "/api";
   if (!envBase) return fallbackBase;
 
   let resolvedBase = envBase;
 
   if (!import.meta.env.DEV) {
-    const allowCrossOriginApiBase = ["1", "true", "yes", "on"].includes(
-      String(import.meta.env.VITE_API_BASE_URL_ALLOW_CROSS_ORIGIN ?? "")
-        .trim()
-        .toLowerCase()
-    );
+    const allowCrossOriginApiBase = appConfig.allowCrossOriginApiBase;
 
     // Protect production builds from accidental localhost env values on Vercel.
     try {
