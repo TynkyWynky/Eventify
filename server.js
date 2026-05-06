@@ -5689,7 +5689,27 @@ app.get("/events", async (req, res) => {
           lastError: null,
         });
 
-    const [tmEvents, scrapeResult] = await Promise.all([tmPromise, scrapePromise]);
+    const [tmEvents, initialScrapeResult] = await Promise.all([tmPromise, scrapePromise]);
+    let scrapeResult = initialScrapeResult;
+    if (
+      dbSeedEvents.length === 0 &&
+      tmEvents.length === 0 &&
+      (scrapeResult.events || []).length === 0 &&
+      scrapeResult.cacheMode === "empty_after_timeout" &&
+      scrapeCache.inFlight
+    ) {
+      try {
+        const warmedScrapeResult = await getScrapedEventsForRequest({
+          waitMsOverride: SCRAPE_SYNC_WAIT_MS,
+        });
+        if ((warmedScrapeResult.events || []).length > 0) {
+          scrapeResult = warmedScrapeResult;
+        }
+      } catch {
+        // Keep the original scrape result if the blocking warm-up wait still fails.
+      }
+    }
+
     const scrapedEventsRaw = scrapeResult.events || [];
     const scrapedLocationFiltered = scrapedEventsRaw.filter(
       matchesScrapeLocationFilters
