@@ -1250,15 +1250,46 @@ textarea.input { min-height: 110px; resize: vertical; }
 
 .dashboardStatusRow {
   margin-top: 10px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  flex-wrap: wrap;
 }
 
-.dashboardRetryBtn {
-  min-width: 96px;
+.dashboardStatusBanner {
+  width: 100%;
+  padding: 16px 18px;
+  border-radius: 22px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background:
+    linear-gradient(135deg, rgba(255, 185, 120, 0.16), rgba(255, 122, 89, 0.12)),
+    rgba(13, 12, 20, 0.68);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.05),
+    0 18px 36px rgba(0, 0, 0, 0.22);
+}
+
+.dashboardStatusBannerError {
+  background:
+    linear-gradient(135deg, rgba(255, 120, 120, 0.16), rgba(255, 166, 89, 0.12)),
+    rgba(13, 12, 20, 0.68);
+}
+
+.dashboardStatusEyebrow {
+  font-size: 12px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: rgba(255, 214, 186, 0.78);
+}
+
+.dashboardStatusHeadline {
+  margin-top: 6px;
+  font-size: clamp(24px, 3.6vw, 34px);
+  line-height: 1.05;
+  font-weight: 900;
+  color: rgba(255, 248, 242, 0.98);
+}
+
+.dashboardStatusSubline {
+  margin-top: 8px;
+  font-size: 14px;
+  color: rgba(255, 230, 214, 0.78);
 }
 
 .dashboardErrorRow {
@@ -1267,10 +1298,6 @@ textarea.input { min-height: 110px; resize: vertical; }
   justify-content: space-between;
   gap: 10px;
   flex-wrap: wrap;
-}
-
-.dashboardErrorAction {
-  min-width: 110px;
 }
 
 /* =========================
@@ -2828,13 +2855,16 @@ a.accountFriendAction {
   .heroFilterBar .selectRoot { width: 100%; }
   .dashboardStatusRow {
     margin-top: 8px;
-    gap: 8px;
-    align-items: flex-start;
-    flex-direction: column;
   }
-  .dashboardRetryBtn {
-    width: 100%;
-    min-width: 0;
+  .dashboardStatusBanner {
+    padding: 14px 15px;
+    border-radius: 18px;
+  }
+  .dashboardStatusHeadline {
+    font-size: clamp(21px, 8vw, 28px);
+  }
+  .dashboardStatusSubline {
+    font-size: 13px;
   }
 }
 

@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useState } from "react";
 import { Link, useLocation, useSearchParams } from "react-router-dom";
 import SelectField from "../components/SelectField";
 import { MUSIC_STYLES, type EventItem } from "../events/eventsStore";
@@ -261,13 +261,10 @@ export default function EventDashboardPage() {
   const [allEvents, setAllEvents] = useState<EventItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [lastLoadedAt, setLastLoadedAt] = useState<number | null>(null);
   const [hasLoadedOnce, setHasLoadedOnce] = useState(false);
   const [isOffline, setIsOffline] = useState(
     typeof navigator !== "undefined" ? !navigator.onLine : false
   );
-  const autoRetryCountRef = useRef(0);
-  const autoRetryTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
     const onOnline = () => setIsOffline(false);
@@ -289,14 +286,6 @@ export default function EventDashboardPage() {
   useEffect(() => {
     return subscribeOrganizerEventsChanged(() => setReloadTick((t) => t + 1));
   }, []);
-
-  useEffect(() => {
-    autoRetryCountRef.current = 0;
-    if (autoRetryTimerRef.current != null) {
-      window.clearTimeout(autoRetryTimerRef.current);
-      autoRetryTimerRef.current = null;
-    }
-  }, [q, selectedStyle, distanceFilterEnabled, origin.lat, origin.lng]);
 
   // Load one broader event set, then derive the list view locally.
   useEffect(() => {
@@ -323,7 +312,6 @@ export default function EventDashboardPage() {
       )
       .then((next) => {
         setAllEvents(next);
-        setLastLoadedAt(Date.now());
         setHasLoadedOnce(true);
       })
       .catch((err: unknown) => {
@@ -617,31 +605,17 @@ export default function EventDashboardPage() {
 
   const showRecommended = recommendedEvents.length > 0;
   const resultCount = eventsWithAi.length;
-  const shouldAutoRetry =
-    hasLoadedOnce &&
-    !isLoading &&
-    !error &&
-    allEvents.length === 0 &&
-    !q &&
-    selectedStyle === "All" &&
-    !distanceFilterEnabled &&
-    autoRetryCountRef.current < 4;
-
-  useEffect(() => {
-    if (!shouldAutoRetry) return;
-    const delayMs = 900 + autoRetryCountRef.current * 1200;
-    autoRetryTimerRef.current = window.setTimeout(() => {
-      autoRetryCountRef.current += 1;
-      setReloadTick((tick) => tick + 1);
-      autoRetryTimerRef.current = null;
-    }, delayMs);
-    return () => {
-      if (autoRetryTimerRef.current != null) {
-        window.clearTimeout(autoRetryTimerRef.current);
-        autoRetryTimerRef.current = null;
-      }
-    };
-  }, [shouldAutoRetry]);
+  const locationLabel = origin.label || t("dash.banner.nearYou");
+  const bannerEyebrow = origin.label
+    ? `${t("dash.banner.near")} ${origin.label}`
+    : t("dash.banner.nearYou");
+  const resultLabel = t(resultCount === 1 ? "dash.event.one" : "dash.event.many");
+  const bannerHeadline = isLoading
+    ? t("dash.loading.events")
+    : `${resultCount} ${resultLabel} ${origin.label ? `${t("dash.banner.near")} ${origin.label}` : t("dash.banner.nearYou")}`;
+  const bannerSubline = error
+    ? error
+    : filterLabel || `${t("dash.banner.tonightIn")} ${locationLabel}`;
 
   return (
     <div>
@@ -726,38 +700,12 @@ export default function EventDashboardPage() {
             </div>
 
             <div className="dashboardStatusRow">
-              <div className="sectionHint">
-                {isLoading
-                  ? t("dash.loading.events")
-                  : `${resultCount} ${t(resultCount === 1 ? "dash.event.one" : "dash.event.many")}`}
-                {lastLoadedAt
-                  ? ` • Updated ${new Date(lastLoadedAt).toLocaleTimeString([], {
-                      hour: "2-digit",
-                      minute: "2-digit",
-                    })}`
-                  : ""}
+              <div className={`dashboardStatusBanner${error ? " dashboardStatusBannerError" : ""}`}>
+                <div className="dashboardStatusEyebrow">{bannerEyebrow}</div>
+                <div className="dashboardStatusHeadline">{bannerHeadline}</div>
+                <div className="dashboardStatusSubline">{bannerSubline}</div>
               </div>
-              <button
-                type="button"
-                className="btn btnSecondary dashboardRetryBtn"
-                onClick={() => setReloadTick((t) => t + 1)}
-                disabled={isLoading}
-              >
-                {t("dash.retry")}
-              </button>
             </div>
-            {error ? (
-              <div className="authError dashboardErrorRow" style={{ marginTop: 10 }}>
-                <span>{error}</span>
-                <button
-                  type="button"
-                  className="btn btnSecondary dashboardErrorAction"
-                  onClick={() => setReloadTick((t) => t + 1)}
-                >
-                  {t("dash.retryNow")}
-                </button>
-              </div>
-            ) : null}
           </div>
         </div>
       </section>
