@@ -605,7 +605,7 @@ export const apiEventsRepo: EventsRepo = {
   async list(params, opts) {
     const origin = resolveOrigin(params);
     const hasQuery = Boolean(params?.query?.trim());
-    const [organizerEvents, remoteEvents] = await Promise.all([
+    const [organizerEvents, initialRemoteEvents] = await Promise.all([
       listPublicOrganizerEvents({
         originLat: origin.lat,
         originLng: origin.lng,
@@ -624,6 +624,23 @@ export const apiEventsRepo: EventsRepo = {
         throw err;
       }),
     ]);
+
+    let remoteEvents = initialRemoteEvents;
+    if (!hasQuery && organizerEvents.length === 0 && remoteEvents.length === 0) {
+      remoteEvents = await fetchRemoteEvents(params, {
+        signal: opts?.signal,
+        skipPriceEnrichment: true,
+        allowLiveFetchOverride: true,
+      }).catch((err) => {
+        if (
+          lastRemoteListCache &&
+          Date.now() - lastRemoteListCache.at <= EVENTS_CACHE_TTL_MS
+        ) {
+          return withDistanceFromCurrentOrigin(lastRemoteListCache.items, origin);
+        }
+        throw err;
+      });
+    }
 
     const merged = mergeUnique(organizerEvents, remoteEvents);
     return applyFilters(merged, params);
