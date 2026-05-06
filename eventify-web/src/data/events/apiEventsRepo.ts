@@ -1,4 +1,4 @@
-import { MUSIC_STYLES, type EventItem } from "../../events/eventsStore";
+import type { EventItem } from "../../events/eventsStore";
 import type { EventsListParams, EventsRepo } from "./eventsRepo";
 import {
   getPublicOrganizerEventById,
@@ -315,7 +315,7 @@ function remember(items: EventItem[]) {
 
 function buildRemoteFetchCacheKey(
   params?: EventsListParams,
-  opts?: { sizeOverride?: number }
+  opts?: { sizeOverride?: number; skipPriceEnrichment?: boolean }
 ) {
   const origin = resolveOrigin(params);
   const radiusKmRaw =
@@ -331,19 +331,18 @@ function buildRemoteFetchCacheKey(
       ? params.fetchSize
       : opts?.sizeOverride ?? DEFAULT_FETCH_SIZE;
   const size = Math.max(1, Math.round(fetchSizeRaw));
-  const style = params?.style && params.style !== "All" ? params.style : "";
   const query = params?.query?.trim() || "";
 
   return JSON.stringify({
     lat: Number(origin.lat.toFixed(4)),
     lng: Number(origin.lng.toFixed(4)),
     radiusKm,
-    style,
     query,
     size,
     includeScraped: INCLUDE_SCRAPED,
     preferDb: EVENTS_PREFER_DB_FIRST,
     allowLiveFetch: EVENTS_ALLOW_LIVE_FETCH,
+    skipPriceEnrichment: opts?.skipPriceEnrichment === true,
   });
 }
 
@@ -386,7 +385,7 @@ function withDistanceFromCurrentOrigin(items: EventItem[], origin: { lat: number
 function mapApiEventToItem(
   apiEvent: ApiEvent,
   rank: number,
-  opts: { originLat: number; originLng: number; forcedStyle?: string }
+  opts: { originLat: number; originLng: number }
 ): EventItem {
   const source = (apiEvent.source || "remote").toLowerCase();
   const rawSourceId = String(apiEvent.sourceId || apiEvent.title || `evt_${rank}`);
@@ -416,12 +415,7 @@ function mapApiEventToItem(
   const inferredFromGenre = inferStyle(
     [apiEvent.genre, apiEvent.category, ...(apiEvent.tags || [])].filter(Boolean).join(" ")
   );
-  const style =
-    opts.forcedStyle &&
-    opts.forcedStyle !== "All" &&
-    MUSIC_STYLES.includes(opts.forcedStyle)
-      ? opts.forcedStyle
-      : inferredFromGenre || inferred || "Electronic";
+  const style = inferredFromGenre || inferred || "Electronic";
 
   const imageUrl = cleanImageUrl(apiEvent.imageUrl) || getGenreFallbackImage(style);
 
@@ -505,7 +499,7 @@ function mapApiEventToItem(
 
 async function fetchRemoteEvents(
   params?: EventsListParams,
-  opts?: { signal?: AbortSignal; sizeOverride?: number }
+  opts?: { signal?: AbortSignal; sizeOverride?: number; skipPriceEnrichment?: boolean }
 ) {
   const url = new URL("events", apiBaseForUrlConstructor());
   const cacheKey = buildRemoteFetchCacheKey(params, opts);
@@ -519,9 +513,7 @@ async function fetchRemoteEvents(
       : DEFAULT_RADIUS_KM;
   const radiusKm = Math.max(1, Math.round(radiusKmRaw));
 
-  const style = params?.style && params.style !== "All" ? params.style : "";
   const query = params?.query?.trim() || "";
-  const keyword = [query, style].filter(Boolean).join(" ").trim();
 
   const fetchSizeRaw =
     typeof params?.fetchSize === "number" && Number.isFinite(params.fetchSize)
@@ -537,7 +529,8 @@ async function fetchRemoteEvents(
   url.searchParams.set("includeSetlists", "0");
   url.searchParams.set("preferDb", EVENTS_PREFER_DB_FIRST ? "1" : "0");
   url.searchParams.set("allowLiveFetch", EVENTS_ALLOW_LIVE_FETCH ? "1" : "0");
-  if (keyword) url.searchParams.set("keyword", keyword);
+  if (opts?.skipPriceEnrichment) url.searchParams.set("enrichPrices", "0");
+  if (query) url.searchParams.set("keyword", query);
 
   const cached = remoteListCacheByKey.get(cacheKey);
   if (cached && Date.now() - cached.at <= EVENTS_CACHE_TTL_MS) {
@@ -575,7 +568,6 @@ async function fetchRemoteEvents(
       mapApiEventToItem(e, i, {
         originLat: origin.lat,
         originLng: origin.lng,
-        forcedStyle: style || undefined,
       })
     );
 
@@ -604,7 +596,10 @@ export const apiEventsRepo: EventsRepo = {
         originLat: origin.lat,
         originLng: origin.lng,
       }),
-      fetchRemoteEvents(params, { signal: opts?.signal }).catch((err) => {
+      fetchRemoteEvents(params, {
+        signal: opts?.signal,
+        skipPriceEnrichment: true,
+      }).catch((err) => {
         if (
           lastRemoteListCache &&
           Date.now() - lastRemoteListCache.at <= EVENTS_CACHE_TTL_MS

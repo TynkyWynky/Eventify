@@ -4,6 +4,7 @@ const cors = require("cors");
 const jwt = require("jsonwebtoken");
 const { Pool } = require("pg");
 require("dotenv").config();
+const configuredScrapeSources = require("./config/scrapeSources");
 const {
   DEFAULT_USER_AGENT,
   fetchScrapedEvents,
@@ -134,29 +135,27 @@ const PRICE_TIER_THRESHOLDS = Object.freeze({
   mid: 45,
   high: 80,
 });
-const DEFAULT_SCRAPE_SOURCE_URLS = [
-  "https://www.visit.brussels/content/visitbrussels/en/visitors/agenda/all-events-wizard/jcr:content/root/container/agendafinder.feed.json",
-  "https://visit.gent.be/en/calendar/events?f%5B0%5D=event_category%3A17",
-  "https://www.visitleuven.be/en/events",
-  "https://www.visitezliege.be/fr/catalogue/evenement/musique?commune=liege&compatibleindividuel=True",
-  "https://www.visitbruges.be/en/whats-on/events-calendar?field_tags%5B309%5D=309",
-  "https://www.visitmons.be/fr/agenda/concerts",
-  "https://www.charleroi.be/agenda",
-  "https://destination.visitnamur.eu/agenda/",
-  "https://www.trixonline.be/en/program/?type=concert",
-  "https://www.ccha.be/concerten",
-  "https://uitin.mechelen.be/agenda?facets%5B1%5D%5Bwhat%5D%5B0.50.4.0.0%5D=Concert",
-  "https://www.eventbrite.com/d/belgium--brussels/music--events/",
-  "https://www.eventbrite.com/d/belgium--antwerp/music--events/",
-  "https://www.eventbrite.com/d/belgium--ghent/music--events/",
-  "https://www.eventbrite.com/d/belgium--liege/music--events/",
-  "https://www.eventbrite.com/d/belgium--leuven/music--events/",
-  "https://www.eventbrite.com/d/belgium--bruges/music--events/",
-  "https://www.eventbrite.com/d/belgium--charleroi/music--events/",
-  "https://www.eventbrite.com/d/belgium--namur/music--events/",
-  "https://www.eventbrite.com/d/belgium--mons/music--events/",
-  "https://www.eventbrite.com/d/belgium--hasselt/music--events/",
-].join(",");
+function mergeUniqueStrings(...lists) {
+  const out = [];
+  const seen = new Set();
+
+  for (const list of lists) {
+    for (const value of Array.isArray(list) ? list : []) {
+      const text = cleanText(value);
+      if (!text || seen.has(text)) continue;
+      seen.add(text);
+      out.push(text);
+    }
+  }
+
+  return out;
+}
+
+function resolveScrapeSourceUrls() {
+  const envSources = parseDelimitedUrls(process.env.SCRAPE_SOURCE_URLS);
+  const fileSources = parseDelimitedUrls(configuredScrapeSources.join(","));
+  return mergeUniqueStrings(fileSources, envSources);
+}
 
 const chatbotReplyCache = new Map();
 const PRICE_ENRICH_CONFIG = {
@@ -2955,7 +2954,7 @@ function summarizeSources(events) {
 
 const SCRAPE_CONFIG = {
   enabled: toBool(process.env.SCRAPE_ENABLED, true),
-  sourceUrls: parseDelimitedUrls(process.env.SCRAPE_SOURCE_URLS || DEFAULT_SCRAPE_SOURCE_URLS),
+  sourceUrls: resolveScrapeSourceUrls(),
   maxEvents: toPositiveInt(process.env.SCRAPE_MAX_EVENTS, 360),
   maxEventsPerSource: toPositiveInt(
     process.env.SCRAPE_MAX_EVENTS_PER_SOURCE,
@@ -5535,6 +5534,7 @@ app.get("/events", async (req, res) => {
       includeSetlists = "0",
       setlistsPerArtist = "3",
       maxArtists = "5",
+      enrichPrices = "1",
       scrapeWaitMs = "",
       preferDb = "1",
       allowLiveFetch = "1",
@@ -5760,8 +5760,17 @@ app.get("/events", async (req, res) => {
       });
     }
 
-    const priceResult = await enrichMissingPrices(events);
-    events = priceResult.events;
+    const shouldEnrichPrices = toBool(enrichPrices, true);
+    let enrichedThisRequest = 0;
+    let blockedHostSkips = 0;
+
+    if (shouldEnrichPrices) {
+      const priceResult = await enrichMissingPrices(events);
+      events = priceResult.events;
+      enrichedThisRequest = priceResult.enrichedThisRequest;
+      blockedHostSkips = priceResult.blockedHostSkips;
+    }
+
     events = applyTicketmasterPriceInference(events);
     const withAnyPrice = events.filter((event) => event?.hasAnyPrice).length;
     const unknownPrice = Math.max(0, events.length - withAnyPrice);
@@ -5796,6 +5805,7 @@ app.get("/events", async (req, res) => {
         ttlMs: SCRAPE_CACHE_CONFIG.ttlMs,
         waitMs: scrapeResult.waitMs ?? scrapeWaitMsResolved,
       },
+      pricesEnriched: shouldEnrichPrices,
       includeSetlists: wantSetlists,
       dbSeedCount: dbSeedEvents.length,
       liveFetchAttempted: true,
@@ -5805,9 +5815,9 @@ app.get("/events", async (req, res) => {
       priceCoverage: {
         total: events.length,
         withAnyPrice,
-        enrichedThisRequest: priceResult.enrichedThisRequest,
+        enrichedThisRequest,
         unknownPrice,
-        blockedHostSkips: priceResult.blockedHostSkips,
+        blockedHostSkips,
         settings: {
           enabled: PRICE_ENRICH_CONFIG.enabled,
           maxPerRequest: PRICE_ENRICH_CONFIG.maxPerRequest,
