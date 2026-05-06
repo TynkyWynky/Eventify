@@ -147,7 +147,12 @@ export function ensureOriginOnFirstVisit() {
   if (sessionStorage.getItem(flagKey) === "1") return;
 
   sessionStorage.setItem(flagKey, "1");
-  requestGeolocationOrigin({ timeoutMs: 6000 }).catch(() => {
-    // ignore: denied / not available
-  });
+
+  try {
+    if (!localStorage.getItem(STORAGE_KEY)) {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(DEFAULT_ORIGIN));
+    }
+  } catch {
+    // ignore storage issues
+  }
 }

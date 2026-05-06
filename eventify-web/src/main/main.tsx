@@ -1,4 +1,4 @@
-import { StrictMode, Suspense } from "react";
+import { Suspense } from "react";
 import { createRoot } from "react-dom/client";
 import { RouterProvider } from "react-router-dom";
 import { appRouter } from "../layout/AppRouter";
@@ -48,15 +48,13 @@ if ("serviceWorker" in navigator) {
 }
 
 createRoot(document.getElementById("root")!).render(
-  <StrictMode>
-    <I18nProvider>
-      <NotificationProvider>
-        <AuthProvider>
-          <Suspense fallback={<AppLoadingScreen />}>
-            <RouterProvider router={appRouter} />
-          </Suspense>
-        </AuthProvider>
-      </NotificationProvider>
-    </I18nProvider>
-  </StrictMode>
+  <I18nProvider>
+    <NotificationProvider>
+      <AuthProvider>
+        <Suspense fallback={<AppLoadingScreen />}>
+          <RouterProvider router={appRouter} />
+        </Suspense>
+      </AuthProvider>
+    </NotificationProvider>
+  </I18nProvider>
 );

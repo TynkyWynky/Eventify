@@ -315,7 +315,11 @@ function remember(items: EventItem[]) {
 
 function buildRemoteFetchCacheKey(
   params?: EventsListParams,
-  opts?: { sizeOverride?: number; skipPriceEnrichment?: boolean }
+  opts?: {
+    sizeOverride?: number;
+    skipPriceEnrichment?: boolean;
+    allowLiveFetchOverride?: boolean;
+  }
 ) {
   const origin = resolveOrigin(params);
   const radiusKmRaw =
@@ -341,7 +345,7 @@ function buildRemoteFetchCacheKey(
     size,
     includeScraped: INCLUDE_SCRAPED,
     preferDb: EVENTS_PREFER_DB_FIRST,
-    allowLiveFetch: EVENTS_ALLOW_LIVE_FETCH,
+    allowLiveFetch: opts?.allowLiveFetchOverride ?? EVENTS_ALLOW_LIVE_FETCH,
     skipPriceEnrichment: opts?.skipPriceEnrichment === true,
   });
 }
@@ -499,7 +503,12 @@ function mapApiEventToItem(
 
 async function fetchRemoteEvents(
   params?: EventsListParams,
-  opts?: { signal?: AbortSignal; sizeOverride?: number; skipPriceEnrichment?: boolean }
+  opts?: {
+    signal?: AbortSignal;
+    sizeOverride?: number;
+    skipPriceEnrichment?: boolean;
+    allowLiveFetchOverride?: boolean;
+  }
 ) {
   const url = new URL("events", apiBaseForUrlConstructor());
   const cacheKey = buildRemoteFetchCacheKey(params, opts);
@@ -528,7 +537,10 @@ async function fetchRemoteEvents(
   url.searchParams.set("includeScraped", INCLUDE_SCRAPED ? "1" : "0");
   url.searchParams.set("includeSetlists", "0");
   url.searchParams.set("preferDb", EVENTS_PREFER_DB_FIRST ? "1" : "0");
-  url.searchParams.set("allowLiveFetch", EVENTS_ALLOW_LIVE_FETCH ? "1" : "0");
+  url.searchParams.set(
+    "allowLiveFetch",
+    (opts?.allowLiveFetchOverride ?? EVENTS_ALLOW_LIVE_FETCH) ? "1" : "0"
+  );
   if (opts?.skipPriceEnrichment) url.searchParams.set("enrichPrices", "0");
   if (query) url.searchParams.set("keyword", query);
 
@@ -599,6 +611,7 @@ export const apiEventsRepo: EventsRepo = {
       fetchRemoteEvents(params, {
         signal: opts?.signal,
         skipPriceEnrichment: true,
+        allowLiveFetchOverride: false,
       }).catch((err) => {
         if (
           lastRemoteListCache &&
