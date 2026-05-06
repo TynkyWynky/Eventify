@@ -51,7 +51,7 @@ De backend kan nu events uit extra websites scrapen en samenvoegen met Ticketmas
 - `GET /events` combineert:
   - Ticketmaster events
   - JSON-LD (`schema.org/Event`) scraping van URL's in `SCRAPE_SOURCE_URLS`
-  - Officiële city/venue agenda's worden direct ondersteund, inclusief aangepaste parsers voor o.a. `visit.brussels`, `visit.gent`, `visitleuven`, `visitezliege`, `visitmons`, `charleroi.be`, `trixonline.be`, `ccha.be` en `uitin.mechelen.be`
+  - Officiële city/venue agenda's worden direct ondersteund, inclusief aangepaste parsers voor o.a. `visit.brussels`, `visit.gent`, `visitleuven`, `visitezliege`, `visitmons`, `visitlimburg` (Hasselt), `charleroi.be`, `trixonline.be`, `ccha.be` en `uitin.mechelen.be`
   - Eventbrite listing pages (`/d/.../events/`) blijven ondersteund als optionele extra bron
   - Venue agenda pages werken ook (bv. `.../agenda`, `.../calendar`) zolang event detailpagina's JSON-LD Event bevatten
 - Cross-source dedupe: events met dezelfde titel+tijd+stad+venue worden samengevoegd

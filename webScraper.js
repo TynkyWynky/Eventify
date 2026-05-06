@@ -1742,6 +1742,12 @@ function isUitInVlaanderenMusicUrl(value) {
   return url.includes("uitinvlaanderen.be/agenda/muziek");
 }
 
+function isVisitLimburgAgendaUrl(value) {
+  const url = cleanText(value)?.toLowerCase() || "";
+  if (!url.includes("visitlimburg.be")) return false;
+  return /\/(?:nl|en|fr|de)\/(?:events-festivals|hasselt\/hasselt)(?:$|[/?#])/.test(url);
+}
+
 function isGenericUitInAgendaUrl(value) {
   const url = cleanText(value)?.toLowerCase() || "";
   if (!url.includes("/agenda")) return false;
@@ -3104,6 +3110,58 @@ async function scrapeGenericUitInAgenda(sourceUrl, options) {
   return dedupeEvents(events, options.maxEventsPerSource);
 }
 
+async function scrapeVisitLimburgAgenda(sourceUrl, options) {
+  const html = await fetchHtml(sourceUrl, options);
+  const $ = cheerio.load(html);
+  const sourceHost = hostnameFromUrl(sourceUrl);
+  const events = [];
+  const seen = new Set();
+  const fallbackCity = /\/hasselt\/hasselt(?:$|[/?#])/i.test(sourceUrl) ? "Hasselt" : null;
+
+  $("a.node--type-event.node--view-mode-teaser-alt[href*='/event/'], a[href*='/event/']").each(
+    (_, element) => {
+      if (events.length >= options.maxEventsPerSource) return false;
+
+      const $card = $(element);
+      const href = cleanText($card.attr("href"));
+      const detailUrl = normalizeEventUrl(href, sourceUrl);
+      if (!detailUrl || seen.has(detailUrl)) return undefined;
+      seen.add(detailUrl);
+
+      const title =
+        cleanText($card.find("h1, h2, h3, .title").first().text()) ||
+        cleanText($card.attr("title"));
+      const city = cleanText($card.find(".event-location").first().text()) || fallbackCity;
+      const dateText = cleanText($card.find(".event-available-dates").first().text());
+      const description =
+        cleanText($card.find(".event-description, .description").first().text());
+      const imageUrl = pickElementImageUrl($card, sourceUrl);
+      const coords = $card.find(".coordinates").first();
+      const { start, end } = parseLocalizedDateRange(dateText);
+
+      const normalized = createNormalizedScrapedEvent(
+        {
+          title,
+          description,
+          start,
+          end,
+          city,
+          url: detailUrl,
+          imageUrl,
+          lat: toFiniteNumber(coords.attr("data-lat")),
+          lng: toFiniteNumber(coords.attr("data-lng")),
+        },
+        { pageUrl: detailUrl, sourceUrl, sourceHost }
+      );
+
+      if (normalized) events.push(normalized);
+      return undefined;
+    }
+  );
+
+  return dedupeEvents(events, options.maxEventsPerSource);
+}
+
 function pickCustomSourceScraper(sourceUrl) {
   if (isVisitBrusselsFeedUrl(sourceUrl)) return scrapeVisitBrusselsFeed;
   if (isVisitGentConcertsUrl(sourceUrl)) return scrapeVisitGentConcerts;
@@ -3115,6 +3173,7 @@ function pickCustomSourceScraper(sourceUrl) {
   if (isVisitNamurAgendaUrl(sourceUrl)) return scrapeVisitNamurAgenda;
   if (isTrixConcertsUrl(sourceUrl)) return scrapeTrixConcerts;
   if (isCchaConcertsUrl(sourceUrl)) return scrapeCchaConcerts;
+  if (isVisitLimburgAgendaUrl(sourceUrl)) return scrapeVisitLimburgAgenda;
   if (isUitInVlaanderenMusicUrl(sourceUrl)) return scrapeUitInVlaanderenMusic;
   if (isUitInLeuvenAgendaUrl(sourceUrl)) return scrapeUitInLeuvenAgenda;
   if (isUitInMechelenAgendaUrl(sourceUrl)) return scrapeUitInMechelenAgenda;

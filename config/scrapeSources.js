@@ -7,6 +7,7 @@ module.exports = [
   "https://www.visitmons.be/fr/agenda/concerts",
   "https://www.charleroi.be/agenda",
   "https://destination.visitnamur.eu/agenda/",
+  "https://www.visitlimburg.be/nl/hasselt/hasselt",
   "https://www.brussels.be/agenda",
   "https://www.trixonline.be/en/program/?type=concert",
   "https://www.ccha.be/concerten",
