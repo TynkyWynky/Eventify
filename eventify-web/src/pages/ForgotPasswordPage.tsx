@@ -6,7 +6,6 @@ import { useI18n } from "../i18n/I18nContext";
 type ForgotPasswordResponse = {
   ok: boolean;
   message?: string;
-  resetUrl?: string | null;
 };
 
 function isValidEmail(value: string) {
@@ -18,14 +17,12 @@ export default function ForgotPasswordPage() {
   const [email, setEmail] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
-  const [debugResetUrl, setDebugResetUrl] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
   async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     setError(null);
     setSuccess(null);
-    setDebugResetUrl(null);
 
     if (!isValidEmail(email)) {
       setError(t("auth.error.validEmail"));
@@ -39,7 +36,6 @@ export default function ForgotPasswordPage() {
         body: { email: email.trim().toLowerCase() },
       });
       setSuccess(result.message || t("auth.forgotPasswordSuccess"));
-      setDebugResetUrl(typeof result.resetUrl === "string" ? result.resetUrl : null);
     } catch (err) {
       setError(err instanceof Error ? err.message : t("auth.error.resetRequestFailed"));
     } finally {
@@ -72,12 +68,6 @@ export default function ForgotPasswordPage() {
           <button className="authPrimaryButton" type="submit" disabled={loading}>
             {loading ? t("auth.forgotPasswordLoading") : t("auth.forgotPasswordAction")}
           </button>
-
-          {debugResetUrl ? (
-            <div className="authHint">
-              {t("auth.resetDebugLabel")} <a href={debugResetUrl}>{debugResetUrl}</a>
-            </div>
-          ) : null}
 
           <div className="authHint">
             <Link to="/login">{t("auth.backToLogin")}</Link>
