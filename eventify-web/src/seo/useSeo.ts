@@ -7,6 +7,7 @@ type SeoInput = {
   image?: string;
   type?: "website" | "article";
   noindex?: boolean;
+  locale?: string;
 };
 
 const DEFAULT_IMAGE = "/Eventify_Logo.png";
@@ -66,12 +67,14 @@ export function useSeo(input: SeoInput) {
     const imageUrl = toAbsoluteUrl(input.image || DEFAULT_IMAGE);
     const ogType = input.type || "website";
     const robots = input.noindex ? "noindex, nofollow" : "index, follow";
+    const locale = input.locale || "en_BE";
 
     document.title = title;
     upsertCanonical(canonicalUrl);
 
     upsertMetaByName("description", description);
     upsertMetaByName("robots", robots);
+    upsertMetaByName("googlebot", input.noindex ? "noindex, nofollow" : "index, follow, max-image-preview:large");
     upsertMetaByName("twitter:card", "summary_large_image");
     upsertMetaByName("twitter:title", title);
     upsertMetaByName("twitter:description", description);
@@ -82,6 +85,7 @@ export function useSeo(input: SeoInput) {
     upsertMetaByProperty("og:description", description);
     upsertMetaByProperty("og:url", canonicalUrl);
     upsertMetaByProperty("og:image", imageUrl);
+    upsertMetaByProperty("og:locale", locale);
     upsertMetaByProperty("og:site_name", "Eventium");
-  }, [input.title, input.description, input.canonicalPath, input.image, input.type, input.noindex]);
+  }, [input.title, input.description, input.canonicalPath, input.image, input.type, input.noindex, input.locale]);
 }

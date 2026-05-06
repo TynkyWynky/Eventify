@@ -2,6 +2,9 @@ User-agent: *
 Allow: /
 
 # Private/authenticated zones
+Disallow: /login
+Disallow: /register
+Disallow: /my-events
 Disallow: /admin
 Disallow: /account
 Disallow: /account/settings
