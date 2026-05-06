@@ -53,6 +53,16 @@ function buildRouteSeo(pathname: string) {
     };
   }
 
+  if (pathname === "/forgot-password" || pathname === "/reset-password") {
+    return {
+      title: "Reset Password | Eventium",
+      description: "Request a secure password reset link and update your Eventium password.",
+      canonicalPath: pathname,
+      noindex: true,
+      locale: "en_BE",
+    };
+  }
+
   if (pathname === "/privacy") {
     return {
       title: "Privacy Policy | Eventium",

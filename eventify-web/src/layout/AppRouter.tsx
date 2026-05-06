@@ -41,6 +41,8 @@ function lazyWithRetry(importer: () => Promise<{ default: ComponentType }>) {
 const EventDetailPage = lazyWithRetry(() => import("../pages/EventDetailPage"));
 const LoginPage = lazyWithRetry(() => import("../pages/LoginPage"));
 const RegisterPage = lazyWithRetry(() => import("../pages/RegisterPage"));
+const ForgotPasswordPage = lazyWithRetry(() => import("../pages/ForgotPasswordPage"));
+const ResetPasswordPage = lazyWithRetry(() => import("../pages/ResetPasswordPage"));
 const AccountPage = lazyWithRetry(() => import("../pages/AccountPage"));
 const AccountSettingsPage = lazyWithRetry(() => import("../pages/AccountSettingsPage"));
 const MyEventsPage = lazyWithRetry(() => import("../pages/MyEventsPage"));
@@ -60,6 +62,8 @@ export const appRouter = createBrowserRouter([
 
       { path: "login", element: <LoginPage /> },
       { path: "register", element: <RegisterPage /> },
+      { path: "forgot-password", element: <ForgotPasswordPage /> },
+      { path: "reset-password", element: <ResetPasswordPage /> },
 
       // ✅ allow everyone (page handles auth + organizer/user UI)
       { path: "my-events", element: <MyEventsPage /> },

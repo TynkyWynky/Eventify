@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
+import { isStrongPassword } from "../auth/passwordRules";
 import { useI18n } from "../i18n/I18nContext";
 
 function isValidEmail(value: string) {
@@ -60,7 +61,7 @@ export default function RegisterPage() {
   const [loading, setLoading] = useState(false);
 
   const emailOk = useMemo(() => isValidEmail(email), [email]);
-  const passwordOk = useMemo(() => password.length >= 8, [password]);
+  const passwordOk = useMemo(() => isStrongPassword(password), [password]);
   const confirmOk = useMemo(
     () => confirmPassword.length > 0 && confirmPassword === password,
     [confirmPassword, password]

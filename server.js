@@ -1,7 +1,9 @@
 const express = require("express");
 const axios = require("axios");
 const cors = require("cors");
+const crypto = require("crypto");
 const jwt = require("jsonwebtoken");
+const nodemailer = require("nodemailer");
 const { Pool } = require("pg");
 require("dotenv").config();
 const configuredScrapeSources = require("./config/scrapeSources");
@@ -77,10 +79,27 @@ const AUTH_LOGIN_WINDOW_MS = toPositiveInt(process.env.AUTH_LOGIN_WINDOW_MS, 15 
 const AUTH_LOGIN_MAX_ATTEMPTS = toPositiveInt(process.env.AUTH_LOGIN_MAX_ATTEMPTS, 10);
 const AUTH_REGISTER_WINDOW_MS = toPositiveInt(process.env.AUTH_REGISTER_WINDOW_MS, 60 * 60 * 1000);
 const AUTH_REGISTER_MAX_ATTEMPTS = toPositiveInt(process.env.AUTH_REGISTER_MAX_ATTEMPTS, 5);
+const AUTH_RESET_WINDOW_MS = toPositiveInt(process.env.AUTH_RESET_WINDOW_MS, 60 * 60 * 1000);
+const AUTH_RESET_MAX_ATTEMPTS = toPositiveInt(process.env.AUTH_RESET_MAX_ATTEMPTS, 5);
 const SOCIAL_WRITE_WINDOW_MS = toPositiveInt(process.env.SOCIAL_WRITE_WINDOW_MS, 60 * 1000);
 const SOCIAL_WRITE_MAX_ATTEMPTS = toPositiveInt(process.env.SOCIAL_WRITE_MAX_ATTEMPTS, 60);
 const INVITE_WINDOW_MS = toPositiveInt(process.env.INVITE_WINDOW_MS, 60 * 60 * 1000);
 const INVITE_MAX_ATTEMPTS = toPositiveInt(process.env.INVITE_MAX_ATTEMPTS, 30);
+const PASSWORD_RESET_TOKEN_TTL_MS = Math.max(
+  5 * 60 * 1000,
+  toPositiveInt(process.env.PASSWORD_RESET_TOKEN_TTL_MS, 60 * 60 * 1000)
+);
+const PASSWORD_RESET_FROM_EMAIL = (
+  process.env.PASSWORD_RESET_FROM_EMAIL ||
+  process.env.SMTP_FROM ||
+  process.env.SMTP_USER ||
+  "no-reply@eventium.local"
+).trim();
+const SMTP_HOST = safeText(process.env.SMTP_HOST, "").trim();
+const SMTP_PORT = Math.max(1, toPositiveInt(process.env.SMTP_PORT, 587));
+const SMTP_SECURE = toBool(process.env.SMTP_SECURE, SMTP_PORT === 465);
+const SMTP_USER = safeText(process.env.SMTP_USER, "").trim();
+const SMTP_PASS = safeText(process.env.SMTP_PASS, "").trim();
 const rawLlmProvider = (process.env.LLM_PROVIDER || "").trim().toLowerCase();
 const llmApiKey = (process.env.LLM_API_KEY || process.env.OPENAI_API_KEY || "").trim();
 const inferredLlmProvider = rawLlmProvider || (llmApiKey ? "openai" : "ollama");
@@ -486,6 +505,97 @@ function isStrongPassword(password) {
   return /[A-Z]/.test(pwd) && /[a-z]/.test(pwd) && /\d/.test(pwd) && /[^A-Za-z0-9]/.test(pwd);
 }
 
+function sha256Hex(value) {
+  return crypto.createHash("sha256").update(String(value || "")).digest("hex");
+}
+
+function getRequestOrigin(req) {
+  const forwardedProto = safeText(req.headers["x-forwarded-proto"], "").split(",")[0].trim();
+  const proto = forwardedProto || req.protocol || "http";
+  const host = safeText(req.headers["x-forwarded-host"], "").split(",")[0].trim() || req.get("host");
+  if (!host) return "";
+  return `${proto}://${host}`;
+}
+
+function resolvePublicAppUrl(req) {
+  const configured = [
+    process.env.APP_URL,
+    process.env.PUBLIC_APP_URL,
+    process.env.VERCEL_PROJECT_PRODUCTION_URL
+      ? `https://${String(process.env.VERCEL_PROJECT_PRODUCTION_URL).trim()}`
+      : "",
+    process.env.VERCEL_URL ? `https://${String(process.env.VERCEL_URL).trim()}` : "",
+    getRequestOrigin(req),
+  ]
+    .map((value) => String(value || "").trim())
+    .find(Boolean);
+
+  return String(configured || "http://localhost:5173").replace(/\/+$/, "");
+}
+
+function buildPasswordResetUrl(req, rawToken) {
+  return `${resolvePublicAppUrl(req)}/reset-password?token=${encodeURIComponent(String(rawToken || ""))}`;
+}
+
+let smtpTransportPromise = null;
+
+async function getSmtpTransport() {
+  if (!SMTP_HOST) return null;
+  if (smtpTransportPromise) return smtpTransportPromise;
+
+  smtpTransportPromise = (async () => {
+    const transport = nodemailer.createTransport({
+      host: SMTP_HOST,
+      port: SMTP_PORT,
+      secure: SMTP_SECURE,
+      auth: SMTP_USER ? { user: SMTP_USER, pass: SMTP_PASS } : undefined,
+    });
+    await transport.verify();
+    return transport;
+  })().catch((err) => {
+    smtpTransportPromise = null;
+    throw err;
+  });
+
+  return smtpTransportPromise;
+}
+
+async function sendPasswordResetEmail({ to, name, resetUrl }) {
+  const transport = await getSmtpTransport();
+  if (!transport) {
+    console.log(`[auth] Password reset link for ${to}: ${resetUrl}`);
+    return { delivered: false, debugOnly: true };
+  }
+
+  const safeName = String(name || "").trim() || "there";
+  const expiresMinutes = Math.max(1, Math.round(PASSWORD_RESET_TOKEN_TTL_MS / 60000));
+  await transport.sendMail({
+    from: PASSWORD_RESET_FROM_EMAIL,
+    to,
+    subject: "Reset your Eventium password",
+    text: [
+      `Hi ${safeName},`,
+      "",
+      "We received a request to reset your Eventium password.",
+      `Open this link to choose a new password: ${resetUrl}`,
+      "",
+      "If you did not request this, you can ignore this email.",
+      `This link expires in about ${expiresMinutes} minute${expiresMinutes === 1 ? "" : "s"}.`,
+    ].join("\n"),
+    html: `
+      <div style="font-family:Arial,sans-serif;line-height:1.6;color:#171717">
+        <p>Hi ${safeName},</p>
+        <p>We received a request to reset your Eventium password.</p>
+        <p><a href="${resetUrl}">Open this secure link to choose a new password</a></p>
+        <p>If you did not request this, you can ignore this email.</p>
+        <p>This link expires in about ${expiresMinutes} minute${expiresMinutes === 1 ? "" : "s"}.</p>
+      </div>
+    `,
+  });
+
+  return { delivered: true, debugOnly: false };
+}
+
 function mustBoolean(value, name) {
   if (typeof value !== "boolean") {
     const err = new Error(`Invalid ${name}. Must be boolean.`);
@@ -609,6 +719,12 @@ const authRegisterLimiter = createRateLimiter({
   keyPrefix: "auth:register",
   windowMs: AUTH_REGISTER_WINDOW_MS,
   max: AUTH_REGISTER_MAX_ATTEMPTS,
+});
+
+const authResetLimiter = createRateLimiter({
+  keyPrefix: "auth:reset",
+  windowMs: AUTH_RESET_WINDOW_MS,
+  max: AUTH_RESET_MAX_ATTEMPTS,
 });
 
 const socialWriteLimiter = createRateLimiter({
@@ -752,6 +868,19 @@ async function ensureDatabaseSchemaCompatibility() {
   `);
 
   await db.query(`
+    CREATE TABLE IF NOT EXISTS password_reset_tokens (
+      id              SERIAL PRIMARY KEY,
+      user_id         INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      token_hash      VARCHAR(64) NOT NULL UNIQUE,
+      expires_at      TIMESTAMP WITH TIME ZONE NOT NULL,
+      used_at         TIMESTAMP WITH TIME ZONE,
+      requested_ip    VARCHAR(128),
+      user_agent      TEXT,
+      created_at      TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+
+  await db.query(`
     CREATE TABLE IF NOT EXISTS event_group_plans (
       id              SERIAL PRIMARY KEY,
       event_key       TEXT NOT NULL,
@@ -815,6 +944,14 @@ async function ensureDatabaseSchemaCompatibility() {
   await db.query(`
     CREATE INDEX IF NOT EXISTS idx_notifications_user_read_created
     ON notifications(user_id, is_read, created_at DESC)
+  `);
+  await db.query(`
+    CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_user
+    ON password_reset_tokens(user_id, created_at DESC)
+  `);
+  await db.query(`
+    CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_expires
+    ON password_reset_tokens(expires_at)
   `);
   await db.query(`
     CREATE INDEX IF NOT EXISTS idx_group_plans_event_created
@@ -1078,6 +1215,179 @@ app.post("/auth/login", authLoginLimiter, async (req, res) => {
   } catch (err) {
     const status = err?.status || 500;
     return res.status(status).json({ ok: false, error: err?.message || String(err) });
+  }
+});
+
+/**
+ * POST /auth/forgot-password
+ * body: { email }
+ */
+app.post("/auth/forgot-password", authResetLimiter, async (req, res) => {
+  try {
+    const email = normalizeEmail(req.body?.email);
+    if (!email) return res.status(400).json({ ok: false, error: "Email is required." });
+    if (email.length > 320 || !/^\S+@\S+\.\S+$/.test(email)) {
+      return res.status(400).json({ ok: false, error: "Invalid email." });
+    }
+
+    const db = requireDb();
+    await db.query(
+      `
+      DELETE FROM password_reset_tokens
+      WHERE used_at IS NOT NULL
+         OR expires_at < CURRENT_TIMESTAMP
+      `
+    );
+
+    const result = await db.query(
+      `
+      SELECT id, username, email, first_name, last_name, is_active
+      FROM users
+      WHERE email = $1
+      LIMIT 1
+      `,
+      [email]
+    );
+
+    let debugResetUrl = null;
+
+    if (result.rowCount > 0 && result.rows[0].is_active) {
+      const row = result.rows[0];
+      const rawToken = crypto.randomBytes(32).toString("hex");
+      const tokenHash = sha256Hex(rawToken);
+
+      await db.query(
+        `
+        DELETE FROM password_reset_tokens
+        WHERE user_id = $1
+          AND used_at IS NULL
+        `,
+        [row.id]
+      );
+
+      await db.query(
+        `
+        INSERT INTO password_reset_tokens (user_id, token_hash, expires_at, requested_ip, user_agent)
+        VALUES ($1, $2, CURRENT_TIMESTAMP + ($3::text || ' milliseconds')::interval, $4, $5)
+        `,
+        [
+          row.id,
+          tokenHash,
+          String(PASSWORD_RESET_TOKEN_TTL_MS),
+          safeText(req.ip, "").slice(0, 128) || null,
+          safeText(req.headers["user-agent"], "").slice(0, 1000) || null,
+        ]
+      );
+
+      const resetUrl = buildPasswordResetUrl(req, rawToken);
+      const displayName =
+        `${safeText(row.first_name, "").trim()} ${safeText(row.last_name, "").trim()}`.trim() ||
+        safeText(row.username, "there");
+      const mailResult = await sendPasswordResetEmail({
+        to: normalizeEmail(row.email),
+        name: displayName,
+        resetUrl,
+      });
+      if (!IS_PROD && mailResult.debugOnly) {
+        debugResetUrl = resetUrl;
+      }
+    }
+
+    return res.json({
+      ok: true,
+      message:
+        "If an account exists for that email, we've sent a password reset link.",
+      resetUrl: debugResetUrl,
+    });
+  } catch (err) {
+    const status = err?.status || 500;
+    return res.status(status).json({ ok: false, error: err?.message || String(err) });
+  }
+});
+
+/**
+ * POST /auth/reset-password
+ * body: { token, password }
+ */
+app.post("/auth/reset-password", authResetLimiter, async (req, res) => {
+  const token = safeText(req.body?.token, "").trim();
+  const password = safeText(req.body?.password, "");
+
+  if (!token) return res.status(400).json({ ok: false, error: "Reset token is required." });
+  if (!isStrongPassword(password)) {
+    return res.status(400).json({
+      ok: false,
+      error:
+        "Password must be 10-256 chars and include uppercase, lowercase, number, and symbol.",
+    });
+  }
+
+  const db = requireDb();
+  const client = await db.connect();
+  try {
+    await client.query("BEGIN");
+
+    const tokenHash = sha256Hex(token);
+    const tokenResult = await client.query(
+      `
+      SELECT prt.id, prt.user_id
+      FROM password_reset_tokens prt
+      JOIN users u ON u.id = prt.user_id
+      WHERE prt.token_hash = $1
+        AND prt.used_at IS NULL
+        AND prt.expires_at > CURRENT_TIMESTAMP
+        AND u.is_active = TRUE
+      LIMIT 1
+      FOR UPDATE
+      `,
+      [tokenHash]
+    );
+
+    if (tokenResult.rowCount === 0) {
+      await client.query("ROLLBACK");
+      return res.status(400).json({ ok: false, error: "This reset link is invalid or has expired." });
+    }
+
+    const row = tokenResult.rows[0];
+
+    await client.query(
+      `
+      UPDATE users
+      SET password_hash = crypt($2, gen_salt('bf', 10)),
+          updated_at = CURRENT_TIMESTAMP
+      WHERE id = $1
+      `,
+      [row.user_id, password]
+    );
+
+    await client.query(
+      `
+      UPDATE password_reset_tokens
+      SET used_at = CURRENT_TIMESTAMP
+      WHERE id = $1
+      `,
+      [row.id]
+    );
+
+    await client.query(
+      `
+      DELETE FROM password_reset_tokens
+      WHERE user_id = $1
+        AND id <> $2
+      `,
+      [row.user_id, row.id]
+    );
+
+    await client.query("COMMIT");
+    return res.json({ ok: true, message: "Password updated successfully." });
+  } catch (err) {
+    try {
+      await client.query("ROLLBACK");
+    } catch {}
+    const status = err?.status || 500;
+    return res.status(status).json({ ok: false, error: err?.message || String(err) });
+  } finally {
+    client.release();
   }
 });
 

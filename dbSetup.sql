@@ -210,6 +210,21 @@ CREATE TABLE notifications (
 
 CREATE INDEX idx_notifications_user_read_created ON notifications(user_id, is_read, created_at DESC);
 
+-- Password reset tokens
+CREATE TABLE password_reset_tokens (
+    id              SERIAL PRIMARY KEY,
+    user_id         INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    token_hash      VARCHAR(64) NOT NULL UNIQUE,
+    expires_at      TIMESTAMP WITH TIME ZONE NOT NULL,
+    used_at         TIMESTAMP WITH TIME ZONE,
+    requested_ip    VARCHAR(128),
+    user_agent      TEXT,
+    created_at      TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX idx_password_reset_tokens_user ON password_reset_tokens(user_id, created_at DESC);
+CREATE INDEX idx_password_reset_tokens_expires ON password_reset_tokens(expires_at);
+
 -- ============================================
 -- EVENT MODERATION (Disable remote/scraped events without deleting)
 -- ============================================

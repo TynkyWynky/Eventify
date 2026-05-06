@@ -77,6 +77,10 @@ export default function LoginPage() {
             autoComplete="current-password"
           />
 
+          <div className="authHint authHintActionRow">
+            <Link to="/forgot-password">{t("auth.forgotPassword")}</Link>
+          </div>
+
           <button className="authPrimaryButton" type="submit" disabled={loading}>
             {loading ? t("auth.loginLoading") : t("auth.loginAction")}
           </button>

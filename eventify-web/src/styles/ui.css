@@ -1497,10 +1497,32 @@ textarea.input { min-height: 110px; resize: vertical; }
   font-size: 13px;
 }
 
+.authSuccess {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(180,255,210,.16);
+  background: rgba(40, 140, 90, 0.14);
+  color: rgba(240,255,245,.94);
+  font-size: 13px;
+}
+
 .authHint {
   margin-top: -6px;
   color: rgba(255,255,255,.60);
   font-size: 12px;
+}
+
+.authHintTop {
+  margin-top: 10px;
+  font-size: 13px;
+  color: rgba(255,255,255,.72);
+}
+
+.authHintActionRow {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: -4px;
 }
 
 /* Password status icon */
