@@ -9,6 +9,8 @@ module.exports = [
   "https://destination.visitnamur.eu/agenda/",
   "https://www.trixonline.be/en/program/?type=concert",
   "https://www.ccha.be/concerten",
+  "https://www.uitinvlaanderen.be/agenda/muziek",
+  "https://www.uitinleuven.be/agenda",
   "https://uitin.mechelen.be/agenda?facets%5B1%5D%5Bwhat%5D%5B0.50.4.0.0%5D=Concert",
   "https://www.eventbrite.com/b/belgium/music/",
 ];
